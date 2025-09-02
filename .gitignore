@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.log
+.venv/
+
+# Databases
+*.db
+databases/
+
+# Environment variables
+.env
+
+# Google Sheets Service Account Key (if hardcoded)
+dazzling-tiger-470805-b5-a17f4a3ccf05.json
+
+# Scrapy specific
+scrapy.log
+logs/

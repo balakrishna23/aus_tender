@@ -2,9 +2,13 @@ import scrapy
 
 class StandingOfferSpider(scrapy.Spider):
     name = "standing_offer"
+    custom_settings = {
+        'LOG_FILE': 'logs/standing_offer.log',
+    }
+    
     
     start_urls = [
-        "https://www.tenders.gov.au/Search/SonAdvancedSearch?Type=Son&AgencyStatus=0&KeywordTypeSearch=AllWord&DateType=Publish%20Date"
+        "https://www.tenders.gov.au/Search/SonAdvancedSearch?SearchFrom=SonSearch&Type=Son&AgencyStatus=-1&KeywordTypeSearch=AllWord&DateType=Publish%20Date"
     ]
 
     def parse(self, response):

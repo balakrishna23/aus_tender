@@ -3,6 +3,10 @@ import scrapy
 
 class AusContractSpider(scrapy.Spider):
     name = "aus_contract"
+    custom_settings = {
+        'LOG_FILE': 'logs/aus_contract.log',
+    }
+    
     
     start_urls = [
         "https://www.tenders.gov.au/Search/CnAdvancedSearch?Type=Cn&AgencyStatus=0&KeywordTypeSearch=AllWord&DateType=Publish+Date&page=1"

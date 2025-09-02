@@ -3,8 +3,14 @@ import scrapy
 
 class AusTenderSpider(scrapy.Spider):
     name = "aus_tender"
+    custom_settings = {
+        'LOG_FILE': 'logs/aus_tender.log',
+    }
+    
     
     start_urls = [
+        
+        "https://www.tenders.gov.au/Search/AtmAdvancedSearch?Type=Atm&AtmType=published%2Cclosed&AgencyStatus=0&KeywordTypeSearch=AllWord",
         "https://www.tenders.gov.au/Search/AtmAdvancedSearch?Type=Atm&AtmType=published%2Cclosed%2Carchived&AgencyStatus=0&KeywordTypeSearch=AllWord"
     ]
 
@@ -25,6 +31,10 @@ class AusTenderSpider(scrapy.Spider):
             yield response.follow(next_page, callback=self.parse)
 
     def parse_tender(self, response):
+        """
+        Parse individual ATM tender page
+        Updated with tested selectors for ATM Documents and Addenda links
+        """
         def get_value(label, all_text=False):
             selector = f'//div[@class="list-desc"][span/label[normalize-space(text())="{label}"]]/div[@class="list-desc-inner"]'
             if all_text:
@@ -41,11 +51,25 @@ class AusTenderSpider(scrapy.Spider):
         else:
             close_date = close_date_raw
 
-        addenda_link_relative = response.xpath('//div[span/label/text()="Addenda Available"]/div/a/@href').get(default="").strip()
-        addenda_link_absolute = response.urljoin(addenda_link_relative) if addenda_link_relative else ""
-
-        atm_docs_link_relative = response.css('div.btn-actions a:contains("ATM Documents")::attr(href)').get(default="")
+        # Extract ATM Documents link using tested selector
+        atm_docs_link_relative = response.xpath('//a[@class="rBtn" and contains(text(), "ATM Documents")]/@href').get()
         atm_docs_link_absolute = response.urljoin(atm_docs_link_relative) if atm_docs_link_relative else ""
+
+        # Extract Addenda link using tested selector
+        addenda_link_relative = response.xpath('//a[contains(text(), "View Addenda")]/@href').get()
+        addenda_link_absolute = response.urljoin(addenda_link_relative) if addenda_link_relative else ""
+        
+        # Extract contact email using tested selector (fallback method)
+        contact_email_href = response.xpath('//a[contains(@href, "mailto:")]/@href').get()
+        contact_email_from_href = contact_email_href.replace('mailto:', '') if contact_email_href else ""
+
+        contact_name_selector = response.css("div.contact-long p:nth-child(2)::text").get(default="").strip()
+        if not contact_name_selector:
+            contact_name_selector = response.xpath('//div[contains(@class, "contact-long")]/p[1]/text()').get(default="").strip()
+
+        contact_phone_selector = response.xpath('//div[contains(@class, "contact-long")]//p[span/label/@for="PhoneNumber"]/br/following-sibling::text()').get(default="").strip()
+        if not contact_phone_selector:
+            contact_phone_selector = "".join(response.xpath('//div[contains(@class, "contact-long")]//p[span/label[normalize-space(text())="Phone"]]/text()').getall()).strip()
 
         yield {
             "Service Name": response.css('p.lead::text').get(default="").strip(),
@@ -58,9 +82,9 @@ class AusTenderSpider(scrapy.Spider):
             "ATM Type": get_value("ATM Type"),
             "Description": get_value("Description", all_text=True),
             "Conditions for Participation": get_value("Conditions for Participation", all_text=True),
-            "Contact Name": response.css("div.contact-long p:nth-child(2)::text").get(default="").strip(),
-            "Contact Email": response.css("div.contact-long a.email::text").get(default="").strip(),
-            "Contact Phone": response.xpath('//div[contains(@class, "contact-long")]//p[span/label/@for="PhoneNumber"]/br/following-sibling::text()').get(default="").strip(),
+            "Contact Name": contact_name_selector,
+            "Contact Email": response.css("div.contact-long a.email::text").get(default="").strip() or contact_email_from_href,
+            "Contact Phone": contact_phone_selector,
             "Addenda Link": addenda_link_absolute,
             "ATM Documents Link": atm_docs_link_absolute,
             "URL": response.url
