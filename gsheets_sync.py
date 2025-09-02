@@ -4,6 +4,8 @@ Automatically exports spider data to Google Sheets after each spider run.
 """
 
 import logging
+import os
+import json
 import pandas as pd
 import gspread
 from gspread_dataframe import set_with_dataframe
@@ -14,11 +16,16 @@ from database_manager import DatabaseManager
 class GoogleSheetsSync:
     """Handles automatic syncing of spider data to Google Sheets"""
     
-    def __init__(self, spreadsheet_id: str, service_account_json: str):
+    def __init__(self, spreadsheet_id: str, service_account_json_content: str):
         self.spreadsheet_id = spreadsheet_id
-        self.service_account_json = service_account_json
+        self.service_account_json_content = service_account_json_content
         self.logger = logging.getLogger(__name__)
         self.db_manager = DatabaseManager()
+
+        # Allow service_account_json_content to be either inline JSON or a file path
+        if self.service_account_json_content and os.path.exists(self.service_account_json_content):
+            with open(self.service_account_json_content, 'r', encoding='utf-8') as f:
+                self.service_account_json_content = f.read()
         
         # Worksheet mapping: spider_name -> worksheet_title
         self.worksheet_map = {
@@ -44,7 +51,8 @@ class GoogleSheetsSync:
                 return True
             
             # Connect to Google Sheets
-            client = gspread.service_account(filename=self.service_account_json)
+            credentials = json.loads(self.service_account_json_content)
+            client = gspread.service_account_from_dict(credentials)
             spreadsheet = client.open_by_key(self.spreadsheet_id)
             
             # Get or create worksheet

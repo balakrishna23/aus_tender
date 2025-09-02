@@ -133,16 +133,28 @@ LOG_FILE_APPEND = False
 LOG_STDOUT = False
 
 # Google Sheets Auto-Sync Configuration
-GSHEETS_AUTO_SYNC = os.environ.get('GSHEETS_AUTO_SYNC', 'False').lower() in ('true', '1', 't')
-GSHEETS_SPREADSHEET_ID = os.environ.get('GSHEETS_SPREADSHEET_ID')
+GSHEETS_AUTO_SYNC = os.environ.get('GSHEETS_AUTO_SYNC', 'False').lower() in ('true', '1', 't', 'yes', 'y')
 
-# Prioritize GSHEETS_SERVICE_ACCOUNT_FILE for path to JSON, then GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT for direct content
+# Helper to strip accidental quotes from .env values
+_def_strip = lambda v: v.strip().strip('"').strip("'") if isinstance(v, str) else v
+
+GSHEETS_SPREADSHEET_ID = _def_strip(os.environ.get('GSHEETS_SPREADSHEET_ID'))
+
+# Resolve service account credentials from env only (no hardcoded files)
 GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = os.environ.get('GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT')
-gsheets_service_account_file = os.environ.get('GSHEETS_SERVICE_ACCOUNT_FILE')
+GSHEETS_SERVICE_ACCOUNT_FILE = os.environ.get('GSHEETS_SERVICE_ACCOUNT_FILE')
 
-if gsheets_service_account_file and os.path.exists(gsheets_service_account_file):
-    with open(gsheets_service_account_file) as f:
-        GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()
-elif not GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT and os.path.exists('./dazzling-tiger-470805-b5-a17f4a3ccf05.json'):
-    with open('./dazzling-tiger-470805-b5-a17f4a3ccf05.json') as f:
-        GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()
+# Case A: JSON content env var provided — if it points to a file, read it; else treat as inline JSON
+if GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT:
+    candidate = _def_strip(GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT)
+    if candidate and os.path.exists(candidate):
+        with open(candidate, 'r', encoding='utf-8') as f:
+            GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()
+    else:
+        GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = candidate
+# Case B: File path provided
+elif GSHEETS_SERVICE_ACCOUNT_FILE:
+    candidate = _def_strip(GSHEETS_SERVICE_ACCOUNT_FILE)
+    if candidate and os.path.exists(candidate):
+        with open(candidate, 'r', encoding='utf-8') as f:
+            GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()

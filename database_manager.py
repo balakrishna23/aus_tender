@@ -51,7 +51,7 @@ class DatabaseManager:
                     supplier_state_territory TEXT,
                     supplier_country TEXT,
                     supplier_abn TEXT,
-                    url TEXT,
+                    url TEXT UNIQUE,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -159,7 +159,7 @@ class DatabaseManager:
                     current_suppliers TEXT,  -- JSON field
                     previous_suppliers TEXT, -- JSON field
                     participant_agencies TEXT, -- JSON field
-                    url TEXT,
+                    url TEXT UNIQUE,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP

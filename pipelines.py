@@ -98,16 +98,16 @@ class DatabasePipeline:
         # Auto-sync to Google Sheets if enabled
         if spider.crawler.settings.getbool('GSHEETS_AUTO_SYNC', False):
             spreadsheet_id = spider.crawler.settings.get('GSHEETS_SPREADSHEET_ID')
-            service_account_json = spider.crawler.settings.get('GSHEETS_SERVICE_ACCOUNT_JSON')
+            service_account_json_content = spider.crawler.settings.get('GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT')
             
-            if spreadsheet_id and service_account_json:
+            if spreadsheet_id and service_account_json_content:
                 try:
-                    sync = GoogleSheetsSync(spreadsheet_id, service_account_json)
+                    sync = GoogleSheetsSync(spreadsheet_id, service_account_json_content)
                     sync.sync_spider(spider_name)
                 except Exception as e:
                     self.logger.error(f"Google Sheets auto-sync failed for {spider_name}: {e}")
             else:
-                self.logger.warning("Google Sheets auto-sync enabled but missing GSHEETS_SPREADSHEET_ID or GSHEETS_SERVICE_ACCOUNT_JSON")
+                self.logger.warning("Google Sheets auto-sync enabled but missing GSHEETS_SPREADSHEET_ID or GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT")
     
     def _validate_item(self, adapter, spider_name):
         """Validate item has minimum required fields"""

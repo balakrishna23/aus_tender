@@ -1,1 +1,6 @@
 python-dotenv
+pandas
+Scrapy
+gspread
+gspread-dataframe
+google-auth

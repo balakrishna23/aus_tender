@@ -9,10 +9,22 @@ class SpiderNameMiddleware:
     """
     Middleware to ensure all requests have spider name in metadata.
     This helps components (e.g., duplicate filter) identify which database to check.
+    Supports both synchronous and asynchronous spider output processing.
     """
 
     def process_spider_output(self, response, result, spider):
+        """Process spider output synchronously (for regular generators)."""
         for item_or_request in result:
+            # If it's a Request-like object, ensure meta exists and add spider name
+            if hasattr(item_or_request, 'meta'):
+                if not item_or_request.meta:
+                    item_or_request.meta = {}
+                item_or_request.meta['spider_name'] = spider.name
+            yield item_or_request
+
+    async def process_spider_output_async(self, response, result, spider):
+        """Process spider output asynchronously (for async generators)."""
+        async for item_or_request in result:
             # If it's a Request-like object, ensure meta exists and add spider name
             if hasattr(item_or_request, 'meta'):
                 if not item_or_request.meta:
