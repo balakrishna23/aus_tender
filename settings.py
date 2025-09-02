@@ -120,7 +120,15 @@ DUPEFILTER_DEBUG = False
 # Logging settings
 LOG_ENABLED = True
 LOG_LEVEL = 'DEBUG'
-LOG_FILE = 'scrapy.log'
+
+# Create a logs directory if it doesn't exist
+LOGS_DIR = 'logs'
+if not os.path.exists(LOGS_DIR):
+    os.makedirs(LOGS_DIR)
+
+# The log file will be set dynamically by the SpiderNameMiddleware
+# to 'logs/{spider_name}.log', but we can set a default here.
+LOG_FILE = os.path.join(LOGS_DIR, 'scrapy.log')
 LOG_FILE_APPEND = False
 LOG_STDOUT = False
 
