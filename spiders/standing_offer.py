@@ -45,6 +45,15 @@ class StandingOfferSpider(scrapy.Spider):
                 })
             return suppliers
 
+        # Extract Panel ID and Panel URL if this is a panel arrangement
+        panel_id = get_detail("Panel ID") or get_detail("PNL ID")
+        panel_url = ""
+        
+        # Look for panel links and make them absolute URLs
+        panel_link = response.xpath('//a[contains(@href, "/Panel/Show/")]/@href').get()
+        if panel_link:
+            panel_url = response.urljoin(panel_link)
+
         yield {
             "Title": response.css('p.lead::text').get(),
             "Contact Name": response.xpath('//div[@class="contact-long"]/p[2]/text()').get(default="").strip(),
@@ -56,9 +65,14 @@ class StandingOfferSpider(scrapy.Spider):
             "Primary Category": get_detail("Primary Category"),
             "Standing Offer Period": get_detail("Standing Offer Period"),
             "Description": get_detail("Description"),
+            "Amendments": get_detail("Amendments"),
             "Procurement Method": get_detail("Procurement Method"),
+            "ATM ID": get_detail("ATM ID"),
             "Multi Agency Access": get_detail("Multi Agency Access"),
+            "Multi Agency Access Type": get_detail("Multi Agency Access Type"),
             "Panel Arrangement": get_detail("Panel Arrangement"),
+            "Panel ID": panel_id,
+            "Panel URL": panel_url,
             "Agency Reference ID": get_detail("Agency Reference ID"),
             "Current Suppliers": get_table_data("CurrentSuppliers"),
             "Previous Suppliers": get_table_data("PreviousSuppliers"),

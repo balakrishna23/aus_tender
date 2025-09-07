@@ -55,13 +55,28 @@ class GoogleSheetsSync:
             client = gspread.service_account_from_dict(credentials)
             spreadsheet = client.open_by_key(self.spreadsheet_id)
             
-            # Get or create worksheet
-            worksheet_title = self.worksheet_map[spider_name]
-            worksheet = self._ensure_worksheet(spreadsheet, worksheet_title, len(df) + 1, len(df.columns))
+            if spider_name == 'standing_offer':
+                # Normalize standing offers into multiple worksheets
+                sheet_dfs = self._normalize_standing_offer(df)
+                for title, sdf in sheet_dfs.items():
+                    rows = len(sdf) + 1
+                    cols = max(len(sdf.columns), 1)
+                    ws = self._ensure_worksheet(spreadsheet, title, rows, cols)
+                    ws.clear()
+                    # Truncate any extreme long cells defensively
+                    sdf = self._truncate_large_cells(sdf)
+                    set_with_dataframe(ws, sdf, include_index=False)
+                self.logger.info(
+                    f"✅ Synced standing_offer into worksheets: {', '.join(sheet_dfs.keys())} (main rows: {len(sheet_dfs.get('standing_offers', pd.DataFrame()).index)})"
+                )
+                return True
             
-            # Replace worksheet contents with fresh data
-            worksheet.clear()
-            set_with_dataframe(worksheet, df, include_index=False)
+            # Default behavior for other spiders: single worksheet
+            worksheet_title = self.worksheet_map[spider_name]
+            ws = self._ensure_worksheet(spreadsheet, worksheet_title, len(df) + 1, len(df.columns))
+            ws.clear()
+            df = self._truncate_large_cells(df)
+            set_with_dataframe(ws, df, include_index=False)
             
             self.logger.info(f"✅ Synced {len(df)} rows to worksheet '{worksheet_title}' for {spider_name}")
             return True
@@ -102,3 +117,122 @@ class GoogleSheetsSync:
                 pass
         
         return worksheet
+
+    def _truncate_large_cells(self, df: pd.DataFrame, limit: int = 49000) -> pd.DataFrame:
+        """Defensively truncate any string cell longer than `limit` to avoid API errors."""
+        def truncate(val):
+            if isinstance(val, str) and len(val) > limit:
+                return val[:limit] + ' … [truncated]'
+            return val
+        if df.empty:
+            return df
+        for col in df.columns:
+            if df[col].dtype == object:
+                df[col] = df[col].map(truncate)
+        return df
+
+    def _normalize_standing_offer(self, df: pd.DataFrame) -> dict:
+        """Split large JSON list fields into child worksheets and add counts to main."""
+        import json as _json
+        main_cols = [
+            'title','son_id','agency','agency_reference_id','primary_category','description',
+            'publish_date','standing_offer_period','procurement_method','atm_id',
+            'multi_agency_access','multi_agency_access_type','panel_arrangement','panel_id','panel_url',
+            'contact_name','email_address','office_postcode','url','scraped_at','created_at','updated_at'
+        ]
+        existing_main_cols = [c for c in main_cols if c in df.columns]
+        main_df = df.copy()
+
+        def parse_list(cell):
+            if cell is None:
+                return []
+            if isinstance(cell, list):
+                return cell
+            if isinstance(cell, str) and cell.strip():
+                try:
+                    return _json.loads(cell)
+                except Exception:
+                    return []
+            return []
+
+        current_rows = []
+        previous_rows = []
+        participant_rows = []
+
+        for _, row in main_df.iterrows():
+            son_id = row.get('son_id')
+            url = row.get('url')
+
+            cur_list = parse_list(row.get('current_suppliers'))
+            prev_list = parse_list(row.get('previous_suppliers'))
+            part_list = parse_list(row.get('participant_agencies'))
+
+            # counts
+            main_df.at[_, 'current_suppliers_count'] = len(cur_list)
+            main_df.at[_, 'previous_suppliers_count'] = len(prev_list)
+            main_df.at[_, 'participant_agencies_count'] = len(part_list)
+
+            # build child rows
+            for item in cur_list:
+                current_rows.append({
+                    'son_id': son_id,
+                    'supplier_name': item.get('Supplier Name') or item.get('supplier_name') or item.get('Name') or '',
+                    'abn': item.get('ABN') or item.get('abn') or '',
+                    'state': item.get('State') or item.get('state') or '',
+                    'postcode': item.get('Postcode') or item.get('postcode') or '',
+                    'deed_start_date': item.get('Deed Start Date') or item.get('deed_start_date') or '',
+                    'deed_end_date': item.get('Deed End Date') or item.get('deed_end_date') or '',
+                    'url': url,
+                })
+            for item in prev_list:
+                previous_rows.append({
+                    'son_id': son_id,
+                    'supplier_name': item.get('Supplier Name') or item.get('supplier_name') or item.get('Name') or '',
+                    'abn': item.get('ABN') or item.get('abn') or '',
+                    'state': item.get('State') or item.get('state') or '',
+                    'postcode': item.get('Postcode') or item.get('postcode') or '',
+                    'deed_start_date': item.get('Deed Start Date') or item.get('deed_start_date') or '',
+                    'deed_end_date': item.get('Deed End Date') or item.get('deed_end_date') or '',
+                    'url': url,
+                })
+            for item in part_list:
+                participant_rows.append({
+                    'son_id': son_id,
+                    'agency_name': item.get('Agency Name') or item.get('Supplier Name') or item.get('agency_name') or item.get('Name') or '',
+                    'abn': item.get('ABN') or item.get('abn') or '',
+                    'state': item.get('State') or item.get('state') or '',
+                    'postcode': item.get('Postcode') or item.get('postcode') or '',
+                    'deed_start_date': item.get('Deed Start Date') or item.get('deed_start_date') or '',
+                    'deed_end_date': item.get('Deed End Date') or item.get('deed_end_date') or '',
+                    'url': url,
+                })
+
+        # Drop the large JSON columns from main
+        for col in ['current_suppliers','previous_suppliers','participant_agencies']:
+            if col in main_df.columns:
+                main_df = main_df.drop(columns=[col])
+
+        # Reorder columns and add counts at the end if not present
+        for count_col in ['current_suppliers_count','previous_suppliers_count','participant_agencies_count']:
+            if count_col not in main_df.columns:
+                main_df[count_col] = 0
+
+        if existing_main_cols:
+            ordered_cols = existing_main_cols + ['current_suppliers_count','previous_suppliers_count','participant_agencies_count']
+            # Keep any other columns that exist but weren't listed
+            tail_cols = [c for c in main_df.columns if c not in ordered_cols]
+            main_df = main_df[ordered_cols + tail_cols]
+
+        # Build child DataFrames
+        cur_df = pd.DataFrame(current_rows, columns=['son_id','supplier_name','abn','state','postcode','deed_start_date','deed_end_date','url']) if current_rows else pd.DataFrame(columns=['son_id','supplier_name','abn','state','postcode','deed_start_date','deed_end_date','url'])
+        prev_df = pd.DataFrame(previous_rows, columns=['son_id','supplier_name','abn','state','postcode','deed_start_date','deed_end_date','url']) if previous_rows else pd.DataFrame(columns=['son_id','supplier_name','abn','state','postcode','deed_start_date','deed_end_date','url'])
+        part_df = pd.DataFrame(participant_rows, columns=['son_id','agency_name','abn','state','postcode','deed_start_date','deed_end_date','url']) if participant_rows else pd.DataFrame(columns=['son_id','agency_name','abn','state','postcode','deed_start_date','deed_end_date','url'])
+
+        # Titles
+        titles = {
+            'standing_offers': main_df,
+            'standing_offers_current_suppliers': cur_df,
+            'standing_offers_previous_suppliers': prev_df,
+            'standing_offers_participant_agencies': part_df,
+        }
+        return titles

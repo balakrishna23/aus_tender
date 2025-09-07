@@ -2,286 +2,238 @@
 
 A high-performance Scrapy project that automatically scrapes Australian Government procurement data and stores it in optimized SQLite databases.
 
-## 🎯 **What This Does**
+Works on Windows, macOS, and Linux.
+
+## 🎯 What This Does
 
 Each spider automatically saves data to its own dedicated SQLite database:
 
-- **`aus_contract`** → `databases/aus_contract.db` (Government Contracts)
-- **`aus_tender`** → `databases/aus_tender.db` (Active Tenders/ATMs)  
-- **`planned_procurement`** → `databases/planned_procurement.db` (Planned Procurements)
-- **`standing_offer`** → `databases/standing_offer.db` (Standing Offer Notices)
+- `aus_contract` → `databases/aus_contract.db` (Government Contracts)
+- `aus_tender` → `databases/aus_tender.db` (Active Tenders/ATMs)
+- `planned_procurement` → `databases/planned_procurement.db` (Planned Procurements)
+- `standing_offer` → `databases/standing_offer.db` (Standing Offer Notices)
 
 ## ⚙️ Setup and Installation
 
-To get this project running on a new machine, follow these steps:
+### 1) Install Python 3.8+
+- Windows: Download and install from https://www.python.org/downloads/ and tick "Add Python to PATH" during installation.
+- Confirm in a new terminal:
+  - PowerShell: `python --version` or `py --version`
 
-### 1. Prerequisites
+### 2) Create and activate a virtual environment
 
-*   **Python 3.8+**: Ensure Python is installed. You can download it from [python.org](https://www.python.org/downloads/).
+Pick your OS/shell and run ONE of the following.
 
-### 2. Clone the Repository
+- Windows (PowerShell)
+  ```powershell
+  py -3 -m venv .venv
+  .\.venv\Scripts\Activate.ps1
+  # If activation is blocked, allow scripts for this session only:
+  # Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+  ```
 
-First, obtain the project code. If it's in a Git repository, use:
+- Windows (Command Prompt)
+  ```bat
+  py -3 -m venv .venv
+  .venv\Scripts\activate.bat
+  ```
 
+- macOS / Linux (bash/zsh)
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  ```
+
+### 3) Install dependencies
+
+Use the Python from your virtual environment:
 ```bash
-git clone <repository_url>
-cd <project_directory>
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements.txt
 ```
 
-Replace `<repository_url>` with the actual URL of your Git repository and `<project_directory>` with the name of the cloned directory.
+If you see build errors on Windows, upgrade pip/wheel as above and try again.
 
-### 3. Set Up a Virtual Environment
+### 4) Optional: Google Sheets auto-sync
 
-It's highly recommended to use a virtual environment to manage project dependencies and avoid conflicts with other Python projects.
+Create a `.env` file (next to `scrapy.cfg`) and add one of these options:
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate  # On Windows, use: .venv\Scripts\activate
+- Option A: Reference a Service Account JSON file (recommended)
+  ```dotenv
+  GSHEETS_AUTO_SYNC=True
+  GSHEETS_SPREADSHEET_ID=YOUR_SPREADSHEET_ID
+  # Windows path example (quotes allowed; code strips them):
+  GSHEETS_SERVICE_ACCOUNT_FILE="C:\\Users\\you\\keys\\service_account.json"
+  ```
+
+- Option B: Embed JSON content directly
+  ```dotenv
+  GSHEETS_AUTO_SYNC=True
+  GSHEETS_SPREADSHEET_ID=YOUR_SPREADSHEET_ID
+  GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT='{"type":"service_account", ... }'
+  ```
+
+Note: The project automatically reads `.env` and accepts either a file path or inline JSON content.
+
+## 🚀 Quick Start
+
+You can run spiders directly with Scrapy or use the batch runner.
+
+### A) Run individual spiders
+
+- Windows (PowerShell/CMD): prefer `python -m scrapy` (works even if `scrapy` isn’t on PATH)
+  ```powershell
+  python -m scrapy crawl aus_contract
+  python -m scrapy crawl aus_tender
+  python -m scrapy crawl planned_procurement
+  python -m scrapy crawl standing_offer
+  ```
+
+- macOS / Linux:
+  ```bash
+  scrapy crawl aus_contract
+  scrapy crawl aus_tender
+  scrapy crawl planned_procurement
+  scrapy crawl standing_offer
+  ```
+
+Logs per spider are written under `logs/` (e.g., `logs/aus_contract.log`).
+
+### B) Run all spiders with the batch runner
+
+The project includes a simple runner that executes spiders sequentially, summarises DB deltas, and points to log files.
+
+```powershell
+# Windows / macOS / Linux
+python run_spiders.py
 ```
 
-### 4. Install Dependencies
+Useful flags:
+- `--spiders` to select specific spiders (default runs all)
+- `--retries` number of retries per spider on failure (default 0)
+- `--timeout` per-spider timeout in seconds (default 0 = no timeout)
+- `--fail-fast` stop batch on first failure or sync error
 
-With the virtual environment activated, install all required Python packages listed in `requirements.txt`:
+Examples
+```powershell
+# Run just contracts and tenders, unlimited time
+python run_spiders.py --spiders aus_contract aus_tender
 
-```bash
-pip install -r requirements.txt
+# Run all spiders but cap each to 3 hours
+python run_spiders.py --timeout 10800
+
+# Stop on first failure
+python run_spiders.py --fail-fast
 ```
 
-### 5. Configure Google Sheets Integration (Optional)
+Note: By default there is no time limit (timeout=0). Previously this default was 2 hours.
 
-If you plan to use the Google Sheets auto-sync feature, you'll need to configure the service account credentials.
+## 📊 Database Management
 
-1.  **Get Service Account JSON**: Obtain your Google Service Account JSON key file.
-2.  **Create `.env` file**: In the root directory of the project (where `scrapy.cfg` is located), create a file named `.env`.
-3.  **Add Configuration to `.env`**: 
-    You have two options for providing the service account credentials:
+Query tooling is provided for quick inspection and exports.
 
-    *   **Option A: Reference the JSON file path (Recommended)**
-        If you have the JSON key file saved on the client's PC (e.g., `~/keys/my-service-account.json`), add this line to your `.env` file:
-        ```
-        GSHEETS_AUTO_SYNC=True
-        GSHEETS_SPREADSHEET_ID=YOUR_SPREADSHEET_ID_HERE
-        GSHEETS_SERVICE_ACCOUNT_FILE=/path/to/your/service_account.json
-        ```
-        Replace `/path/to/your/service_account.json` with the actual absolute path to the JSON file.
-
-    *   **Option B: Embed the JSON content directly**
-        You can also paste the entire JSON content directly into the `.env` file. **Be careful with special characters and quotes.**
-        ```
-        GSHEETS_AUTO_SYNC=True
-        GSHEETS_SPREADSHEET_ID=YOUR_SPREADSHEET_ID_HERE
-        GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT='{"type": "service_account", "project_id": "...", "private_key_id": "...", "private_key": "...", "client_email": "...", "client_id": "...", "auth_uri": "...", "token_uri": "...", "auth_provider_x509_cert_url": "...", "client_x509_cert_url": "...", "universe_domain": "..."}'
-        ```
-        Replace `YOUR_SPREADSHEET_ID_HERE` with the ID of your Google Sheet.
-
-Remember to keep the virtual environment activated (`source .venv/bin/activate`) whenever you are working with the project.
-
-## 🚀 **Quick Start**
-
-### 1. Run Individual Spiders
-```bash
-# Scrape contracts (saves to databases/aus_contract.db)
-scrapy crawl aus_contract
-
-# Scrape tenders (saves to databases/aus_tender.db)  
-scrapy crawl aus_tender
-
-# Scrape planned procurements (saves to databases/planned_procurement.db)
-scrapy crawl planned_procurement
-
-# Scrape standing offers (saves to databases/standing_offer.db)
-scrapy crawl standing_offer
-```
-
-### 2. Run All Spiders
-```bash
-# Run all spiders sequentially
-scrapy crawl aus_contract && scrapy crawl aus_tender && scrapy crawl planned_procurement && scrapy crawl standing_offer
-```
-
-## 📊 **Database Management**
-
-### View Database Information
-```bash
+```powershell
 # List all databases
 python db_query_tool.py --list
 
 # Get database info and schema
 python db_query_tool.py --info aus_contract
 
-# Get summary statistics
+# Summary stats
 python db_query_tool.py --stats aus_contract
-```
 
-### Query Databases
-```bash
-# Custom SQL queries
-python db_query_tool.py --spider aus_contract --query "SELECT agency, COUNT(*) FROM contracts GROUP BY agency LIMIT 10"
+# Custom SQL query
+python db_query_tool.py --spider aus_contract --query "SELECT agency, COUNT(*) FROM contracts GROUP BY agency ORDER BY COUNT(*) DESC LIMIT 10"
 
-# Export to CSV
+# Export full table to CSV
 python db_query_tool.py --spider aus_contract --export contracts_data.csv
 ```
 
-### Example Queries
+## 🏗️ Architecture Features
+
+### Smart pipelines
+- Automatic routing: each spider writes to its own SQLite DB
+- Data validation: ensures required fields are present
+- Duplicate handling: DB UPSERTs + a dupe filter that avoids re-scraping known URLs
+- Error handling: robust logging with per-spider stats
+
+### Optimized databases
+- Proper indexing on key fields (IDs, agency, dates, URL)
+- WAL mode + tuned pragmas for reliability and performance
+- JSON support for complex fields where needed
+
+### Data quality
+- Text cleaning to normalize whitespace and characters
+- Timestamp tracking via `scraped_at`, `created_at`, `updated_at`
+
+## 📁 Database Schemas (high-level)
+
+- Contracts (`aus_contract.db`): contract IDs, agency, category, values, supplier info, key dates, contact info
+- Tenders (`aus_tender.db`): ATM IDs, service/agency/category, publish/close, contacts, documents
+- Planned Procurements (`planned_procurement.db`): title, agency, category, ETA to market, status, contacts
+- Standing Offers (`standing_offer.db`): SON IDs, title/agency/category, period, participant agencies, suppliers
+
+## 🔧 Configuration Pointers
+
+- Pipelines in `settings.py` (actual classes):
+  ```python
+  ITEM_PIPELINES = {
+      "pipelines.DataCleaningPipeline": 200,
+      "pipelines.DatabasePipeline": 400,
+  }
+  ```
+- Duplicate filter is enabled by default and checks the database: `duplicate_filter.DatabaseAwareDupeFilter`
+- Databases are stored under `databases/`
+- Logs are written under `logs/` (one file per spider)
+
+## 📈 Example SQL
+
 ```sql
 -- Top agencies by contract count
-SELECT agency, COUNT(*) as contract_count 
-FROM contracts 
-GROUP BY agency 
-ORDER BY contract_count DESC 
+SELECT agency, COUNT(*) AS contract_count
+FROM contracts
+GROUP BY agency
+ORDER BY contract_count DESC
 LIMIT 10;
 
 -- Recent high-value contracts
-SELECT agency, supplier_name, contract_value_aud, publish_date 
-FROM contracts 
-WHERE contract_value_aud > 1000000 
+SELECT agency, supplier_name, contract_value_aud, publish_date
+FROM contracts
+WHERE contract_value_aud > 1000000
 ORDER BY publish_date DESC;
 
 -- Active tenders closing soon
-SELECT service_name, agency, close_date_time 
-FROM tenders 
-WHERE close_date_time > datetime('now') 
+SELECT service_name, agency, close_date_time
+FROM tenders
+WHERE close_date_time > datetime('now')
 ORDER BY close_date_time ASC;
 ```
 
-## 🏗️ **Architecture Features**
+## 🪟 Windows Tips
 
-### ✅ **Smart Pipeline System**
-- **Automatic Routing**: Each spider's data goes to its own database
-- **Data Validation**: Ensures required fields are present
-- **Duplicate Handling**: Prevents duplicate records with UPSERT operations
-- **Error Recovery**: Robust error handling with detailed logging
+- If `scrapy` isn’t recognized: use `python -m scrapy ...`
+- If virtualenv activation is blocked in PowerShell: run `Set-ExecutionPolicy -Scope Process RemoteSigned`, then `.\.venv\Scripts\Activate.ps1`.
+- File paths in `.env` can be quoted and use backslashes: `"C:\\path\\to\\file.json"` (quotes are automatically stripped).
+- If you see build errors from pip, upgrade tooling first: `python -m pip install --upgrade pip setuptools wheel`.
 
-### ✅ **Optimized Databases**
-- **Proper Indexing**: Fast queries on key fields (agency, dates, IDs)
-- **WAL Mode**: Better concurrency and performance
-- **Data Types**: Optimized column types for each field
-- **JSON Support**: Complex data (supplier lists) stored as JSON
+## 🧪 Advanced
 
-### ✅ **Data Quality**
-- **Text Cleaning**: Removes extra whitespace and unwanted characters
-- **Field Validation**: Ensures data integrity
-- **Timestamp Tracking**: Records when data was scraped
-- **Schema Consistency**: Standardized field names across databases
-
-## 📁 **Database Schemas**
-
-### Contracts Database (`aus_contract.db`)
-```sql
-- cn_id (TEXT, UNIQUE)
-- agency, category, description
-- contract_value_aud (REAL)
-- supplier information (name, location, ABN)
-- dates (publish, execution, end)
-- contact information
+Run with different Scrapy settings on the fly:
+```powershell
+python -m scrapy crawl aus_contract -s LOG_LEVEL=INFO
+python -m scrapy crawl aus_tender -s CONCURRENT_REQUESTS=32
 ```
 
-### Tenders Database (`aus_tender.db`)
-```sql
-- atm_id (TEXT, UNIQUE)
-- service_name, agency, category
-- dates (publish, close)
-- location, conditions
-- contact information
-- document links
-```
-
-### Planned Procurement Database (`planned_procurement.db`)
-```sql
-- title, agency, category
-- estimated_date_of_approach_to_market
-- status, change_comments
-- contact information
-```
-
-### Standing Offers Database (`standing_offer.db`)
-```sql
-- son_id (TEXT, UNIQUE)
-- title, agency, primary_category
-- standing_offer_period
-- supplier panels (JSON)
-- participant agencies (JSON)
-```
-
-## 🔧 **Configuration**
-
-### Pipeline Settings (in `settings.py`)
-```python
-ITEM_PIPELINES = {
-    "pipelines.DataCleaningPipeline": 200,    # Clean data
-    "pipelines.DuplicatesPipeline": 300,      # Handle duplicates  
-    "pipelines.DatabasePipeline": 400,        # Save to database
-}
-```
-
-### Database Location
-- Default: `databases/` directory
-- Configurable in `database_manager.py`
-
-## 📈 **Monitoring & Logging**
-
-### Real-time Statistics
-Each spider run shows:
-- Items processed/saved/failed
-- Database record counts
-- Performance metrics
-
-### Log Files
-- `scrapy.log` - Detailed scraping logs
-- Console output - Real-time progress
-
-## 🛠️ **Advanced Usage**
-
-### Custom Database Queries
+Programmatic querying:
 ```python
 from database_manager import DatabaseManager
 
-db_manager = DatabaseManager()
-with db_manager.get_connection('aus_contract') as conn:
-    cursor = conn.execute("SELECT * FROM contracts WHERE agency = ?", ("Department of Defence",))
-    results = cursor.fetchall()
+db = DatabaseManager()
+with db.get_connection('aus_contract') as conn:
+    for row in conn.execute("SELECT * FROM contracts WHERE agency=?", ("Department of Defence",)):
+        print(dict(row))
 ```
-
-### Batch Processing
-```bash
-# Run all spiders with custom settings
-scrapy crawl aus_contract -s LOG_LEVEL=INFO
-scrapy crawl aus_tender -s CONCURRENT_REQUESTS=32
-```
-
-## 🚨 **Error Handling**
-
-The system includes comprehensive error handling:
-- **Database Connection Issues**: Automatic retry with exponential backoff
-- **Data Validation Errors**: Logged with details for debugging
-- **Network Issues**: Scrapy's built-in retry mechanisms
-- **Schema Mismatches**: Graceful handling of unexpected data
-
-## 📊 **Performance Optimizations**
-
-- **Connection Pooling**: Efficient database connections
-- **Batch Inserts**: Optimized for large datasets
-- **Proper Indexing**: Fast queries on common fields
-- **WAL Mode**: Better concurrency
-- **Memory Management**: Efficient handling of large datasets
-
-## 🎯 **Best Practices**
-
-1. **Regular Runs**: Set up cron jobs for automated scraping
-2. **Database Maintenance**: Periodic VACUUM operations for optimization
-3. **Backup Strategy**: Regular database backups
-4. **Monitoring**: Track scraping success rates and data quality
-5. **Rate Limiting**: Respect website rate limits (configured in settings)
 
 ---
 
-## 🏆 **Why This Approach is Optimal**
-
-✅ **Production-Ready**: Enterprise-grade architecture with proper error handling  
-✅ **Scalable**: Handles large datasets efficiently  
-✅ **Maintainable**: Clean separation of concerns, easy to modify  
-✅ **Reliable**: ACID transactions, duplicate prevention, data validation  
-✅ **Fast**: Optimized queries, proper indexing, connection pooling  
-✅ **Flexible**: Easy to add new spiders or modify existing ones  
-
-This setup gives you a robust, scalable solution that automatically manages data storage while providing powerful querying capabilities. Each spider run is completely automated - just run the command and your data is safely stored in its dedicated database!
+This setup gives you a robust, scalable solution that automatically manages data storage while providing powerful querying and export capabilities on Windows, macOS, and Linux.

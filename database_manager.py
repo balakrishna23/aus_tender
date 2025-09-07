@@ -148,11 +148,16 @@ class DatabaseManager:
                     agency_reference_id TEXT,
                     primary_category TEXT,
                     description TEXT,
+                    amendments TEXT,
                     publish_date TEXT,
                     standing_offer_period TEXT,
                     procurement_method TEXT,
+                    atm_id TEXT,
                     multi_agency_access TEXT,
+                    multi_agency_access_type TEXT,
                     panel_arrangement TEXT,
+                    panel_id TEXT,
+                    panel_url TEXT,
                     contact_name TEXT,
                     email_address TEXT,
                     office_postcode TEXT,
@@ -170,6 +175,8 @@ class DatabaseManager:
                 'CREATE INDEX IF NOT EXISTS idx_standing_agency ON standing_offers(agency)',
                 'CREATE INDEX IF NOT EXISTS idx_standing_category ON standing_offers(primary_category)',
                 'CREATE INDEX IF NOT EXISTS idx_standing_publish_date ON standing_offers(publish_date)',
+                'CREATE INDEX IF NOT EXISTS idx_standing_panel_id ON standing_offers(panel_id)',
+                'CREATE INDEX IF NOT EXISTS idx_standing_panel_arrangement ON standing_offers(panel_arrangement)',
                 'CREATE INDEX IF NOT EXISTS idx_standing_offers_url ON standing_offers(url)'
             ]
         }

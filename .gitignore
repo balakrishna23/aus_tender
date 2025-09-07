@@ -1,22 +1,51 @@
 # Python
 __pycache__/
 *.pyc
-*.log
+*.pyo
+*.pyd
+.Python
 .venv/
-
-# Databases
-*.db
-databases/
+venv/
+env/
 
 # Environment variables
 .env
+.env.local
+.env.*.local
 
-# Google Sheets Service Account Key (if hardcoded)
-dazzling-tiger-470805-b5-a17f4a3ccf05.json
+# CSV exports and data files
+*.csv
+exports/
+data/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+databases/
+
+# Google Sheets Service Account Keys
+*.json
+dazzling-tiger-*.json
+service-account-*.json
+credentials.json
 
 # Scrapy specific
 scrapy.log
 logs/
-*.json
-dazzling-tiger-*.json
-.env
+*.log
+
+# Temporary files
+tmp_*
+temp_*
+.tmp/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
