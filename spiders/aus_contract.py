@@ -9,7 +9,8 @@ class AusContractSpider(scrapy.Spider):
     
     
     start_urls = [
-        "https://www.tenders.gov.au/Search/CnAdvancedSearch?Type=Cn&AgencyStatus=0&KeywordTypeSearch=AllWord&DateType=Publish+Date&page=1"
+        "https://www.tenders.gov.au/Search/CnAdvancedSearch?Type=Cn&AgencyStatus=0&KeywordTypeSearch=AllWord&DateType=Publish+Date&page=1",
+        "https://www.tenders.gov.au/Search/CnAdvancedSearch?SearchFrom=CnSearch&Type=Cn&AgencyStatus=-1&KeywordTypeSearch=AllWord&DateType=Current"
     ]
 
     def parse(self, response):

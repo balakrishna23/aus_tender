@@ -115,7 +115,8 @@ class DatabasePipeline:
             'aus_contract': ['CN ID', 'Agency'],
             'aus_tender': ['ATM ID', 'Agency'],
             'planned_procurement': ['Title', 'Agency'],
-            'standing_offer': ['SON ID', 'Agency']
+            'standing_offer': ['SON ID', 'Agency'],
+            'buy_ict': ['rfq_id']
         }
         
         required_fields = validation_rules.get(spider_name, [])

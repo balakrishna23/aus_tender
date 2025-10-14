@@ -179,6 +179,39 @@ class DatabaseManager:
                 'CREATE INDEX IF NOT EXISTS idx_standing_panel_arrangement ON standing_offers(panel_arrangement)',
                 'CREATE INDEX IF NOT EXISTS idx_standing_offers_url ON standing_offers(url)'
             ]
+        },
+        'buy_ict': {
+            'table_name': 'buy_ict_tenders',
+            'schema': '''
+                CREATE TABLE IF NOT EXISTS buy_ict_tenders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    rfq_type TEXT,
+                    rfq_id TEXT,
+                    rfq_published_date TEXT,
+                    deadline_for_asking_questions TEXT,
+                    rfq_closing_date TEXT,
+                    buyer TEXT,
+                    buyer_contact TEXT,
+                    estimated_start_date TEXT,
+                    initial_contract_duration TEXT,
+                    extension_term TEXT,
+                    number_of_extensions TEXT,
+                    location_of_work TEXT,
+                    working_arrangements TEXT,
+                    industry_briefing TEXT,
+                    requirements TEXT,
+                    criteria TEXT,
+                    url TEXT UNIQUE,
+                    scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''',
+            'indexes': [
+                'CREATE INDEX IF NOT EXISTS idx_buy_ict_rfq_id ON buy_ict_tenders(rfq_id)',
+                'CREATE INDEX IF NOT EXISTS idx_buy_ict_buyer ON buy_ict_tenders(buyer)',
+                'CREATE INDEX IF NOT EXISTS idx_buy_ict_url ON buy_ict_tenders(url)'
+            ]
         }
     }
     
@@ -187,7 +220,11 @@ class DatabaseManager:
         self.db_directory = Path(db_directory)
         self.db_directory.mkdir(exist_ok=True)
         self.logger = logging.getLogger(__name__)
-        
+
+    def __repr__(self):
+        """Return a string representation of the DatabaseManager."""
+        return f"<DatabaseManager(db_directory='{self.db_directory}')>"
+
     def get_db_path(self, spider_name: str) -> Path:
         """Get database file path for spider"""
         db_filename = f"{spider_name}.db"

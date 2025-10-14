@@ -1,3 +1,4 @@
+
 import os
 from dotenv import load_dotenv
 
@@ -20,14 +21,14 @@ NEWSPIDER_MODULE = "spiders"
 
 
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
-#USER_AGENT = "aus (+http://www.yourdomain.com)"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
 # Obey robots.txt rules
 ROBOTSTXT_OBEY = False
 
 # Concurrency and throttling settings
-CONCURRENT_REQUESTS = 16
-CONCURRENT_REQUESTS_PER_DOMAIN = 16
+CONCURRENT_REQUESTS = 8
+CONCURRENT_REQUESTS_PER_DOMAIN = 8
 
 
 # Disable cookies (enabled by default)
@@ -38,27 +39,14 @@ CONCURRENT_REQUESTS_PER_DOMAIN = 16
 
 # Override the default request headers:
 DEFAULT_REQUEST_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9',
 }
 
-# A list of real User-Agent strings to rotate per request
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:124.0) Gecko/20100101 Firefox/124.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-    "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 16_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/109.0",
-]
-
 # Enable the custom User-Agent rotating downloader middleware
+# Use default Scrapy UserAgentMiddleware and disable custom UA rotation
 DOWNLOADER_MIDDLEWARES = {
-    "middlewares.AusUserAgentMiddleware": 400,
+    # Keep Scrapy's default UserAgentMiddleware (do not disable)
+    # If you later add a custom UA middleware, place it after default headers, e.g., priority 460
 }
 
 
@@ -158,3 +146,14 @@ elif GSHEETS_SERVICE_ACCOUNT_FILE:
     if candidate and os.path.exists(candidate):
         with open(candidate, 'r', encoding='utf-8') as f:
             GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()
+
+DOWNLOAD_HANDLERS = {
+    "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
+}
+TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
+
+# Scrapy-Playwright tuning
+PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000  # 30s
+# Abort noisy resources to speed up pages and avoid network-idle traps
+PLAYWRIGHT_ABORT_REQUEST = "playwright_abort.should_abort_request"

@@ -32,7 +32,8 @@ class GoogleSheetsSync:
             'aus_contract': 'contracts',
             'aus_tender': 'tenders',
             'planned_procurement': 'planned_procurements',
-            'standing_offer': 'standing_offers'
+            'standing_offer': 'standing_offers',
+            'buy_ict': 'buy_ict_tenders'
         }
     
     def sync_spider(self, spider_name: str):

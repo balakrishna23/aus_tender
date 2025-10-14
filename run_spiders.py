@@ -28,6 +28,7 @@ DEFAULT_SPIDERS = [
     "aus_tender",
     "planned_procurement",
     "standing_offer",
+    "buy_ict",
 ]
 
 LOG_DIR = Path("logs")
