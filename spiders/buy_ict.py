@@ -1,20 +1,24 @@
 import scrapy
-import urllib.parse
-
+import re
+from typing import List, Optional
+from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 class BuyIctSpider(scrapy.Spider):
     name = 'buy_ict'
     custom_settings = {
         'LOG_FILE': 'logs/buy_ict.log',
-        # Keep Playwright fast and stable
         'PLAYWRIGHT_LAUNCH_OPTIONS': {
-            'headless': False,
-        }
-        
-        
-        # Right-size concurrency for browser automation
-        
+            'headless': True,
+        },
+        'PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT': 60000
     }
+
+    STATUS_LABELS = {
+        "live": "#cb-status-live",
+        "closing": "#cb-status-closingsoon",
+        "closed": "#cb-status-closed",
+    }
+    RESULTS_REGION_ARIA = "Opportunities"
 
     async def start(self):
         yield scrapy.Request(
@@ -22,82 +26,146 @@ class BuyIctSpider(scrapy.Spider):
             meta=dict(
                 playwright=True,
                 playwright_include_page=True,
-                # Avoid networkidle; use fast waits
-                playwright_page_goto_kwargs={'wait_until': 'domcontentloaded', 'timeout': 30000},
+                playwright_page_goto_kwargs={'wait_until': 'domcontentloaded'},
                 errback=self.errback,
-                spider_name=self.name  # Add spider name to meta
+                spider_name=self.name,
             ),
+            callback=self.parse_listings
         )
 
-    async def parse(self, response):
+    async def parse_listings(self, response):
         page = response.meta['playwright_page']
-        base_url = 'https://www.buyict.gov.au/sp'
-        opportunity_links = []
-        next_page_click_count = 0
-
-        # Optional: adjust filters
         try:
-            await page.get_by_role('button', name='Status filter').click(timeout=5000)
-            for text in ('Closed', 'Closing soon'):
-                try:
-                    await page.get_by_text(text, exact=True).click(timeout=1500)
-                except Exception:
-                    pass
+            self.logger.info("Applying filters and setting items per page...")
+            await self.set_status_filters(page, ["live", "closing", "closed"])
+            await self.set_items_per_page(page, "90")
+
+            self.logger.info("Starting pagination and link extraction...")
+            page_idx = 0
+            prev_sig: Optional[str] = None
+            while True:
+                page_idx += 1
+                self.logger.info(f"Scraping page {page_idx}")
+                
+                links = await self.extract_current_page_links(page)
+                self.logger.info(f"Found {len(links)} links on page {page_idx}")
+                for link_url in links:
+                    yield response.follow(
+                        link_url,
+                        callback=self.parse_opportunity,
+                        meta=dict(
+                            playwright=True,
+                            playwright_include_page=True,
+                            playwright_page_goto_kwargs={'wait_until': 'domcontentloaded'},
+                            errback=self.errback,
+                        )
+                    )
+
+                prev_sig = await self._get_page_signature(page)
+                moved = await self.click_next(page, prev_signature=prev_sig)
+                if not moved:
+                    self.logger.info("No more pages to paginate.")
+                    break
+
         except Exception as e:
-            self.logger.debug(f'Status filter interaction skipped: {e}')
+            self.logger.error(f"An error occurred during parsing listings: {e}")
+        finally:
+            self.logger.info("Finished scraping listings, closing page.")
+            await page.close()
 
-        # Ensure listings loaded
+    async def wait_for_results_settle(self, page: Page, timeout_ms: int = 15000):
+        await page.get_by_role("region", name=self.RESULTS_REGION_ARIA).wait_for(timeout=timeout_ms)
         try:
-            await page.wait_for_selector("//a[contains(@href,'opportunity_details')]", timeout=10000)
-        except Exception:
-            self.logger.warning('Listing items selector did not appear; continuing')
+            await page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except PlaywrightTimeoutError:
+            pass
+        await page.wait_for_timeout(500)
 
-        while True:
-            # Prefer anchors carrying the real href
-            anchors = await page.query_selector_all("//a[contains(@href,'opportunity_details')]")
-            if not anchors:
-                self.logger.warning(f"No opportunity links found on page {page.url}")
-            for el in anchors:
-                try:
-                    href = await el.get_attribute('href')
-                except Exception:
-                    href = None
-                if not href:
-                    continue
-                absolute_link = urllib.parse.urljoin(base_url, href)
-                opportunity_links.append(absolute_link)
-
-                yield scrapy.Request(
-                    url=absolute_link,
-                    callback=self.parse_opportunity,
-                    meta=dict(
-                        playwright=True,
-                        playwright_include_page=True,
-                        playwright_page_goto_kwargs={'wait_until': 'domcontentloaded', 'timeout': 30000},
-                        errback=self.errback,
-                    ),
-                )
-
-            # Pagination: click next if enabled
+    async def open_status_filter(self, page: Page):
+        status_btn = page.get_by_role("button", name=re.compile(r"^Status filter$|^Status$", re.I))
+        for _ in range(3):
+            await status_btn.click()
             try:
-                next_li = page.locator("//li[contains(@class, 'pagination-next')]")
-                class_name = await next_li.get_attribute('class')
-                if class_name and 'disabled' in class_name:
-                    break
-                next_link = next_li.locator('a')
-                if await next_link.count() == 0:
-                    break
-                await next_link.click()
-                next_page_click_count += 1
-                self.logger.info(f"Next page clicked {next_page_click_count} times.")
-                await page.wait_for_selector("//a[contains(@href,'opportunity_details')]", timeout=10000)
-            except Exception:
+                await page.wait_for_selector("#cb-status-live", state="visible", timeout=2000)
                 break
+            except PlaywrightTimeoutError:
+                continue
 
-        self.logger.info(f"Total opportunity links found: {len(opportunity_links)}")
-        self.logger.info(f"Total next page clicks: {next_page_click_count}")
-        self.logger.debug('Closing listing page')
-        await page.close()
+    async def set_status_filters(self, page: Page, statuses: List[str]):
+        await self.open_status_filter(page)
+        for key in statuses:
+            sel = self.STATUS_LABELS.get(key)
+            if not sel:
+                continue
+            el = page.locator(sel)
+            try:
+                await el.wait_for(state="visible", timeout=3000)
+            except PlaywrightTimeoutError:
+                await self.open_status_filter(page)
+            if not await el.is_checked():
+                await el.check(force=True)
+        await self.wait_for_results_settle(page)
+        await page.wait_for_timeout(5000)
+
+    async def set_items_per_page(self, page: Page, value: str = "90"):
+        try:
+            select = page.get_by_label(re.compile(r"Items per page:?", re.I))
+            await select.wait_for(state="visible", timeout=4000)
+            await select.select_option(value)
+        except Exception:
+            # Fallback if label-based selection fails
+            selects = page.locator("select")
+            for i in range(await selects.count()):
+                sel = selects.nth(i)
+                if await sel.locator(f'option[value="{value}"]').count() > 0:
+                    await sel.select_option(value)
+                    break
+        await self.wait_for_results_settle(page)
+        await page.wait_for_timeout(1500)
+
+    async def extract_current_page_links(self, page: Page) -> List[str]:
+        links = []
+        link_selector = page.locator('a[href*="id=opportunity"], a[href*="id=marketplace_opportunity"]')
+        for i in range(await link_selector.count()):
+            link = link_selector.nth(i)
+            url = await link.get_attribute("href")
+            if url:
+                links.append(url)
+        return links
+
+    async def _get_page_signature(self, page: Page) -> str:
+        try:
+            cards = page.locator('a[href*="id=opportunity"], a[href*="id=marketplace_opportunity"]')
+            count = await cards.count()
+            if count == 0:
+                return "count:0"
+            first_text = await cards.first.locator("xpath=ancestor::*[self::article or self::li or self::div][1]").inner_text()
+            last_text = await cards.last.locator("xpath=ancestor::*[self::article or self::li or self::div][1]").inner_text()
+            return f"count:{count}|first:{hash(first_text)}|last:{hash(last_text)}"
+        except Exception:
+            return "unknown"
+
+    async def click_next(self, page: Page, prev_signature: Optional[str] = None) -> bool:
+        try:
+            baseline = prev_signature or await self._get_page_signature(page)
+            await page.wait_for_timeout(2000)
+
+            next_button = page.get_by_role("link", name="›")
+            if await next_button.is_visible() and await next_button.is_enabled():
+                await next_button.click()
+            else:
+                return False
+
+            await self.wait_for_results_settle(page)
+
+            for _ in range(24):
+                sig = await self._get_page_signature(page)
+                if sig != baseline:
+                    return True
+                await page.wait_for_timeout(250)
+            return False
+        except Exception:
+            return False
 
     async def parse_opportunity(self, response):
         page = response.meta['playwright_page']
