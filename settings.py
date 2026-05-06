@@ -147,13 +147,4 @@ elif GSHEETS_SERVICE_ACCOUNT_FILE:
         with open(candidate, 'r', encoding='utf-8') as f:
             GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()
 
-DOWNLOAD_HANDLERS = {
-    "http": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-    "https": "scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler",
-}
 TWISTED_REACTOR = "twisted.internet.asyncioreactor.AsyncioSelectorReactor"
-
-# Scrapy-Playwright tuning
-PLAYWRIGHT_DEFAULT_NAVIGATION_TIMEOUT = 30_000  # 30s
-# Abort noisy resources to speed up pages and avoid network-idle traps
-PLAYWRIGHT_ABORT_REQUEST = "playwright_abort.should_abort_request"
