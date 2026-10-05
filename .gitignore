@@ -56,3 +56,6 @@ backups/
 *.png
 *.tar.gz
 databases_live/
+
+# Business documents (attached by the outreach agent)
+templates/*.pdf

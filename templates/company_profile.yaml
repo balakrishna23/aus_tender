@@ -1,0 +1,25 @@
+# Company profile for the outreach agent. The AI writer may ONLY claim what is written here.
+# >>> TEST DATA - replace every value before switching OUTREACH_MODE to live. <<<
+company: Illoura Services
+abn: "00 000 000 000"            # TEST
+website: www.illouraservices.com  # TEST
+summary: >
+  Australian-owned supplier of contract personnel to federal and state government agencies.
+what_we_supply:                   # matched against the tender; only these may be offered
+  - area: ICT specialists
+    roles: [security consultants, personnel security specialists, business analysts, data scientists,
+            AI and data engineers, developers, testers, project managers, service desk staff]
+  - area: Nursing, allied health and care staff
+    roles: [registered nurses, enrolled nurses, midwives, allied health professionals, support workers]
+clearances: [Baseline, NV1]       # candidates hold or can obtain these
+locations: [ACT, NSW, VIC, QLD]
+working_arrangements: [onsite, hybrid, remote]
+availability: Candidates can usually be put forward within the tender's response period.
+proof_points:                     # short facts the writer may use; nothing else
+  - Registered supplier on the Digital Marketplace Panel 2 (BuyICT)   # TEST
+  - Candidates are screened for referees and clearance eligibility before submission
+signature:
+  name: Test Sender
+  title: Business Development (TEST)
+  phone: "+61 2 0000 0000"        # TEST
+  email: heroanand2000@gmail.com

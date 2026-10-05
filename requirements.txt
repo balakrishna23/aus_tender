@@ -6,3 +6,5 @@ undetected-playwright
 gspread
 gspread-dataframe
 google-auth
+holidays>=0.60
+PyYAML>=6.0

@@ -248,6 +248,24 @@ Data clean-up applied on save (verified against the live sites, 2026-10-04):
 `python activity_log.py` prints a summary; `--items 50` lists the latest records.
 Logging never stops a run; it is backed up and shipped to the VPS with the other databases.
 
+#### Outreach agent (`outreach_agent.py`) — autonomous
+
+Runs hourly (Windows task `AusTenderOutreachAgent`). Each run: reads its inbox (unsubscribe →
+do-not-contact, bounce → invalid, real reply → forwarded to `OUTREACH_FORWARD_TO`), then — only
+9am–4pm Sydney time on business days — emails new people-related releases. Each email is written
+by the AI writer (Groq, `OUTREACH_LLM_MODEL`) from the tender's facts and
+`templates/company_profile.yaml` only, checked (reference, no invented numbers, links or pricing
+claims), and falls back to the template if a check fails. Signature and opt-out are added by code;
+`templates/capability_statement.pdf` is attached.
+
+- `OUTREACH_MODE=test` (default) sends everything to `OUTREACH_TEST_RECIPIENT`, subject
+  `[TEST → real contact]`. `live` sends to the real contacts.
+- Off switch: `SENDING` in the `settings` tab of the Outreach sheet. Log: its `sent` tab.
+- Limits: 5/day for the first 14 days, then `OUTREACH_DAILY_CAP`; 14-day cooldown per address;
+  pauses itself after 3 bounces in a day. Daily summary emailed after 4pm Sydney.
+- Manual: `python outreach_agent.py run --dry-run` (preview), `run --now` (ignore the window),
+  `inbox`, `summary`. Gmail login: a 16-letter App Password in `gaccount_pwd`.
+
 #### Outreach emails (`outreach.py`)
 
 Writes personalised emails to the contacts on new, people-related releases
