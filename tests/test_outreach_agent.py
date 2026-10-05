@@ -79,10 +79,10 @@ class DraftCheckTests(AgentTestCase):
         self.assertEqual(agent.check_draft('Senior Security Consultant (LH-1)', GOOD_BODY, self.facts(), PROFILE), [])
 
     def test_invented_number_link_and_missing_reference_are_caught(self):
-        body = GOOD_BODY.replace('LH-1', 'the tender').replace('NV1 clearance', 'NV1 clearance and 15 years '
+        body = GOOD_BODY.replace('LH-1', 'the tender').replace('NV1 clearance', 'NV1 clearance and 37 years '
                                                                                  'experience, see www.acme.test')
         problems = agent.check_draft('Security role', body, self.facts(), PROFILE)
-        self.assertTrue(any('15' in p for p in problems))
+        self.assertTrue(any('37' in p for p in problems))  # 37 never appears in a date
         self.assertTrue(any('link' in p for p in problems))
         self.assertTrue(any('reference' in p for p in problems))
 
@@ -106,7 +106,10 @@ class DraftCheckTests(AgentTestCase):
 
 class MessageTests(AgentTestCase):
     def test_test_mode_goes_only_to_dummy_with_attachment_signature_and_opt_out(self):
-        msg = agent.build_message(release(), 'Subject (LH-1)', GOOD_BODY, PROFILE, 'test')
+        pdf = os.path.join(self.dir.name, 'statement.pdf')  # the real PDF is not in git
+        with open(pdf, 'wb') as f:
+            f.write(b'%PDF-1.4 test')
+        msg = agent.build_message(release(), 'Subject (LH-1)', GOOD_BODY, PROFILE, 'test', attachment=pdf)
         self.assertEqual(msg['To'], 'dummy@test.example')
         self.assertTrue(msg['Subject'].startswith('[TEST → buyer@agency.gov.au]'))
         attachments = [p.get_filename() for p in msg.iter_attachments()]
