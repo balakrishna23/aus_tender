@@ -14,10 +14,9 @@ import json
 import sqlite3
 import sys
 import webbrowser
-from collections import Counter, defaultdict
+from collections import Counter
 from contextlib import closing
 from datetime import date, datetime, timedelta
-from pathlib import Path
 
 from project_paths import PROJECT_DIR, database_directory
 
@@ -271,7 +270,7 @@ def agent(d):
              ('Bounces', kinds.get('bounce', 0))]
     tile_html = ''.join(f'<div class="tile"><div class="tile-value">{v}</div><div class="muted">{k}</div></div>'
                         for k, v in tiles)
-    first = d['state'].get('first_send_day')
+    first = d['state'].get(f'first_send_day:{mode}')
     warm = (f'Warm-up: day {(date.today() - date.fromisoformat(first)).days + 1} of 14 (5 emails/day)'
             if first and (date.today() - date.fromisoformat(first)).days < 14 else 'Full daily cap')
     badge = ('<span class="pill warn"><span aria-hidden="true">■</span> TEST MODE: every email goes to the test inbox</span>'

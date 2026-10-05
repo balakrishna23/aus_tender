@@ -140,10 +140,12 @@ class GuardrailTests(AgentTestCase):
     def test_warm_up_then_full_cap(self):
         with patch.dict(os.environ, {'OUTREACH_DAILY_CAP': '20'}):
             with agent.closing(agent.state_db()) as conn:
-                self.assertEqual(agent.daily_cap(conn), 5)
-                conn.execute("INSERT INTO state VALUES ('first_send_day', ?)",
+                self.assertEqual(agent.daily_cap(conn, run_mode='test'), 5)
+                conn.execute("INSERT INTO state VALUES ('first_send_day:test', ?)",
                              ((date.today() - timedelta(days=20)).isoformat(),))
-                self.assertEqual(agent.daily_cap(conn), 20)
+                self.assertEqual(agent.daily_cap(conn, run_mode='test'), 20)
+                # Weeks of test sends do not count as warming up the live campaign.
+                self.assertEqual(agent.daily_cap(conn, run_mode='live'), 5)
 
     def test_candidates_skip_cooldown_soon_closing_and_unsubscribed(self):
         releases = [release('LH-1', 'a@x.gov.au'), release('LH-2', 'b@x.gov.au', closes=date.today().isoformat()),
@@ -177,6 +179,28 @@ class RunTests(AgentTestCase):
         again, smtp2 = self.run_agent(sheet, releases)
         self.assertEqual(again, [])  # cap reached today; nothing re-sent
         smtp2.send_message.assert_not_called()
+
+    def test_gmail_refusal_stops_the_batch_and_keeps_tenders_queued(self):
+        import smtplib
+        sheet, smtp = FakeSheet(), Mock()
+        smtp.send_message.side_effect = [None, smtplib.SMTPDataError(550, b'5.4.5 Daily user sending limit exceeded')]
+        releases = [release(f'LH-{i}', f'p{i}@x.gov.au') for i in range(1, 4)]
+        with patch.object(agent, 'alert') as alert:
+            results = agent.run(now=True, sheet=sheet, smtp_factory=lambda: smtp, profile=PROFILE, releases=releases,
+                                use_ai=False, sleep=lambda s: None)
+        self.assertEqual([r['status'] for r in results], ['sent'])
+        self.assertEqual(smtp.send_message.call_count, 2)  # stopped after the refusal
+        alert.assert_called_once()
+        with agent.closing(agent.state_db()) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM sends').fetchone()[0], 1)  # the rest retry later
+
+    def test_sheet_log_failure_does_not_stop_sending(self):
+        sheet, smtp = FakeSheet(), Mock()
+        sheet.log_send = Mock(side_effect=RuntimeError('Sheets API 503'))
+        results = agent.run(now=True, sheet=sheet, smtp_factory=lambda: smtp, profile=PROFILE, use_ai=False,
+                            releases=[release('LH-1', 'a@x.gov.au'), release('LH-2', 'b@x.gov.au')],
+                            sleep=lambda s: None)
+        self.assertEqual([r['status'] for r in results], ['sent', 'sent'])
 
     def test_off_switch_stops_everything(self):
         results, smtp = self.run_agent(FakeSheet(enabled=False), [release()])

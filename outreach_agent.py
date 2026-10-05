@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Autonomous outreach agent: emails the contacts on new people-related tenders.
 
-Each run (scheduled hourly in business hours):
+Each run (scheduled every 15 minutes; sends only in Sydney business hours):
   1. Checks the off switch ('settings' tab of the Outreach sheet; fails safe to OFF).
   2. Reads the agent's inbox: "unsubscribe" -> do-not-contact, bounces -> invalid,
      real replies -> forwarded to OUTREACH_FORWARD_TO.
@@ -144,22 +144,25 @@ def in_send_window(moment=None):
     return True, ''
 
 
-def daily_cap(conn, today=None):
+def first_send_key(run_mode):
+    # Per mode: test sends (all to one inbox) must not use up the live warm-up.
+    return f'first_send_day:{run_mode}'
+
+
+def daily_cap(conn, today=None, run_mode=None):
     """Warm-up: WARMUP_CAP a day for the first WARMUP_DAYS days of sending, then the full cap."""
     today = today or date.today()
-    started = conn.execute("SELECT value FROM state WHERE key = 'first_send_day'").fetchone()
-    if started and (today - date.fromisoformat(started[0])).days < WARMUP_DAYS:
-        return WARMUP_CAP
-    if not started:
+    started = conn.execute('SELECT value FROM state WHERE key = ?', (first_send_key(run_mode or mode()),)).fetchone()
+    if not started or (today - date.fromisoformat(started[0])).days < WARMUP_DAYS:
         return WARMUP_CAP
     return int(env('OUTREACH_DAILY_CAP', '20'))
 
 
-def pause_seconds(conn, today=None):
+def pause_seconds(conn, today=None, run_mode=None):
     """Gap between emails: 30s while the mailbox warms up, 10s after (OUTREACH_DELAY_SECONDS overrides)."""
     if env('OUTREACH_DELAY_SECONDS'):
         return float(env('OUTREACH_DELAY_SECONDS'))
-    return 30.0 if daily_cap(conn, today) == WARMUP_CAP else 10.0
+    return 30.0 if daily_cap(conn, today, run_mode) == WARMUP_CAP else 10.0
 
 
 def sent_today(conn, run_mode, today=None):
@@ -168,9 +171,9 @@ def sent_today(conn, run_mode, today=None):
                         (run_mode, day)).fetchone()[0]
 
 
-def bounces_today(conn, run_mode):
-    return conn.execute("SELECT COUNT(*) FROM events WHERE mode = ? AND kind = 'bounce' AND at >= ?",
-                        (run_mode, date.today().isoformat())).fetchone()[0]
+def events_today(conn, run_mode, kind='bounce'):
+    return conn.execute('SELECT COUNT(*) FROM events WHERE mode = ? AND kind = ? AND at >= ?',
+                        (run_mode, kind, date.today().isoformat())).fetchone()[0]
 
 
 # ── Choosing who to email ─────────────────────────────────────────────────────
@@ -820,10 +823,13 @@ def run(now=False, dry_run=False, use_ai=True, max_emails=None, sheet=None, smtp
             if not ok:
                 log.info('Not sending: %s', why)
                 return []
-        if bounces_today(conn, run_mode) >= int(env('OUTREACH_MAX_BOUNCES', '3')):
+        if events_today(conn, run_mode) >= int(env('OUTREACH_MAX_BOUNCES', '3')):
             log.warning('Too many bounces today; sending stays paused')
             return []
-        cap = daily_cap(conn)
+        if events_today(conn, run_mode, 'send_error') >= 2:
+            log.warning('Gmail refused sends twice today (e.g. its daily limit); trying again tomorrow')
+            return []
+        cap = daily_cap(conn, run_mode=run_mode)
         room = max(0, cap - sent_today(conn, run_mode))
         if max_emails is not None:
             room = min(room, max_emails)
@@ -835,7 +841,7 @@ def run(now=False, dry_run=False, use_ai=True, max_emails=None, sheet=None, smtp
         batch = picks[:room]
         with ThreadPoolExecutor(max_workers=max(1, min(2, len(batch)))) as pool:  # free AI tier: 8k tokens/min
             drafts = list(pool.map(lambda r: write_email(r, profile, use_ai=use_ai, ai=ai), batch))
-        pause = pause_seconds(conn)
+        pause = pause_seconds(conn, run_mode=run_mode)
         try:
             for row, (subject, body, writer, note) in zip(batch, drafts):
                 msg = build_message(row, subject, body, profile, run_mode)
@@ -856,15 +862,30 @@ def run(now=False, dry_run=False, use_ai=True, max_emails=None, sheet=None, smtp
                     status, error = 'sent', ''
                 except (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused) as e:
                     status, error = 'failed', str(e)[:300]
+                except smtplib.SMTPException as e:
+                    # Gmail refused the whole message or dropped the connection (often its daily
+                    # sending limit). Nothing is recorded, so these tenders are retried next run.
+                    log.error('Gmail refused %s: %s; stopping this batch', result['reference'], e)
+                    record_event(conn, 'send_error', f"{result['reference']}: {str(e)[:200]}")
+                    if events_today(conn, run_mode, 'send_error') == 1:
+                        try:
+                            alert(f'The outreach agent could not send ({e}). It retries once more today, '
+                                  f'then pauses until tomorrow.')
+                        except Exception:
+                            pass
+                    break
                 result.update(status=status, sent_at=now_text())
                 conn.execute('INSERT INTO sends (mode, release_key, intended_to, sent_to, subject, writer, '
                              'message_id, sent_at, status, error) VALUES (?,?,?,?,?,?,?,?,?,?)',
                              (run_mode, result['release_key'], result['intended_to'], result['sent_to'],
                               result['subject'], writer, msg['Message-ID'], result['sent_at'], status, error))
-                if not conn.execute("SELECT 1 FROM state WHERE key = 'first_send_day'").fetchone():
-                    conn.execute("INSERT INTO state VALUES ('first_send_day', ?)", (date.today().isoformat(),))
+                conn.execute('INSERT OR IGNORE INTO state VALUES (?, ?)',
+                             (first_send_key(run_mode), date.today().isoformat()))
                 conn.commit()
-                sheet.log_send(result)
+                try:  # the local database is the record; a Sheets hiccup must not stop the batch
+                    sheet.log_send(result)
+                except Exception as e:
+                    log.warning('Sent, but not logged to the Outreach sheet: %s', e)
                 activity_log.record_email(result['sent_to'], result['subject'], result['release_key'],
                                           f'{status} ({run_mode})', error)
                 log.info('%s %s -> %s [%s writer]', status, result['reference'], result['sent_to'], writer)
@@ -887,9 +908,9 @@ def run_with_inbox(**kwargs):
             log.info('Inbox: %s', counts)
         except Exception as e:
             log.error('Inbox check failed (sending continues): %s', e)
-        if bounces_today(conn, mode()) >= int(env('OUTREACH_MAX_BOUNCES', '3')):
+        if events_today(conn, mode()) >= int(env('OUTREACH_MAX_BOUNCES', '3')):
             sheet.switch_off('too many bounces today')
-            alert(f'The outreach agent paused itself: {bounces_today(conn, mode())} bounces today. '
+            alert(f'The outreach agent paused itself: {events_today(conn, mode())} bounces today. '
                   f'Check the do_not_contact tab, then set SENDING back to ON in the settings tab.')
             return []
     return run(sheet=sheet, **kwargs)
@@ -936,7 +957,7 @@ def summary(smtp_factory=smtp_connection):
 
 
 def scheduled():
-    """The hourly scheduled job: inbox always; sends only inside the window; after the window
+    """The scheduled job (every 15 minutes): inbox always; sends only inside the window; after the window
     closes on a business day, today's summary once."""
     results = run_with_inbox()
     moment = datetime.now(SYDNEY)
@@ -952,7 +973,7 @@ def scheduled():
 
 
 def agent_lock():
-    """Only one agent run at a time (hourly task + a manual run must never double-send)."""
+    """Only one agent run at a time (scheduled task + a manual run must never double-send)."""
     path = PROJECT_DIR / 'logs' / '.outreach_agent.lock'
     path.parent.mkdir(exist_ok=True)
     handle = open(path, 'a+')
@@ -973,8 +994,9 @@ def agent_lock():
 def main(argv=None):
     load_dotenv(PROJECT_DIR / '.env')
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s')
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    for stream in (sys.stdout, sys.stderr):  # logs may be redirected to a file
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     parser = argparse.ArgumentParser(description='Autonomous, personalised tender outreach')
     sub = parser.add_subparsers(dest='command', required=True)
     r = sub.add_parser('run', help='Check the inbox, then send to new matching tenders')
@@ -982,7 +1004,7 @@ def main(argv=None):
     r.add_argument('--dry-run', action='store_true', help='Write and show the emails; send nothing')
     r.add_argument('--no-ai', action='store_true', help='Use the fixed template instead of the AI writer')
     r.add_argument('--max', type=int, help='Send at most this many this run')
-    sub.add_parser('scheduled', help='Hourly job: inbox, sends in the window, daily summary')
+    sub.add_parser('scheduled', help="Scheduled job: inbox, sends in the window, daily summary")
     sub.add_parser('inbox', help='Process replies, unsubscribes and bounces only')
     sub.add_parser('summary', help="Email today's summary")
     args = parser.parse_args(argv)

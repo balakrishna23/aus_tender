@@ -4,11 +4,9 @@ Database Query Tool for Australian Government Procurement Data
 Provides easy access to query and analyze data from all spider databases
 """
 
-import sqlite3
 import json
 import argparse
 import pandas as pd
-from pathlib import Path
 from database_manager import DatabaseManager
 from typing import Optional, List, Dict, Any
 

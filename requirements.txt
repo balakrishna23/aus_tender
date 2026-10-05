@@ -4,6 +4,7 @@ Scrapy
 scrapy-playwright
 undetected-playwright
 gspread
+requests
 gspread-dataframe
 google-auth
 holidays>=0.60

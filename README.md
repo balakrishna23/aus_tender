@@ -250,7 +250,8 @@ Logging never stops a run; it is backed up and shipped to the VPS with the other
 
 #### Outreach agent (`outreach_agent.py`) — autonomous
 
-Runs hourly (Windows task `AusTenderOutreachAgent`). Each run: reads its inbox (unsubscribe →
+Runs every 15 minutes (Windows task `AusTenderOutreachAgent`; BuyICT is re-checked hourly in
+Sydney business hours by `AusTenderBuyIctHourly`). Each run: reads its inbox (unsubscribe →
 do-not-contact, bounce → invalid, real reply → forwarded to `OUTREACH_FORWARD_TO`), then — only
 9am–4pm Sydney time on business days — emails new people-related releases. Each email is written
 by the AI writer (Groq, `OUTREACH_LLM_MODEL`) from the tender's facts and
@@ -261,8 +262,10 @@ claims), and falls back to the template if a check fails. Signature and opt-out 
 - `OUTREACH_MODE=test` (default) sends everything to `OUTREACH_TEST_RECIPIENT`, subject
   `[TEST → real contact]`. `live` sends to the real contacts.
 - Off switch: `SENDING` in the `settings` tab of the Outreach sheet. Log: its `sent` tab.
-- Limits: 5/day for the first 14 days, then `OUTREACH_DAILY_CAP`; 14-day cooldown per address;
-  pauses itself after 3 bounces in a day. Daily summary emailed after 4pm Sydney.
+- Limits: 5/day for the first 14 days of sending in each mode (test sends do not warm up live),
+  then `OUTREACH_DAILY_CAP`; 30s between emails during warm-up, 10s after; 14-day cooldown per
+  address; pauses itself after 3 bounces in a day, and until tomorrow if Gmail refuses sends twice
+  (e.g. its daily limit). Daily summary emailed after 4pm Sydney.
 - Manual: `python outreach_agent.py run --dry-run` (preview), `run --now` (ignore the window),
   `inbox`, `summary`. Gmail login: a 16-letter App Password in `gaccount_pwd`.
 

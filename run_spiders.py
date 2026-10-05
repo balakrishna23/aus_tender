@@ -289,8 +289,9 @@ def run_spider(spider: str, timeout: int, retries: int, spider_args=()) -> int:
 
 
 def main() -> int:
-    if hasattr(sys.stdout, 'reconfigure'):
-        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    for stream in (sys.stdout, sys.stderr):  # logs may be redirected to a file
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     load_dotenv(PROJECT_DIR / '.env')
     parser = argparse.ArgumentParser(description="Simple batch runner for Scrapy spiders")
     parser.add_argument("--spiders", nargs="+", choices=DEFAULT_SPIDERS, default=DEFAULT_SPIDERS, help="Spiders to run sequentially")
