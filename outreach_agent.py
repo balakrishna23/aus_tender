@@ -33,6 +33,7 @@ import smtplib
 import sqlite3
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from datetime import date, datetime, timedelta
 from email.message import EmailMessage
@@ -152,6 +153,13 @@ def daily_cap(conn, today=None):
     if not started:
         return WARMUP_CAP
     return int(env('OUTREACH_DAILY_CAP', '20'))
+
+
+def pause_seconds(conn, today=None):
+    """Gap between emails: 30s while the mailbox warms up, 10s after (OUTREACH_DELAY_SECONDS overrides)."""
+    if env('OUTREACH_DELAY_SECONDS'):
+        return float(env('OUTREACH_DELAY_SECONDS'))
+    return 30.0 if daily_cap(conn, today) == WARMUP_CAP else 10.0
 
 
 def sent_today(conn, run_mode, today=None):
@@ -422,9 +430,9 @@ def ai_write(facts, profile, http=requests, agency=None, feedback=None):
     if not key:
         raise WriterError('no groq_api_key in .env')
     supplier = {k: v for k, v in profile.items() if k != 'signature'}
-    prompt = ('TENDER:\n' + json.dumps(facts, ensure_ascii=False, indent=1)
-              + '\n\nSUPPLIER:\n' + json.dumps(supplier, ensure_ascii=False, indent=1)
-              + '\n\nAGENCY:\n' + json.dumps(agency or {}, ensure_ascii=False, indent=1))
+    def compact(value):  # no indentation: fewer tokens per email
+        return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
+    prompt = f'TENDER:\n{compact(facts)}\n\nSUPPLIER:\n{compact(supplier)}\n\nAGENCY:\n{compact(agency or {})}'
     if feedback:
         prompt += ('\n\nYour previous draft was rejected for: ' + '; '.join(feedback)
                    + '. Write a new draft that fixes these.')
@@ -432,13 +440,22 @@ def ai_write(facts, profile, http=requests, agency=None, feedback=None):
         'model': env('OUTREACH_LLM_MODEL', 'openai/gpt-oss-120b'),
         'temperature': 0.5,
         'response_format': {'type': 'json_object'},
+        # A short email needs little deliberation; "low" cuts the thinking tokens (and rate-limit use).
+        'reasoning_effort': env('OUTREACH_LLM_REASONING', 'low'),
         'messages': [
             {'role': 'system', 'content': WRITER_RULES.replace('{greeting_name}', facts.get('greeting_name', 'there'))},
             {'role': 'user', 'content': prompt},
         ],
     }
-    response = http.post('https://api.groq.com/openai/v1/chat/completions',
-                         headers={'Authorization': f'Bearer {key}'}, json=payload, timeout=90)
+    for attempt in range(4):
+        response = http.post('https://api.groq.com/openai/v1/chat/completions',
+                             headers={'Authorization': f'Bearer {key}'}, json=payload, timeout=90)
+        if response.status_code != 429:
+            break
+        # Rate limit (tokens per minute): wait as long as the API asks, then try again.
+        wait = retry_after(response.headers)
+        log.info('AI writer rate-limited; waiting %.0fs (attempt %s)', wait, attempt + 1)
+        time.sleep(wait)
     if response.status_code != 200:
         raise WriterError(f'AI writer HTTP {response.status_code}: {response.text[:200]}')
     try:
@@ -446,6 +463,15 @@ def ai_write(facts, profile, http=requests, agency=None, feedback=None):
         return str(draft['subject']).strip(), strip_sign_off(str(draft['body']))
     except (KeyError, IndexError, ValueError, TypeError) as e:
         raise WriterError(f'AI writer returned an unusable reply: {e}') from e
+
+
+def retry_after(headers):
+    """Seconds to wait from Groq's headers ('retry-after: 7' or 'x-ratelimit-reset-tokens: 23.2s')."""
+    for name in ('retry-after', 'x-ratelimit-reset-tokens'):
+        m = re.match(r'(?:(\d+)m)?([\d.]+)s?$', str(headers.get(name) or '').strip())
+        if m:
+            return min(65.0, float(m.group(1) or 0) * 60 + float(m.group(2)) + 1)
+    return 20.0
 
 
 SIGN_OFF_RE = re.compile(r'^(kind regards|best regards|warm regards|regards|sincerely|yours (sincerely|faithfully)'
@@ -805,9 +831,13 @@ def run(now=False, dry_run=False, use_ai=True, max_emails=None, sheet=None, smtp
         picks = [r for r in candidates(conn, run_mode, releases) if r['contact_email'].strip().lower() not in blocked]
         log.info('Mode %s: %s candidates, room for %s today (cap %s)', run_mode, len(picks), room, cap)
         results, server = [], None
+        # Write every draft first, several at once (the AI call is the slow part), then send in order.
+        batch = picks[:room]
+        with ThreadPoolExecutor(max_workers=max(1, min(2, len(batch)))) as pool:  # free AI tier: 8k tokens/min
+            drafts = list(pool.map(lambda r: write_email(r, profile, use_ai=use_ai, ai=ai), batch))
+        pause = pause_seconds(conn)
         try:
-            for row in picks[:room]:
-                subject, body, writer, note = write_email(row, profile, use_ai=use_ai, ai=ai)
+            for row, (subject, body, writer, note) in zip(batch, drafts):
                 msg = build_message(row, subject, body, profile, run_mode)
                 result = {'release_key': outreach.release_key(row), 'intended_to': row['contact_email'].strip(),
                           'sent_to': msg['To'], 'subject': msg['Subject'], 'body': body, 'writer': writer,
@@ -820,7 +850,7 @@ def run(now=False, dry_run=False, use_ai=True, max_emails=None, sheet=None, smtp
                 if server is None:
                     server = smtp_factory()  # connect once, only when there is something to send
                 if results:
-                    sleep(float(env('OUTREACH_DELAY_SECONDS', '30')))
+                    sleep(pause)
                 try:
                     server.send_message(msg)
                     status, error = 'sent', ''
