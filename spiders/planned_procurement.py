@@ -12,8 +12,19 @@ class PlannedProcurementSpider(scrapy.Spider):
         "https://www.tenders.gov.au/Search/PpAdvancedSearch?Type=Pp&AgencyStatus=0&KeywordTypeSearch=AllWord&page=1"
     ]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Many rows say "As for APP": the contact is the one on the agency's Annual Procurement
+        # Plan page. Each plan page is fetched once per run; its rows wait for it.
+        self.plan_contacts = {}
+        self.waiting_for_plan = {}
+
     def parse(self, response):
-        for procurement in response.xpath('//article'):
+        articles = response.xpath('//article')
+        if not articles:
+            self.logger.error('No procurement rows extracted from %s; verify listing and selectors', response.url)
+            self.crawler.stats.inc_value('crawl/extraction_failed')
+        for procurement in articles:
             def get_detail(label):
                 return procurement.xpath(f'.//div[@class="list-desc"][span/text()="{label}:"]/div[@class="list-desc-inner"]//text()').get(default="").strip()
 
@@ -50,9 +61,13 @@ class PlannedProcurementSpider(scrapy.Spider):
             status_clean = ' '.join(status_raw.split())
 
             detail_url_relative = procurement.css('p.lead a::attr(href)').get(default="").strip()
+            if not detail_url_relative:
+                self.logger.error('Skipping procurement without a unique detail URL: %s', title)
+                self.crawler.stats.inc_value('crawl/extraction_failed')
+                continue
             detail_url_absolute = response.urljoin(detail_url_relative)
 
-            yield {
+            item = {
                 "Title": title,
                 "Agency": agency,
                 "Agency Reference": get_detail("Agency Reference"),
@@ -69,9 +84,52 @@ class PlannedProcurementSpider(scrapy.Spider):
                 "Last Updated": last_updated,
                 "URL": detail_url_absolute,
             }
+            if not contact_email and contact_name.lower().startswith('as for app'):
+                yield from self._with_plan_contact(item, detail_url_absolute.split('?')[0].split('#')[0])
+            else:
+                yield item
 
         # Follow pagination if available
         next_page = response.css('li.next a::attr(href)').get()
         if next_page:
             self.logger.info(f"Following next page: {response.urljoin(next_page)}")
             yield response.follow(next_page, callback=self.parse)
+
+    def _with_plan_contact(self, item, plan_url):
+        if plan_url in self.plan_contacts:
+            yield self._fill_contact(item, self.plan_contacts[plan_url])
+        elif plan_url in self.waiting_for_plan:
+            self.waiting_for_plan[plan_url].append(item)
+        else:
+            self.waiting_for_plan[plan_url] = [item]
+            yield scrapy.Request(plan_url, callback=self.parse_plan, errback=self.plan_failed,
+                                 cb_kwargs={'plan_url': plan_url})
+
+    @staticmethod
+    def _fill_contact(item, contact):
+        if contact.get('email'):
+            item = dict(item, **{'Contact Name': contact['name'] or item['Contact Name'],
+                                 'Contact Phone': contact['phone'], 'Contact Email': contact['email']})
+        return item
+
+    def parse_plan(self, response, plan_url):
+        """The plan's 'Contact Details' box: team name, phone and email."""
+        box = response.css('div.contact-long')[:1]
+        name = box.xpath('./p[not(contains(@class, "contact-heading"))][1]/text()').get(default='').strip()
+        phone = ' '.join(box.xpath('./p[span[contains(text(), "Phone")]]/text()').getall()).strip()
+        email = (box.css('a.email::text').get() or box.xpath('.//a[starts-with(@href, "mailto:")]/text()').get()
+                 or '').strip()
+        if not email:
+            self.logger.warning('No contact email on procurement plan %s', plan_url)
+            self.crawler.stats.inc_value('crawl/plan_contact_missing')
+        contact = {'name': name, 'phone': phone, 'email': email}
+        self.plan_contacts[plan_url] = contact
+        for item in self.waiting_for_plan.pop(plan_url, []):
+            yield self._fill_contact(item, contact)
+
+    def plan_failed(self, failure):
+        """Keep the rows (contact stays 'As for APP'); the next run tries the plan page again."""
+        plan_url = failure.request.cb_kwargs['plan_url']
+        self.logger.warning('Could not load procurement plan %s: %s', plan_url, failure.value)
+        self.crawler.stats.inc_value('crawl/plan_contact_missing')
+        yield from self.waiting_for_plan.pop(plan_url, [])

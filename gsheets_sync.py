@@ -8,7 +8,7 @@ import os
 import json
 import pandas as pd
 import gspread
-from gspread_dataframe import set_with_dataframe
+from sheets_writer import replace_worksheets
 from pathlib import Path
 from database_manager import DatabaseManager
 
@@ -23,9 +23,12 @@ class GoogleSheetsSync:
         self.db_manager = DatabaseManager()
 
         # Allow service_account_json_content to be either inline JSON or a file path
-        if self.service_account_json_content and os.path.exists(self.service_account_json_content):
-            with open(self.service_account_json_content, 'r', encoding='utf-8') as f:
-                self.service_account_json_content = f.read()
+        # (relative paths resolve beside the project, whatever the working directory).
+        candidate = (self.service_account_json_content or '').strip().strip('"').strip("'")
+        if candidate and not candidate.startswith('{'):
+            path = Path(candidate) if os.path.isabs(candidate) else Path(__file__).parent / candidate
+            if path.exists():
+                self.service_account_json_content = path.read_text(encoding='utf-8')
         
         # Worksheet mapping: spider_name -> worksheet_title
         self.worksheet_map = {
@@ -33,7 +36,9 @@ class GoogleSheetsSync:
             'aus_tender': 'tenders',
             'planned_procurement': 'planned_procurements',
             'standing_offer': 'standing_offers',
-            'buy_ict': 'buy_ict_tenders'
+            'buy_ict': 'buy_ict_tenders',
+            'act_tender': 'act_tenders',
+            'nsw_tender': 'nsw_tenders',
         }
     
     def sync_spider(self, spider_name: str):
@@ -59,14 +64,13 @@ class GoogleSheetsSync:
             if spider_name == 'standing_offer':
                 # Normalize standing offers into multiple worksheets
                 sheet_dfs = self._normalize_standing_offer(df)
+                replacements = []
                 for title, sdf in sheet_dfs.items():
                     rows = len(sdf) + 1
                     cols = max(len(sdf.columns), 1)
                     ws = self._ensure_worksheet(spreadsheet, title, rows, cols)
-                    ws.clear()
-                    # Truncate any extreme long cells defensively
-                    sdf = self._truncate_large_cells(sdf)
-                    set_with_dataframe(ws, sdf, include_index=False)
+                    replacements.append((ws, self._truncate_large_cells(sdf.copy())))
+                replace_worksheets(spreadsheet, replacements)
                 self.logger.info(
                     f"✅ Synced standing_offer into worksheets: {', '.join(sheet_dfs.keys())} (main rows: {len(sheet_dfs.get('standing_offers', pd.DataFrame()).index)})"
                 )
@@ -75,9 +79,7 @@ class GoogleSheetsSync:
             # Default behavior for other spiders: single worksheet
             worksheet_title = self.worksheet_map[spider_name]
             ws = self._ensure_worksheet(spreadsheet, worksheet_title, len(df) + 1, len(df.columns))
-            ws.clear()
-            df = self._truncate_large_cells(df)
-            set_with_dataframe(ws, df, include_index=False)
+            self._write_dataframe(ws, df)
             
             self.logger.info(f"✅ Synced {len(df)} rows to worksheet '{worksheet_title}' for {spider_name}")
             return True
@@ -86,6 +88,31 @@ class GoogleSheetsSync:
             self.logger.error(f"❌ Failed to sync {spider_name} to Google Sheets: {e}")
             return False
     
+    def sync_releases(self, worksheet_title: str = 'new_releases') -> bool:
+        """Publish the releases feed (newest first) so results are visible off the server."""
+        import sqlite3
+        from contextlib import closing
+        from project_paths import database_directory
+        path = database_directory() / 'releases.db'
+        if not path.exists():
+            self.logger.info('No releases feed yet, skipping sync')
+            return True
+        try:
+            with closing(sqlite3.connect(path)) as conn:
+                df = pd.read_sql_query(
+                    "SELECT first_seen_at, status, source, published_on, closes_at, title, buyer, "
+                    "category, notice_type, location, contact_name, contact_email, url, source_id, "
+                    "description, updated_at FROM releases ORDER BY first_seen_at DESC, published_on DESC", conn)
+            credentials = json.loads(self.service_account_json_content)
+            spreadsheet = gspread.service_account_from_dict(credentials).open_by_key(self.spreadsheet_id)
+            ws = self._ensure_worksheet(spreadsheet, worksheet_title, len(df) + 1, len(df.columns))
+            self._write_dataframe(ws, self._truncate_large_cells(df))
+            self.logger.info(f"✅ Synced {len(df)} releases to worksheet '{worksheet_title}'")
+            return True
+        except Exception as e:
+            self.logger.error(f"❌ Failed to sync releases to Google Sheets: {e}")
+            return False
+
     def _get_spider_data(self, spider_name: str) -> pd.DataFrame:
         """Get all data for a spider from its database"""
         if spider_name not in self.db_manager.SCHEMAS:
@@ -94,7 +121,8 @@ class GoogleSheetsSync:
         table = self.db_manager.SCHEMAS[spider_name]["table_name"]
         with self.db_manager.get_connection(spider_name) as conn:
             # Preserve column order as in the table definition
-            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()
+                    if r[1] != 'content_hash']
             query = f"SELECT {', '.join(cols)} FROM {table}"
             df = pd.read_sql_query(query, conn)
         
@@ -110,13 +138,6 @@ class GoogleSheetsSync:
                 rows=str(max(rows, 2)), 
                 cols=str(max(cols, 2))
             )
-        else:
-            # Resize to fit data (keep at least 2x2)
-            try:
-                worksheet.resize(rows=max(rows, 2), cols=max(cols, 2))
-            except Exception:
-                pass
-        
         return worksheet
 
     def _truncate_large_cells(self, df: pd.DataFrame, limit: int = 49000) -> pd.DataFrame:
@@ -131,6 +152,11 @@ class GoogleSheetsSync:
             if df[col].dtype == object:
                 df[col] = df[col].map(truncate)
         return df
+
+    def _write_dataframe(self, worksheet, df: pd.DataFrame, chunk_size: int = 5000):
+        """Replace a worksheet in bounded API writes, including its header once."""
+        df = self._truncate_large_cells(df.copy())
+        replace_worksheets(worksheet.spreadsheet, [(worksheet, df)], chunk_size)
 
     def _normalize_standing_offer(self, df: pd.DataFrame) -> dict:
         """Split large JSON list fields into child worksheets and add counts to main."""

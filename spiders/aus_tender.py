@@ -1,34 +1,59 @@
+from datetime import timedelta
+
 import scrapy
 
+from spiders.austender_common import (AusTenderListingMixin, austender_day, date_windows,
+                                      search_url)
 
-class AusTenderSpider(scrapy.Spider):
+
+class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
+    """Approaches to market (ATMs).
+
+    Every run: all open ATMs (re-fetched, they get addenda and new close dates),
+    all recently closed ATMs and ATMs archived in the last ARCHIVE_LOOKBACK_DAYS.
+    A closed ATM is fetched once; after that its stored /ShowClosed/ page is final.
+    ``-a since=2015-01-01`` backfills the archive in monthly windows.
+    """
+
     name = "aus_tender"
+    id_label = "ATM ID"
     custom_settings = {
         'LOG_FILE': 'logs/aus_tender.log',
+        'LOG_LEVEL': 'INFO',
+        'AUTOTHROTTLE_ENABLED': True,
     }
-    
-    
-    start_urls = [
-        
-        "https://www.tenders.gov.au/Search/AtmAdvancedSearch?Type=Atm&AtmType=published%2Cclosed&AgencyStatus=0&KeywordTypeSearch=AllWord",
-        "https://www.tenders.gov.au/Search/AtmAdvancedSearch?Type=Atm&AtmType=published%2Cclosed%2Carchived&AgencyStatus=0&KeywordTypeSearch=AllWord"
-    ]
+    # Only a safety net for downtime: anything newer was already seen as open or closed.
+    ARCHIVE_LOOKBACK_DAYS = 14
+    # ~85 ATMs are published per month; monthly windows stay far below the 10,000 cap.
+    WINDOW_DAYS = 31
 
-    def parse(self, response):
-        # Extract all tender links from the listing page
-        # Look for links that go to /Atm/Show/ or /Advert/Show/ pages
-        tender_links = response.xpath('//div[@class="list-desc" and ./span/text()="ATM ID:"]/div[@class="list-desc-inner"]/a/@href').getall()
-        
-        
-    
-        for link in tender_links:
-            yield response.follow(link, callback=self.parse_tender)
+    def __init__(self, since=None, refresh_existing=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._init_listing(since, refresh_existing)
+        self.detail_callback = self.parse_tender
 
-        # Follow pagination if available
-        next_page = response.css('li.next a::attr(href)').get()
-        if next_page:
-            self.logger.info(f"Following next page: {response.urljoin(next_page)}")
-            yield response.follow(next_page, callback=self.parse)
+    def start_requests(self):
+        self.load_stored()
+        if getattr(self, 'start_urls', None):
+            for url in self.start_urls:
+                yield self.listing_request(url, 'default')
+            return
+        base = dict(Type='Atm', AgencyStatus='0', KeywordTypeSearch='AllWord')
+        for kind in ('published', 'closed'):
+            yield self.listing_request(search_url('AtmAdvancedSearch', AtmType=kind, **base), kind)
+        since = self.since or (self.today - timedelta(days=self.ARCHIVE_LOOKBACK_DAYS))
+        for start, end in date_windows(since, self.today, self.WINDOW_DAYS):
+            yield self.listing_request(search_url(
+                'AtmAdvancedSearch', AtmType='archived', PublishFrom=austender_day(start),
+                PublishTo=austender_day(end), **base), 'archived')
+
+    async def start(self):
+        for request in self.start_requests():
+            yield request
+
+    def should_fetch(self, guid, stored_url, listing_kind):
+        # Open notices change; a stored closed notice is final.
+        return listing_kind in ('published', 'default') or '/ShowClosed/' not in stored_url
 
     def parse_tender(self, response):
         """
@@ -45,11 +70,7 @@ class AusTenderSpider(scrapy.Spider):
                 return response.xpath(selector + '/text()[1]').get(default="").strip()
 
         close_date_raw = get_value("Close Date & Time", all_text=True)
-        close_date_parts = close_date_raw.split()
-        if len(close_date_parts) >= 3:
-            close_date = f"{close_date_parts[0]} {close_date_parts[1]} {close_date_parts[2]}"
-        else:
-            close_date = close_date_raw
+        close_date = close_date_raw
 
         # Extract ATM Documents link using tested selector
         atm_docs_link_relative = response.xpath('//a[@class="rBtn" and contains(text(), "ATM Documents")]/@href').get()

@@ -16,9 +16,9 @@ from typing import Optional, List, Dict, Any
 class DatabaseQueryTool:
     """Tool for querying and analyzing spider databases"""
     
-    def __init__(self, db_directory: str = "databases"):
+    def __init__(self, db_directory: Optional[str] = None):
         self.db_manager = DatabaseManager(db_directory)
-        self.db_directory = Path(db_directory)
+        self.db_directory = self.db_manager.db_directory
     
     def list_databases(self) -> List[str]:
         """List all available databases"""
@@ -87,13 +87,14 @@ class DatabaseQueryTool:
                 # Total records
                 cursor = conn.execute(f"SELECT COUNT(*) FROM {table_name}")
                 stats['total_records'] = cursor.fetchone()[0]
+                agency_column = 'buyer' if spider_name == 'buy_ict' else 'agency'
                 
                 # Records by agency (top 10)
                 cursor = conn.execute(f"""
-                    SELECT agency, COUNT(*) as count 
+                    SELECT {agency_column} AS agency, COUNT(*) as count
                     FROM {table_name} 
-                    WHERE agency IS NOT NULL 
-                    GROUP BY agency 
+                    WHERE {agency_column} IS NOT NULL
+                    GROUP BY {agency_column}
                     ORDER BY count DESC 
                     LIMIT 10
                 """)

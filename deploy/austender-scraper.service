@@ -1,0 +1,20 @@
+[Unit]
+Description=Australian procurement scrapers + releases feed (incremental)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=scraper
+WorkingDirectory=/opt/aus_tender
+# .env is read by the app itself (python-dotenv); systemd's parser mangles quoted values.
+# Dates such as "published today" and "closed" must follow Australian, not server (UTC), time.
+Environment=TZ=Australia/Sydney
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/aus_tender/.browsers
+Environment=PYTHONUNBUFFERED=1
+# 4h per spider covers a catch-up after downtime; normal runs take ~12 min in total.
+ExecStart=/opt/aus_tender/.venv/bin/python run_spiders.py --timeout 14400 --retries 1
+ExecStartPost=/opt/aus_tender/.venv/bin/python backup_databases.py --keep 14
+# A failed spider must not skip the backup or block the next scheduled run.
+SuccessExitStatus=0 1
+Nice=10

@@ -26,6 +26,7 @@ class DatabaseAwareDupeFilter(RFPDupeFilter):
         # so from_crawler may not be called.
         self.database_manager = DatabaseManager()
         self.stats = {}  # Per-spider statistics
+        self.spider_name = None
         self.logger = logging.getLogger(__name__)
 
     @classmethod
@@ -53,6 +54,7 @@ class DatabaseAwareDupeFilter(RFPDupeFilter):
 
     def spider_opened(self, spider):
         """Called when a spider is opened."""
+        self.spider_name = spider.name
         # Initialize stats for this spider
         self.stats[spider.name] = {
             'database_duplicates_filtered': 0,
@@ -67,7 +69,7 @@ class DatabaseAwareDupeFilter(RFPDupeFilter):
         Returns True if it's a duplicate, False otherwise.
         """
         # The SpiderNameMiddleware should add this to the meta
-        spider_name = request.meta.get('spider_name')
+        spider_name = request.meta.get('spider_name') or self.spider_name
         if not spider_name:
             self.logger.warning(f"Spider name not found in request meta for {request.url}. Dupe check may be unreliable.")
             # Fallback or default behavior
@@ -95,6 +97,11 @@ class DatabaseAwareDupeFilter(RFPDupeFilter):
 
     def _is_database_duplicate(self, request, spider_name):
         """Check if the request's URL exists in the database."""
+        # Mutable notices must be revisited so their dates, contacts and titles can update.
+        if request.meta.get('refresh_existing'):
+            return False
+        if spider_name in ('aus_tender', 'standing_offer', 'planned_procurement', 'act_tender', 'nsw_tender'):
+            return False
         # Skip checking for pages that list multiple tenders/contracts (listing pages)
         if self._should_skip_duplicate_check(request.url):
             return False

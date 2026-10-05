@@ -1,9 +1,10 @@
 
 import os
 from dotenv import load_dotenv
+from project_paths import PROJECT_DIR
 
 # Load environment variables from .env file
-load_dotenv()
+load_dotenv(PROJECT_DIR / '.env')
 
 # Scrapy settings for aus project
 #
@@ -28,7 +29,9 @@ ROBOTSTXT_OBEY = False
 
 # Concurrency and throttling settings
 CONCURRENT_REQUESTS = 8
-CONCURRENT_REQUESTS_PER_DOMAIN = 8
+CONCURRENT_REQUESTS_PER_DOMAIN = 2
+DOWNLOAD_DELAY = 1
+DOWNLOAD_TIMEOUT = 60
 
 
 # Disable cookies (enabled by default)
@@ -45,6 +48,8 @@ DEFAULT_REQUEST_HEADERS = {
 # Enable the custom User-Agent rotating downloader middleware
 # Use default Scrapy UserAgentMiddleware and disable custom UA rotation
 DOWNLOADER_MIDDLEWARES = {
+    # Runs before RetryMiddleware (550) so 429s slow the crawl instead of dropping notices.
+    "middlewares.RateLimitBackoffMiddleware": 560,
     # Keep Scrapy's default UserAgentMiddleware (do not disable)
     # If you later add a custom UA middleware, place it after default headers, e.g., priority 460
 }
@@ -78,6 +83,9 @@ ITEM_PIPELINES = {
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/autothrottle.html
 AUTOTHROTTLE_ENABLED = True
+AUTOTHROTTLE_START_DELAY = 2
+AUTOTHROTTLE_MAX_DELAY = 120
+AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
 # The initial download delay
 #AUTOTHROTTLE_START_DELAY = 5
 # The maximum download delay to be set in case of high latencies
@@ -133,8 +141,12 @@ GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = os.environ.get('GSHEETS_SERVICE_ACCOUNT_J
 GSHEETS_SERVICE_ACCOUNT_FILE = os.environ.get('GSHEETS_SERVICE_ACCOUNT_FILE')
 
 # Case A: JSON content env var provided — if it points to a file, read it; else treat as inline JSON
+def _project_path(value):
+    """Relative key-file paths resolve beside this project, whatever the working directory."""
+    return value if not value or os.path.isabs(value) or value.startswith('{') else str(PROJECT_DIR / value)
+
 if GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT:
-    candidate = _def_strip(GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT)
+    candidate = _project_path(_def_strip(GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT))
     if candidate and os.path.exists(candidate):
         with open(candidate, 'r', encoding='utf-8') as f:
             GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()
@@ -142,7 +154,7 @@ if GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT:
         GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = candidate
 # Case B: File path provided
 elif GSHEETS_SERVICE_ACCOUNT_FILE:
-    candidate = _def_strip(GSHEETS_SERVICE_ACCOUNT_FILE)
+    candidate = _project_path(_def_strip(GSHEETS_SERVICE_ACCOUNT_FILE))
     if candidate and os.path.exists(candidate):
         with open(candidate, 'r', encoding='utf-8') as f:
             GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT = f.read()

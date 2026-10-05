@@ -1,10 +1,28 @@
 import json
+import html
 import re
 import time
+from datetime import datetime
 from urllib.parse import parse_qs, quote, urlparse
 from urllib.parse import urljoin
 
 import scrapy
+from database_manager import DatabaseManager
+
+
+HTML_BREAK = re.compile(r'<\s*(br|/p|/div|/li|/h\d|/tr)\s*/?>', re.I)
+HTML_TAG = re.compile(r'<[^>]+>')
+
+
+def html_to_text(value):
+    """Buyers write requirements in a rich-text editor; keep the words and line breaks, not the markup."""
+    if not isinstance(value, str) or '<' not in value:
+        return value
+    text = HTML_BREAK.sub('\n', value)
+    text = re.sub(r'<\s*li[^>]*>', '\n• ', text, flags=re.I)
+    text = html.unescape(HTML_TAG.sub('', text)).replace('\xa0', ' ')
+    lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in text.replace('\r', '').split('\n')]
+    return '\n'.join(line for line in lines if line)
 
 
 class BuyIctApiSpider(scrapy.Spider):
@@ -18,6 +36,13 @@ class BuyIctApiSpider(scrapy.Spider):
     name = "buy_ict"
     custom_settings = {
         "LOG_FILE": "logs/buy_ict.log",
+        "LOG_LEVEL": "INFO",
+        # The project-wide 1s DOWNLOAD_DELAY applies per domain, which capped this
+        # spider at ~50 requests/min regardless of concurrency. The API copes with 4 at once.
+        "CONCURRENT_REQUESTS": 8,
+        "CONCURRENT_REQUESTS_PER_DOMAIN": 4,
+        "DOWNLOAD_DELAY": 0.25,
+        "AUTOTHROTTLE_ENABLED": False,
     }
 
     # Fallback IDs observed currently; spider attempts dynamic discovery first.
@@ -25,21 +50,91 @@ class BuyIctApiSpider(scrapy.Spider):
     FALLBACK_RESULTS_RECTANGLE_ID = "bc93ec0a8738d950f973a8e50cbb3598"
     FALLBACK_DETAIL_RECTANGLE_ID = "698ffe151b4d411064f3a68b274bcbea"
 
-    def __init__(self, max_pages=1, page_size=90, *args, **kwargs):
+    def __init__(self, max_pages=None, page_size=90, summary_only=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.max_pages = max(1, int(max_pages))
+        # Crawl the entire result set by default. A page limit is useful for smoke runs.
+        self.max_pages = max(1, int(max_pages)) if max_pages is not None else None
         self.page_size = max(1, int(page_size))
+        self.summary_only = str(summary_only).lower() in ("1", "true", "yes")
         self.base_public_url = "https://www.buyict.gov.au/public"
         self.portal_id = None
         self.seen_detail_urls = set()
+        self.pages_seen = 0
+        self.reported_total = None
+        self.db_manager = DatabaseManager()
+        self.stored = {}
+        self.expected_pages = None
+        self.detail_requests = 0
+        self.closed_skipped = 0
+        self.title_updates = 0
 
-    async def start(self):
+    def _record_failure(self, message, *args):
+        self.logger.error(message, *args)
+        self.crawler.stats.inc_value('crawl/extraction_failed')
+
+    def _load_stored(self):
+        """sys_id -> (status, captured_while_open) for every saved opportunity."""
+        self.db_manager.initialize_database(self.name)
+        with self.db_manager.get_connection(self.name) as conn:
+            rows = conn.execute('SELECT sys_id, status, scraped_at, rfq_closing_date '
+                                'FROM buy_ict_tenders WHERE sys_id IS NOT NULL').fetchall()
+        for sys_id, status, scraped_at, closing in rows:
+            closing_day = self._parse_day(closing)
+            captured_open = closing_day is None or str(scraped_at or '')[:10] <= closing_day.isoformat()
+            self.stored[sys_id] = (status, captured_open)
+        self.logger.info('Loaded %s stored BuyICT opportunities', len(self.stored))
+
+    @staticmethod
+    def _parse_day(text):
+        match = re.search(r'(\d{1,2} [A-Za-z]+ \d{4})', text or '')
+        if not match:
+            return None
+        try:
+            return datetime.strptime(match.group(1), '%d %B %Y').date()
+        except ValueError:
+            return None
+
+    def _needs_detail(self, sys_id, closed):
+        """Open opportunities can change; a closed one is final once saved after closing."""
+        if not closed or sys_id not in self.stored:
+            return True
+        status, captured_open = self.stored[sys_id]
+        if status == 'closed':
+            return False
+        # Last saved while open (or legacy row saved before its close date): fetch the final copy once.
+        return status == 'open' or captured_open
+
+    def closed(self, reason):
+        # BuyICT's totalItems also counts opportunities restricted to logged-in sellers, which
+        # the public API never returns (~1/3 of the total). Coverage is therefore measured as
+        # "every listing page loaded", not "unique items == totalItems".
+        if self.expected_pages is not None and self.pages_seen < self.expected_pages:
+            self._record_failure('BuyICT listing incomplete: loaded %s of %s pages',
+                                 self.pages_seen, self.expected_pages)
+        if not self.seen_detail_urls and reason == 'finished':
+            self._record_failure('BuyICT listing returned no opportunities')
+        self.logger.info(
+            "BuyICT listing coverage: pages=%s/%s public_opportunities=%s reported_total=%s "
+            "(remainder visible to logged-in sellers only) reason=%s",
+            self.pages_seen, self.expected_pages, len(self.seen_detail_urls), self.reported_total, reason,
+        )
+        self.logger.info(
+            "BuyICT detail plan: requested=%s closed_already_saved=%s listing_rows_updated=%s",
+            self.detail_requests, self.closed_skipped, self.title_updates,
+        )
+
+    def start_requests(self):
         url = f"{self.base_public_url}?id=opportunities"
         yield scrapy.Request(
             url=url,
             callback=self.parse_opportunities_landing,
             meta={"cookiejar": 1, "spider_name": self.name},
         )
+
+    async def start(self):
+        # Scrapy 2.12 calls start_requests(); 2.13+ calls start().
+        for request in self.start_requests():
+            yield request
 
     def parse_opportunities_landing(self, response):
         token = self._extract_g_ck(response.text)
@@ -98,6 +193,8 @@ class BuyIctApiSpider(scrapy.Spider):
             self.logger.error("Filter rectangle returned no data payload.")
             return
 
+        self._load_stored()
+
         # Match current Playwright spider behavior: include all status groups.
         try:
             for choice in payload["filters"]["opp_status"]["choices"]:
@@ -105,46 +202,52 @@ class BuyIctApiSpider(scrapy.Spider):
         except Exception:
             pass
 
-        for page_num in range(1, self.max_pages + 1):
-            start_loc = (page_num - 1) * self.page_size
-            end_loc = start_loc + self.page_size - 1
+        yield self._results_page_request(payload, results_rectangle_id, token, 1)
 
-            page_payload = dict(payload)
-            page_payload.update(
-                {
-                    "newFocus": None,
-                    "recTags": [],
-                    "page": "opportunities",
-                    "currentPage": page_num,
-                    "page_size": str(self.page_size),
-                    "startLoc": start_loc,
-                    "endLoc": end_loc,
-                    "limit": 0,
-                    "getPageData": True,
-                    "sessionRotationTrigger": True,
-                }
-            )
-
-            results_url = self._build_rectangle_url(results_rectangle_id, "opportunities")
-            yield scrapy.Request(
-                url=results_url,
-                method="POST",
-                body=json.dumps(page_payload),
-                headers=self._sp_headers(token, json_post=True),
-                callback=self.parse_results_rectangle,
-                meta={
-                    "cookiejar": 1,
-                    "token": token,
-                    "page_num": page_num,
-                    "spider_name": self.name,
-                },
-            )
+    def _results_page_request(self, payload, rectangle_id, token, page_num):
+        start_loc = (page_num - 1) * self.page_size
+        page_payload = dict(payload)
+        page_payload.update(
+            {
+                "newFocus": None,
+                "recTags": [],
+                "page": "opportunities",
+                "currentPage": page_num,
+                "page_size": str(self.page_size),
+                "startLoc": start_loc,
+                "endLoc": start_loc + self.page_size - 1,
+                "limit": 0,
+                "getPageData": True,
+                "sessionRotationTrigger": True,
+            }
+        )
+        return scrapy.Request(
+            url=self._build_rectangle_url(rectangle_id, "opportunities"),
+            method="POST",
+            body=json.dumps(page_payload),
+            headers=self._sp_headers(token, json_post=True),
+            callback=self.parse_results_rectangle,
+            priority=10,
+            meta={
+                "cookiejar": 1,
+                "token": token,
+                "page_num": page_num,
+                "results_payload": payload,
+                "results_rectangle_id": rectangle_id,
+                "spider_name": self.name,
+            },
+        )
 
     def parse_results_rectangle(self, response):
         token = response.meta["token"]
         page_num = response.meta["page_num"]
         data = self._safe_json(response.text).get("result", {}).get("data", {})
+        if not isinstance(data, dict) or 'pageItems' not in data:
+            self._record_failure('Missing BuyICT listing payload on page %s', page_num)
+            return
         items = data.get("pageItems", []) or []
+        self.pages_seen += 1
+        self.reported_total = data.get("totalItems", self.reported_total)
         self.logger.info(
             "Results rectangle page=%s returned %s items (totalItems=%s)",
             page_num,
@@ -152,48 +255,79 @@ class BuyIctApiSpider(scrapy.Spider):
             data.get("totalItems"),
         )
 
+        listing_updates = []
         for summary in items:
             rel_url = summary.get("url")
             if not rel_url:
+                self._record_failure("BuyICT listing item has no detail URL on page %s", page_num)
                 continue
             if rel_url.startswith("?"):
                 detail_url = f"{self.base_public_url}{rel_url}"
             else:
                 detail_url = urljoin(self.base_public_url, rel_url)
+            detail_url = DatabaseManager.buy_ict_url(detail_url) or detail_url
             if detail_url in self.seen_detail_urls:
                 continue
             self.seen_detail_urls.add(detail_url)
-            yield response.follow(
-                url=detail_url,
-                callback=self.parse_detail_landing,
-                meta={
-                    "cookiejar": 1,
-                    "token": token,
-                    "summary": summary,
-                    "detail_url": detail_url,
-                    "spider_name": self.name,
-                },
+            if self.summary_only:
+                continue
+            sys_id = summary.get("sys_id") or (re.search(r"sys_id=([0-9a-f]{32})", detail_url) or [None, None])[1]
+            closed = summary.get("closed") is True
+            summary["_status"] = "closed" if closed else "open"
+            if not self._needs_detail(sys_id, closed):
+                listing_updates.append((summary.get("short_description"), "closed", sys_id))
+                self.crawler.stats.inc_value("crawl/items_unchanged")
+                self.closed_skipped += 1
+                continue
+            self.detail_requests += 1
+            yield self._detail_rectangle_request(
+                detail_url, summary, token, self.FALLBACK_DETAIL_RECTANGLE_ID
             )
 
-    def parse_detail_landing(self, response):
-        token = self._extract_g_ck(response.text) or response.meta.get("token")
-        if not token:
-            self.logger.warning("Missing token for detail page: %s", response.url)
-            return
+        self.title_updates += self.db_manager.update_buy_ict_listing(listing_updates)
 
-        parsed = urlparse(response.url)
-        qs = parse_qs(parsed.query)
+        total_items = data.get("totalItems")
+        if page_num == 1:
+            try:
+                last_page = (int(total_items) + self.page_size - 1) // self.page_size
+            except (TypeError, ValueError):
+                last_page = None
+            if last_page is not None:
+                if self.max_pages is not None:
+                    last_page = min(last_page, self.max_pages)
+                self.expected_pages = last_page
+                for next_page in range(2, last_page + 1):
+                    yield self._results_page_request(
+                        response.meta["results_payload"],
+                        response.meta["results_rectangle_id"],
+                        token,
+                        next_page,
+                    )
+                return
+
+        if total_items is not None:
+            return
+        try:
+            more_results = page_num * self.page_size < int(total_items)
+        except (TypeError, ValueError):
+            more_results = len(items) == self.page_size
+        within_limit = self.max_pages is None or page_num < self.max_pages
+        if not items and more_results and within_limit:
+            self.logger.warning("Empty BuyICT page %s before reported total %s", page_num, total_items)
+        if more_results and within_limit:
+            yield self._results_page_request(
+                response.meta["results_payload"],
+                response.meta["results_rectangle_id"],
+                token,
+                page_num + 1,
+            )
+
+    def _detail_rectangle_request(self, detail_url, summary, token, rectangle_id,
+                                  fallback_attempted=False):
+        qs = parse_qs(urlparse(detail_url).query)
         page_id = (qs.get("id") or [""])[0]
-        if not page_id:
-            self.logger.warning("Detail page missing id param: %s", response.url)
-            return
-
-        detail_rectangle_id = self._discover_detail_rectangle_id_from_page_html(response.text)
-        if not detail_rectangle_id:
-            detail_rectangle_id = self.FALLBACK_DETAIL_RECTANGLE_ID
-
         rectangle_url = self._build_rectangle_url(
-            rectangle_id=detail_rectangle_id,
+            rectangle_id=rectangle_id,
             page_id=page_id,
             extra_params={
                 "table": (qs.get("table") or [""])[0],
@@ -201,27 +335,70 @@ class BuyIctApiSpider(scrapy.Spider):
                 "entry": (qs.get("entry") or [""])[0],
             },
         )
-        yield scrapy.Request(
+        return scrapy.Request(
             url=rectangle_url,
             method="POST",
             body="{}",
             headers=self._sp_headers(token, json_post=True),
             callback=self.parse_detail_rectangle,
+            dont_filter=fallback_attempted,
             meta={
                 "cookiejar": 1,
-                "summary": response.meta.get("summary", {}),
-                "detail_url": response.meta.get("detail_url", response.url),
+                "summary": summary,
+                "detail_url": detail_url,
+                "token": token,
+                "fallback_attempted": fallback_attempted,
+                "handle_httpstatus_all": True,
                 "spider_name": self.name,
             },
+        )
+
+    def parse_detail_landing(self, response):
+        token = self._extract_g_ck(response.text) or response.meta.get("token")
+        if not token:
+            self._record_failure("Missing token for detail page: %s", response.url)
+            return
+
+        qs = parse_qs(urlparse(response.url).query)
+        page_id = (qs.get("id") or [""])[0]
+        if not page_id:
+            self._record_failure("Detail page missing id param: %s", response.url)
+            return
+
+        detail_rectangle_id = self._discover_detail_rectangle_id_from_page_html(response.text)
+        if not detail_rectangle_id:
+            detail_rectangle_id = self.FALLBACK_DETAIL_RECTANGLE_ID
+
+        yield self._detail_rectangle_request(
+            response.meta.get("detail_url", response.url),
+            response.meta.get("summary", {}),
+            token,
+            detail_rectangle_id,
+            fallback_attempted=True,
         )
 
     def parse_detail_rectangle(self, response):
         summary = response.meta.get("summary", {})
         detail_url = response.meta.get("detail_url", response.url)
         result_data = self._safe_json(response.text).get("result", {}).get("data", {})
-        opp_widget_data = (result_data.get("opp_widget") or {}).get("data", {})
-        if not opp_widget_data:
-            self.logger.warning("No opp_widget data for %s", detail_url)
+        opp_widget_data = (result_data.get("opp_widget") or {}).get("data") or result_data
+        if not isinstance(opp_widget_data, dict) or not opp_widget_data.get("mainDetails"):
+            if not response.meta.get("fallback_attempted"):
+                self.logger.info("Direct detail API unavailable; loading detail page for %s", detail_url)
+                yield scrapy.Request(
+                    url=detail_url,
+                    callback=self.parse_detail_landing,
+                    meta={
+                        "cookiejar": 1,
+                        "summary": summary,
+                        "detail_url": detail_url,
+                        "token": response.meta.get("token"),
+                        "refresh_existing": True,
+                        "spider_name": self.name,
+                    },
+                )
+            else:
+                self._record_failure("No opp_widget data for %s", detail_url)
             return
 
         main_details_map = self._label_value_map(opp_widget_data.get("mainDetails"))
@@ -270,6 +447,9 @@ class BuyIctApiSpider(scrapy.Spider):
             "requirements": requirements_map,
             "criteria": criteria,
             "url": detail_url,
+            "sys_id": summary.get("sys_id")
+            or (re.search(r"sys_id=([0-9a-f]{32})", detail_url) or [None, None])[1],
+            "status": summary.get("_status"),
         }
 
     def _extract_g_ck(self, html_text):
@@ -343,7 +523,7 @@ class BuyIctApiSpider(scrapy.Spider):
             label = row.get("label")
             value = row.get("value")
             if label:
-                mapping[label] = value
+                mapping[label] = html_to_text(value)
         return mapping
 
     def _discover_opportunities_rectangle_ids(self, sp_page_result):

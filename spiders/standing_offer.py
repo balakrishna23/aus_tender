@@ -1,28 +1,57 @@
+from datetime import datetime, timedelta
+
 import scrapy
 
-class StandingOfferSpider(scrapy.Spider):
+from spiders.austender_common import AusTenderListingMixin, notice_guid, search_url
+
+
+class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
+    """Standing offer notices (panels).
+
+    Every run lists all current SONs: new ones are fetched, stored ones are
+    re-checked once their copy is older than RECHECK_DAYS (SONs get amended and
+    gain suppliers). ``-a since=all`` walks every SON ever published (~5,300).
+    """
+
     name = "standing_offer"
+    id_label = "SON ID"
     custom_settings = {
         'LOG_FILE': 'logs/standing_offer.log',
+        'LOG_LEVEL': 'INFO',
+        'AUTOTHROTTLE_ENABLED': True,
     }
-    
-    
-    start_urls = [
-        "https://www.tenders.gov.au/Search/SonAdvancedSearch?SearchFrom=SonSearch&Type=Son&AgencyStatus=-1&KeywordTypeSearch=AllWord&DateType=Publish%20Date"
-    ]
+    RECHECK_DAYS = 7
+    BASE = dict(SearchFrom='SonSearch', Type='Son', AgencyStatus='-1', KeywordTypeSearch='AllWord')
 
-    def parse(self, response):
-        # Extract all SON links from the listing page
-        son_links = response.xpath('//div[@class="list-desc" and ./span/text()="SON ID:"]/div[@class="list-desc-inner"]/a/@href').getall()
-        
-        for link in son_links:
-            yield response.follow(link, callback=self.parse_son)
+    def __init__(self, since=None, refresh_existing=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.full = str(since).lower() == 'all'
+        self._init_listing(None, refresh_existing)
+        self.detail_callback = self.parse_son
+        self.checked_at = {}
 
-        # Follow pagination if available
-        next_page = response.css('li.next a::attr(href)').get()
-        if next_page:
-            self.logger.info(f"Following next page: {response.urljoin(next_page)}")
-            yield response.follow(next_page, callback=self.parse)
+    def start_requests(self):
+        self.load_stored()
+        for url, scraped_at in self.db_manager.load_column_map(self.name, 'url', 'scraped_at').items():
+            self.checked_at[notice_guid(url)] = scraped_at
+        if getattr(self, 'start_urls', None):
+            for url in self.start_urls:
+                yield self.listing_request(url, 'default')
+            return
+        date_type = 'Publish Date' if self.full else 'Current'
+        yield self.listing_request(search_url('SonAdvancedSearch', DateType=date_type, **self.BASE),
+                                   'current')
+
+    async def start(self):
+        for request in self.start_requests():
+            yield request
+
+    def should_fetch(self, guid, stored_url, listing_kind):
+        try:
+            checked = datetime.fromisoformat(str(self.checked_at.get(guid)))
+        except ValueError:
+            return True
+        return datetime.now() - checked > timedelta(days=self.RECHECK_DAYS)
 
     def parse_son(self, response):
         def get_detail(label):
@@ -44,6 +73,12 @@ class StandingOfferSpider(scrapy.Spider):
                     "Deed End Date": row.xpath('./td[7]//text()').get(default="").strip(),
                 })
             return suppliers
+
+        def participant_agencies():
+            """The 'Participant Agencies' section (div#Agency): a table of agency names when the
+            offer is limited to certain agencies; just a sentence when all agencies may use it."""
+            names = [n.strip() for n in response.xpath('//div[@id="Agency"]//table//tr/td[1]//text()').getall()]
+            return [{"Agency Name": n} for n in names if n]
 
         # Extract Panel ID and Panel URL if this is a panel arrangement
         panel_id = get_detail("Panel ID") or get_detail("PNL ID")
@@ -76,6 +111,6 @@ class StandingOfferSpider(scrapy.Spider):
             "Agency Reference ID": get_detail("Agency Reference ID"),
             "Current Suppliers": get_table_data("CurrentSuppliers"),
             "Previous Suppliers": get_table_data("PreviousSuppliers"),
-            "Participant Agencies": get_table_data("ParticipantAgencies"),
+            "Participant Agencies": participant_agencies(),
             "URL": response.url,
         }

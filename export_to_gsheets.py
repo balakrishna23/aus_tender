@@ -36,7 +36,7 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 import gspread
-from gspread_dataframe import set_with_dataframe
+from sheets_writer import replace_worksheets, write_literal_dataframe
 
 from database_manager import DatabaseManager
 
@@ -134,12 +134,6 @@ def ensure_worksheet(spreadsheet, title: str, rows: int, cols: int):
         ws = spreadsheet.worksheet(title)
     except gspread.exceptions.WorksheetNotFound:
         ws = spreadsheet.add_worksheet(title=title, rows=str(max(rows, 2)), cols=str(max(cols, 2)))
-    else:
-        # Resize to fit data (keep at least 2x2)
-        try:
-            ws.resize(rows=max(rows, 2), cols=max(cols, 2))
-        except Exception:
-            pass
     return ws
 
 
@@ -148,11 +142,9 @@ def write_df(ws, df: pd.DataFrame, append: bool = False):
         # Find the next empty row (1-indexed)
         current_values = ws.get_all_values()
         start_row = len(current_values) + 1 if current_values else 1
-        set_with_dataframe(ws, df, row=start_row, include_column_header=not current_values)
+        write_literal_dataframe(ws, df, row=start_row, include_column_header=not current_values)
     else:
-        # Clear values (preserve formatting) then write
-        ws.clear()
-        set_with_dataframe(ws, df, include_index=False)
+        replace_worksheets(ws.spreadsheet, [(ws, df)])
 
 
 def main():

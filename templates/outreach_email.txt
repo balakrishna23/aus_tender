@@ -1,0 +1,17 @@
+Subject: {role_title} ({reference}) - suitable candidates available
+
+Hi {greeting_name},
+
+I saw that {buyer} has released "{title}" ({reference}) on {source_name}, closing {closes}.
+
+{company} supplies {specialty} to government agencies, and we currently have {role_phrase} available whose experience matches this requirement.
+
+We will respond through the formal {source_name} process. If there is anything about the requirement you would like suppliers to keep in mind, or a better contact for similar roles in future, I would be glad to hear from you.
+
+Kind regards,
+{from_name}
+{company}{abn_line}
+{phone} | {from_email}
+{address}
+
+You are receiving this because your address is published as the contact for this opportunity. Reply "unsubscribe" and we will not contact you again.

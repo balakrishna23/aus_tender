@@ -1,6 +1,8 @@
 python-dotenv
 pandas
 Scrapy
+scrapy-playwright
+undetected-playwright
 gspread
 gspread-dataframe
 google-auth

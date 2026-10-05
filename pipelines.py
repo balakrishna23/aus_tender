@@ -5,8 +5,10 @@
 
 import logging
 from itemadapter import ItemAdapter
+import activity_log
 from database_manager import DatabaseManager
 from gsheets_sync import GoogleSheetsSync
+from scrapy.exceptions import DropItem
 
 
 class DatabasePipeline:
@@ -19,6 +21,7 @@ class DatabasePipeline:
         self.db_manager = DatabaseManager()
         self.logger = logging.getLogger(__name__)
         self.stats = {}
+        self.events = []  # new/changed records, written to activity.db at the end
     
     def open_spider(self, spider):
         """Initialize database for the spider when it starts"""
@@ -55,21 +58,30 @@ class DatabasePipeline:
             if not self._validate_item(adapter, spider_name):
                 self.stats[spider_name]['items_failed'] += 1
                 self.logger.warning(f"Item validation failed for {spider_name}")
-                return item
+                spider.crawler.stats.inc_value('database/items_failed')
+                raise DropItem(f"Invalid {spider_name} item")
             
             # Save to database
             success = self.db_manager.insert_item(spider_name, dict(adapter))
             
             if success:
                 self.stats[spider_name]['items_saved'] += 1
+                spider.crawler.stats.inc_value('database/items_saved')
+                if isinstance(success, str):
+                    spider.crawler.stats.inc_value(f'database/items_{success}')
+                    if success in ('new', 'updated'):
+                        self.events.append(activity_log.item_event(spider_name, success, dict(adapter)))
                 self.logger.debug(f"Item saved successfully for {spider_name}")
             else:
-                self.stats[spider_name]['items_failed'] += 1
-                self.logger.error(f"Failed to save item for {spider_name}")
+                raise RuntimeError(f"Failed to save item for {spider_name}")
             
+        except DropItem:
+            raise
         except Exception as e:
             self.stats[spider_name]['items_failed'] += 1
+            spider.crawler.stats.inc_value('database/items_failed')
             self.logger.error(f"Error processing item for {spider_name}: {e}")
+            raise DropItem(f"Database save failed for {spider_name}") from e
         
         return item
     
@@ -77,6 +89,8 @@ class DatabasePipeline:
         """Log statistics when spider finishes and optionally sync to Google Sheets"""
         spider_name = spider.name
         stats = self.stats.get(spider_name, {})
+        activity_log.record_items(self.events)
+        self.events = []
         
         self.logger.info(f"""
         Spider {spider_name} completed:
@@ -103,7 +117,8 @@ class DatabasePipeline:
             if spreadsheet_id and service_account_json_content:
                 try:
                     sync = GoogleSheetsSync(spreadsheet_id, service_account_json_content)
-                    sync.sync_spider(spider_name)
+                    if not sync.sync_spider(spider_name):
+                        self.logger.error(f"Google Sheets auto-sync failed for {spider_name}: sync returned failure")
                 except Exception as e:
                     self.logger.error(f"Google Sheets auto-sync failed for {spider_name}: {e}")
             else:
@@ -116,13 +131,16 @@ class DatabasePipeline:
             'aus_tender': ['ATM ID', 'Agency'],
             'planned_procurement': ['Title', 'Agency'],
             'standing_offer': ['SON ID', 'Agency'],
-            'buy_ict': ['rfq_id']
+            'buy_ict': ['rfq_id'],
+            'act_tender': ['reference'],
+            'nsw_tender': ['reference'],
         }
         
-        required_fields = validation_rules.get(spider_name, [])
+        normalized = self.db_manager._prepare_item_data(dict(adapter), spider_name)
+        required_fields = validation_rules.get(spider_name, []) + ['url']
         
         for field in required_fields:
-            if not adapter.get(field):
+            if not normalized.get(self.db_manager._convert_to_snake_case(field)):
                 self.logger.warning(f"Missing required field '{field}' for {spider_name}")
                 return False
         

@@ -1,0 +1,10 @@
+# Versions used for local verification; install in a dedicated virtualenv.
+python-dotenv==1.0.1
+pandas==2.2.3
+Scrapy==2.12.0
+scrapy-playwright==0.0.48
+playwright==1.60.0
+undetected-playwright==0.3.0
+gspread==6.2.1
+gspread-dataframe==4.0.0
+google-auth==2.58.0

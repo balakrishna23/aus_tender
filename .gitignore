@@ -49,3 +49,10 @@ temp_*
 # OS files
 .DS_Store
 Thumbs.db
+backups/
+
+# Debug dumps and packaged builds
+*.html
+*.png
+*.tar.gz
+databases_live/
