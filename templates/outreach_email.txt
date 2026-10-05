@@ -4,7 +4,7 @@ Hi {greeting_name},
 
 I saw that {buyer} has released "{title}" ({reference}) on {source_name}, closing {closes}.
 
-{company} supplies {specialty} to government agencies, and we currently have {role_phrase} available whose experience matches this requirement.
+{company} supplies {specialty} to government agencies, and we can put forward suitable candidates for this {role_title} role.
 
 We will respond through the formal {source_name} process. If there is anything about the requirement you would like suppliers to keep in mind, or a better contact for similar roles in future, I would be glad to hear from you.
 

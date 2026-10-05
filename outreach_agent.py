@@ -21,6 +21,7 @@ Usage:
   python outreach_agent.py summary        # email today's summary to OUTREACH_FORWARD_TO
 """
 import argparse
+from collections import Counter
 import email
 import html
 import imaplib
@@ -196,6 +197,69 @@ def _one(db, sql, params):
         return dict(row) if row else None
 
 
+NAME_SOURCES = [  # where agencies publish a person's name next to a contact address
+    ('aus_tender', 'tenders', 'contact_email', 'contact_name', 'publish_date'),
+    ('aus_contract', 'contracts', 'email_address', 'contact_name', 'publish_date'),
+    ('standing_offer', 'standing_offers', 'email_address', 'contact_name', 'publish_date'),
+    ('planned_procurement', 'planned_procurements', 'contact_email', 'contact_name', 'last_updated'),
+    ('nsw_tender', 'nsw_tenders', 'contact_email', 'contact_name', 'publish_date'),
+]
+STOP_WORDS = {'of', 'and', 'the', 'for', 'on', 'in', '&'}
+
+
+def person_for_address(address, today=None, days=180, min_share=0.6, min_count=3):
+    """The person who clearly owns a (possibly shared) mailbox, from names published next to
+    this exact address in the last `days`; None when it is shared by several people."""
+    from build_releases import parse_day
+    address = (address or '').strip().lower()
+    if not address:
+        return None
+    since = (today or date.today()) - timedelta(days=days)
+    names = Counter()
+    for db, table, email_col, name_col, date_col in NAME_SOURCES:
+        path = database_directory() / f'{db}.db'
+        if not path.exists():
+            continue
+        with closing(sqlite3.connect(path)) as conn:
+            try:
+                rows = conn.execute(f'SELECT {name_col}, {date_col} FROM {table} WHERE lower({email_col}) = ?',
+                                    (address,)).fetchall()
+            except sqlite3.OperationalError:
+                continue
+        for name, when in rows:
+            day = parse_day(when or '')
+            if name and (day is None or day >= since) and outreach.greeting_name(name) != 'there':
+                names[' '.join(name.split()).title()] += 1
+    if not names:
+        return None
+    (top, count), total = names.most_common(1)[0], sum(names.values())
+    return top if count >= min_count and count / total >= min_share else None
+
+
+def team_greeting(buyer, address):
+    """'APRA Procurement team' from the buyer's initials and the mailbox name."""
+    words = [w for w in re.split(r'[\s,]+', str(buyer or '')) if w and w.lower() not in STOP_WORDS]
+    acronym = ''.join(w[0] for w in words).upper() if 2 <= len(words) <= 7 else ''
+    local = (address or '').split('@')[0].lower()
+    # A published tender address belongs to the procurement team whatever the mailbox is called
+    # ("tenderresponses@" -> procurement team; "Tenders team" reads oddly).
+    team = 'Contracts' if 'contract' in local and 'procure' not in local else 'Procurement'
+    return ' '.join(x for x in (acronym, team, 'team') if x)
+
+
+def greeting_for(row):
+    """First name of the named contact, else the mailbox's clear owner, else the team."""
+    name = outreach.greeting_name(row.get('contact_name'))
+    if name != 'there':
+        return name
+    owner = person_for_address(row.get('contact_email'))
+    if owner:
+        # Full name: from other records we cannot be sure which part is the given name
+        # (e.g. "Thi Anna Ly" goes by Anna), and a wrong first name is worse than none.
+        return ' '.join(w for w in owner.split() if w.lower() not in outreach.TITLES)
+    return team_greeting(row.get('buyer'), row.get('contact_email'))
+
+
 def tender_facts(row):
     """Everything known about the tender, as short labelled facts for the writer."""
     facts = {
@@ -204,7 +268,7 @@ def tender_facts(row):
         'category': row.get('category'), 'location': row.get('location'),
         'closing': outreach._friendly_day(row.get('closes_on')) or row.get('closes_at'),
         'contact_name': row.get('contact_name'),
-        'greeting_name': outreach.greeting_name(row.get('contact_name')),
+        'greeting_name': greeting_for(row),
     }
     if row.get('source') == 'buyict':
         extra = _one('buy_ict', 'SELECT requirements, criteria, rfq_type FROM buy_ict_tenders WHERE url = ?',
@@ -229,9 +293,94 @@ def tender_facts(row):
     return {k: v for k, v in facts.items() if v not in (None, '', [], {})}
 
 
+PEOPLE_CATEGORY_WORDS = ('temporary personnel', 'recruit', 'staffing', 'personnel')
+PLAN_ROLE_WORDS = ['advisors', 'advisers', 'consultants', 'analysts', 'developers', 'engineers', 'architects',
+                   'testers', 'project managers', 'labour hire', 'temporary personnel', 'service desk', 'nurses',
+                   'nursing', 'clinicians', 'support workers', 'secondment', 'resourcing', 'contract personnel',
+                   'specialist personnel', 'ict specialists']
+ICT_CATEGORY_WORDS = ('computer services', 'software', 'information technology', 'management advisory')
+
+
+def _agency_name(name):
+    return re.sub(r'\s+', ' ', str(name or '').replace('&', 'and')).strip().lower()
+
+
+def _often(count):
+    """Qualitative only: the writer never quotes counts (it reads as surveillance)."""
+    return ('frequently' if count >= 25 else 'regularly' if count >= 8 else 'occasionally' if count >= 2
+            else None)
+
+
+def agency_context(buyer, today=None):
+    """How the agency buys (last 12 months of AusTender contract notices and BuyICT requests) and
+    its upcoming planned procurements related to what we supply. Empty when nothing is known."""
+    from build_releases import parse_day
+    today = today or date.today()
+    since = today - timedelta(days=365)
+    name = _agency_name(buyer)
+    if not name:
+        return {}
+    contracts = [r for r in query_all('aus_contract', 'SELECT agency, category, publish_date FROM contracts')
+                 if _agency_name(r['agency']) == name and (parse_day(r['publish_date']) or since) >= since]
+    people = sum(1 for r in contracts if any(w in (r['category'] or '').lower() for w in PEOPLE_CATEGORY_WORDS))
+    ict = sum(1 for r in contracts if any(w in (r['category'] or '').lower() for w in ICT_CATEGORY_WORDS))
+    buyict = sum(1 for r in query_all('buy_ict', 'SELECT buyer, rfq_published_date FROM buy_ict_tenders')
+                 if _agency_name(r['buyer']) == name and (parse_day(r['rfq_published_date']) or since) >= since)
+    plans = query_all('planned_procurement', 'SELECT agency, title, category, estimated_date_of_approach_to_market, '
+                                             'scraped_at FROM planned_procurements')
+    latest = max((p['scraped_at'] or '' for p in plans), default='')[:10]
+    # Plans for people we could supply, not for products ("Secure access system", "Records storage").
+    words = PLAN_ROLE_WORDS + [w for w in outreach.keywords() if len(w) > 3]
+    related = re.compile(r'\b(' + '|'.join(re.escape(w) for w in words) + ')', re.I)  # word start: not "biosecurity"
+    upcoming = [{'title': p['title'], 'expected': p['estimated_date_of_approach_to_market']}
+                for p in plans if _agency_name(p['agency']) == name and (p['scraped_at'] or '')[:10] >= latest
+                and related.search(f"{p['title']} {p['category']}")
+                and not _quarter_passed(p['estimated_date_of_approach_to_market'], today)][:3]
+    context = {
+        'engages contract personnel (temporary personnel services)': _often(people),
+        'engages ICT and advisory services': _often(ict),
+        'posts requests on BuyICT': _often(buyict),
+        'upcoming planned procurements we could also support': upcoming,
+    }
+    return {k: v for k, v in context.items() if v}
+
+
+def _quarter_passed(text, today):
+    """'Quarter 2 2025/2026' (financial year from July) has ended before today."""
+    m = re.search(r'Quarter\s*([1-4])\s*(\d{4})/(\d{4})', str(text or ''))
+    if not m:
+        return False
+    quarter, first, second = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    end = {1: date(first, 9, 30), 2: date(first, 12, 31), 3: date(second, 3, 31), 4: date(second, 6, 30)}[quarter]
+    return end < today
+
+
+def query_all(db, sql):
+    path = database_directory() / f'{db}.db'
+    if not path.exists():
+        return []
+    with closing(sqlite3.connect(path)) as conn:
+        conn.row_factory = sqlite3.Row
+        try:
+            return [dict(r) for r in conn.execute(sql)]
+        except sqlite3.OperationalError:
+            return []
+
+
 # ── Writing ───────────────────────────────────────────────────────────────────
 WRITER_RULES = """You write short, specific business-development emails from an Australian supplier
 of contract personnel to the published contact on a government tender.
+
+Write the body as four short paragraphs, in this order:
+ 1. "Hi {greeting_name}," then one or two sentences on what THIS tender asks for, as the
+    tender's requirements: the role, the buyer and 2-3 concrete details from TENDER
+    (seniority, clearance, location, working arrangement, start, duration).
+ 2. Our offer, starting exactly "We can put forward" and naming roles from SUPPLIER
+    what_we_supply; you may add "who hold or can obtain <clearance from SUPPLIER>". Nothing
+    else about our candidates: no availability, hours, start dates, or meeting requirements.
+ 3. Optional: one sentence from AGENCY (see below). Skip the paragraph if nothing fits.
+ 4. We will respond through the formal portal process; our capability statement is attached;
+    one short closing sentence.
 
 Rules:
 - Use ONLY the facts in TENDER and SUPPLIER. Never invent candidates, numbers, years of
@@ -239,8 +388,15 @@ Rules:
 - Offer only what SUPPLIER lists under what_we_supply that matches the tender. If nothing
   matches, offer the closest supplied area without overstating it.
 - Attribute requirements to the tender ("the role requires NV1 clearance"). Never state that
-  our candidates already meet a specific requirement, seniority level, start date or term
-  unless SUPPLIER says so; say we can put forward suitable candidates for the role.
+  our candidates already meet a requirement, are available on a date, can start or commence,
+  or that the company holds a clearance. Say we can put forward suitable candidates for the
+  role; clearances belong to people ("candidates who hold or can obtain NV1"), never to us.
+- AGENCY (optional context about how this buyer purchases): you may add ONE light sentence
+  showing we understand how they work, in words only (e.g. "we know APRA regularly brings in
+  specialist contractors"). Never quote counts, contract numbers or values.
+- If AGENCY lists an upcoming planned procurement that is clearly for roles we supply, you may
+  mention it in one sentence as something we could also help with later. If none is clearly
+  relevant, do not mention plans at all.
 - Make it clearly about THIS tender: name the role, the buyer and 2-3 concrete details from
   TENDER (e.g. clearance, seniority, location, working arrangement, start date, duration).
 - Say we will respond through the formal portal process. Do not ask for a meeting or call.
@@ -259,20 +415,26 @@ class WriterError(Exception):
     pass
 
 
-def ai_write(facts, profile, http=requests):
-    """Draft one email with the configured AI provider (Groq, OpenAI-compatible API)."""
+def ai_write(facts, profile, http=requests, agency=None, feedback=None):
+    """Draft one email with the configured AI provider (Groq, OpenAI-compatible API).
+    `feedback`: problems found in the previous draft, for one revision."""
     key = env('GROQ_API_KEY') or env('groq_api_key')
     if not key:
         raise WriterError('no groq_api_key in .env')
     supplier = {k: v for k, v in profile.items() if k != 'signature'}
+    prompt = ('TENDER:\n' + json.dumps(facts, ensure_ascii=False, indent=1)
+              + '\n\nSUPPLIER:\n' + json.dumps(supplier, ensure_ascii=False, indent=1)
+              + '\n\nAGENCY:\n' + json.dumps(agency or {}, ensure_ascii=False, indent=1))
+    if feedback:
+        prompt += ('\n\nYour previous draft was rejected for: ' + '; '.join(feedback)
+                   + '. Write a new draft that fixes these.')
     payload = {
         'model': env('OUTREACH_LLM_MODEL', 'openai/gpt-oss-120b'),
         'temperature': 0.5,
         'response_format': {'type': 'json_object'},
         'messages': [
             {'role': 'system', 'content': WRITER_RULES.replace('{greeting_name}', facts.get('greeting_name', 'there'))},
-            {'role': 'user', 'content': 'TENDER:\n' + json.dumps(facts, ensure_ascii=False, indent=1)
-                                        + '\n\nSUPPLIER:\n' + json.dumps(supplier, ensure_ascii=False, indent=1)},
+            {'role': 'user', 'content': prompt},
         ],
     }
     response = http.post('https://api.groq.com/openai/v1/chat/completions',
@@ -291,7 +453,11 @@ SIGN_OFF_RE = re.compile(r'^(kind regards|best regards|warm regards|regards|sinc
 
 
 def strip_sign_off(body):
-    """Drop trailing sign-off lines; the signature block adds its own."""
+    """Drop trailing sign-off lines; the signature block adds its own. Also puts the greeting
+    on its own line ("Hi APRA team, The role..." -> "Hi APRA team,\\n\\nThe role...")."""
+    m = re.match(r'\s*(Hi [^,\n]{1,60},)[ \t]*(\S)', body)
+    if m:
+        body = f'{m.group(1)}\n\n{m.group(2).upper()}{body[m.end():]}'
     lines = body.strip().splitlines()
     while lines and (not lines[-1].strip() or SIGN_OFF_RE.match(lines[-1].strip())
                      or (len(lines) > 1 and SIGN_OFF_RE.match(lines[-2].strip()) and len(lines[-1].split()) <= 4)):
@@ -323,31 +489,93 @@ def check_draft(subject, body, facts, profile):
             problems.append(f'number {number!r} not in the tender or profile')
     if re.search(r'\$\s?\d|guarantee|best price|cheapest', body, re.I):
         problems.append('makes a pricing or guarantee claim')
+    for pattern, what in PROMISE_PATTERNS:
+        if re.search(pattern, body, re.I):
+            problems.append(f'promises something we cannot know ({what})')
     return problems
 
 
-def template_write(row, profile):
-    subject, body = outreach.render(row)
-    body = body.split('\n\nKind regards')[0].strip()  # signature and opt-out are added separately
-    return subject, body + '\n\nOur capability statement is attached for your reference.'
+# Claims a supplier cannot make before seeing candidates against the requirement.
+PROMISE_PATTERNS = [
+    (r'\b(available|ready|able) to (start|commence)\b', 'availability to start'),
+    (r'\bcan (start|commence)\b', 'availability to start'),
+    (r'\b(who|that|which) (meet|meets|satisfy|satisfies|match|matches) (the|all|your|these|those|its|this)\b',
+     'candidates already meeting requirements'),
+    (r'\b(meet|meets|satisfy|satisfies) (the|all|your|these|those) [^.]{0,40}(requirement|criteri)',
+     'meeting the requirements'),
+    (r'\b(illoura services|we|our company) (holds?|has|have) [^.]{0,40}clearance', 'the company holding a clearance'),
+    (r'\bwe (currently )?have (a|an|several|many|\d+) [^.]{0,60}\bavailable\b', 'specific people available'),
+    (r'\b(candidates?|personnel|consultants?|staff|professionals?) (will|would|can) [^.]{0,40}\b(meet|satisfy|work up to|'
+     r'comply)\b', 'what our candidates will do'),
+    (r'\bwill be able to\b', 'what our candidates will be able to do'),
+    (r'\b(meet|meets|satisfy|satisfies)\b[^.]{0,30}\b(limit|hours|seniority|clearance)\b', 'meeting the requirements'),
+]
 
 
-def write_email(row, profile, use_ai=True, ai=ai_write):
-    """(subject, body, writer, note). Falls back to the template whenever the AI draft fails."""
+def _join(items):
+    return items[0] if len(items) == 1 else ', '.join(items[:-1]) + ' and ' + items[-1]
+
+
+def template_write(row, profile, facts=None, agency=None):
+    """The fallback, built by code from the same facts: personal, but never makes a claim."""
+    facts = facts if facts is not None else tender_facts(row)
+    agency = agency or {}
+    role, _ = outreach.role_parts(row.get('title', ''))
+    pick = lambda *keys: next((str(facts[k]) for k in keys if facts.get(k)), '')  # noqa: E731
+    details = []
+    level = pick('requirements: Experience level')
+    if level:
+        details.append(re.sub(r'\s+-\s+(.+)', r' (\1)', level) + ' level')
+    clearance = pick('requirements: Security clearance')
+    if clearance:
+        m = re.match(r'(?i)must (?:be able to )?(obtain|hold|have)\s+(.*)', clearance)
+        details.append(f'the ability to {m.group(1).lower()} {m.group(2)}' if m else f'{clearance} clearance')
+    where, how = pick('requirements: Location of work', 'location'), pick('requirements: Working arrangements')
+    if where:
+        details.append(f'{how.lower()} work in {where}' if how else f'work in {where}')
+    term = pick('requirements: Initial contract duration')
+    if term:
+        details.append(f'an initial term of {term}')
+    first = (f"I saw that {row.get('buyer') or 'your agency'} has released \"{row.get('title')}\" "
+             f"({row.get('source_id')}) on {facts.get('portal')}, closing {facts.get('closing') or 'soon'}.")
+    if details:
+        first += f' The role calls for {_join(details)}.'
+    offer = (f"We can put forward suitable {outreach.specialty(row)} for this {role} role through "
+             f"{profile.get('company', 'our company')}.")
+    if profile.get('clearances'):
+        offer += f" Our candidates hold or can obtain {_join(list(profile['clearances']))} clearance."
+    paragraphs = [f"Hi {facts.get('greeting_name', 'there')},", first, offer]
+    often = agency.get('engages contract personnel (temporary personnel services)')
+    if often:
+        paragraphs.append(f"We know {row.get('buyer')} {often} brings in specialist contractors, and we would "
+                          f"welcome being considered for similar roles.")
+    paragraphs.append(f"We will respond through the formal {facts.get('portal')} process. Our capability statement "
+                      f"is attached for your reference.")
+    subject = f"{role} ({row.get('source_id')}) - {profile.get('company', '')}".strip(' -')
+    return subject, '\n\n'.join(paragraphs)
+
+
+def write_email(row, profile, use_ai=True, ai=ai_write, attempts=2):
+    """(subject, body, writer, note). A rejected AI draft gets one revision with the problems
+    named; if that also fails (or the AI is unavailable) the template is used."""
     facts = tender_facts(row)
+    agency = agency_context(row.get('buyer'))
     if use_ai:
+        feedback, note = None, ''
         try:
-            subject, body = ai(facts, profile)
-            problems = check_draft(subject, body, facts, profile)
-            if not problems:
-                return subject, body, 'ai', ''
-            note = 'AI draft rejected: ' + '; '.join(problems)
+            for attempt in range(attempts):
+                subject, body = ai(facts, profile, agency=agency, feedback=feedback)
+                problems = check_draft(subject, body, facts, profile)
+                if not problems:
+                    return subject, body, 'ai', f'revised once ({"; ".join(feedback)})' if feedback else ''
+                feedback = problems
+            note = 'AI draft rejected twice: ' + '; '.join(problems)
         except WriterError as e:
             note = str(e)
         log.warning('%s: %s - using the template', facts.get('reference'), note)
-        subject, body = template_write(row, profile)
+        subject, body = template_write(row, profile, facts, agency)
         return subject, body, 'template', note
-    subject, body = template_write(row, profile)
+    subject, body = template_write(row, profile, facts, agency)
     return subject, body, 'template', ''
 
 

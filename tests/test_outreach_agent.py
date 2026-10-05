@@ -24,7 +24,7 @@ def release(ref='LH-1', email_addr='buyer@agency.gov.au', closes=CLOSES, title='
             'contact_name': '', 'url': f'https://example.test/{ref}', 'location': 'NSW'}
 
 
-GOOD_BODY = ('Hi there,\n\nI noticed Test Agency has released LH-1 for a Senior Security Consultant in NSW. '
+GOOD_BODY = ('Hi TA Procurement team,\n\nI noticed Test Agency has released LH-1 for a Senior Security Consultant in NSW. '
              'We supply security consultants who hold or can obtain NV1 clearance and can work in NSW. '
              'We will respond through the formal BuyICT process and wanted to make sure our capability '
              'statement, which is attached, reaches the right team. It outlines the ICT specialists we supply '
@@ -88,19 +88,19 @@ class DraftCheckTests(AgentTestCase):
 
     def test_rejected_ai_draft_falls_back_to_template(self):
         subject, body, writer, note = agent.write_email(release(), PROFILE,
-                                                        ai=lambda f, p: ('Hi', 'Hi there, buy now for $5'))
+                                                        ai=lambda f, p, **kw: ('Hi', 'Hi there, buy now for $5'))
         self.assertEqual(writer, 'template')
         self.assertIn('rejected', note)
         self.assertIn('LH-1', subject)
         self.assertIn('capability statement is attached', body)
 
     def test_ai_failure_falls_back_to_template(self):
-        def broken(facts, profile):
+        def broken(facts, profile, **kw):
             raise agent.WriterError('HTTP 500')
         self.assertEqual(agent.write_email(release(), PROFILE, ai=broken)[2], 'template')
 
     def test_good_ai_draft_is_used(self):
-        result = agent.write_email(release(), PROFILE, ai=lambda f, p: ('Senior Security Consultant (LH-1)', GOOD_BODY))
+        result = agent.write_email(release(), PROFILE, ai=lambda f, p, **kw: ('Senior Security Consultant (LH-1)', GOOD_BODY))
         self.assertEqual(result[2], 'ai')
 
 
@@ -161,7 +161,7 @@ class RunTests(AgentTestCase):
     def run_agent(self, sheet, releases, **kw):
         smtp = Mock()
         results = agent.run(now=True, sheet=sheet, smtp_factory=lambda: smtp, profile=PROFILE, releases=releases,
-                            ai=lambda f, p: (f"Senior Security Consultant ({f['reference']})",
+                            ai=lambda f, p, **kw: (f"Senior Security Consultant ({f['reference']})",
                                              GOOD_BODY.replace('LH-1', f['reference'])),
                             sleep=lambda s: None, **kw)
         return results, smtp
@@ -250,3 +250,60 @@ class SignOffTests(unittest.TestCase):
         self.assertEqual(agent.strip_sign_off('Hi there,\n\nBody.\n\nRegards,\nSam Smith'), 'Hi there,\n\nBody.')
         self.assertEqual(agent.strip_sign_off('Hi there,\n\nThank you for your time.'),
                          'Hi there,\n\nThank you for your time.')
+
+
+class PersonalisationTests(AgentTestCase):
+    def test_promises_are_caught(self):
+        facts = agent.tender_facts(release())
+        for claim in ('Our candidates are available to start on 9 November.',
+                      'We can put forward candidates who meet the seniority requirement.',
+                      'Illoura Services holds Baseline clearance eligibility.',
+                      'We currently have a Senior Security Consultant available.',
+                      'Our candidates can commence immediately.'):
+            body = GOOD_BODY.replace('Thank you for your time.', claim)
+            self.assertTrue(any('promises' in p for p in agent.check_draft('S (LH-1)', body, facts, PROFILE)), claim)
+        self.assertEqual(agent.check_draft('S (LH-1)', GOOD_BODY, facts, PROFILE), [])
+
+    def test_rejected_draft_gets_one_revision_with_feedback(self):
+        calls = []
+
+        def writer(facts, profile, agency=None, feedback=None):
+            calls.append(feedback)
+            if feedback is None:
+                return 'S (LH-1)', GOOD_BODY.replace('Thank you for your time.', 'Our candidates can commence now.')
+            return 'S (LH-1)', GOOD_BODY
+        subject, body, writer_name, note = agent.write_email(release(), PROFILE, ai=writer)
+        self.assertEqual(writer_name, 'ai')
+        self.assertIsNone(calls[0])
+        self.assertTrue(any('promises' in p for p in calls[1]))
+        self.assertIn('revised once', note)
+
+    def test_quarters_and_plain_word_agency_activity(self):
+        self.assertTrue(agent._quarter_passed('Quarter 2 2025/2026', date(2026, 10, 6)))
+        self.assertFalse(agent._quarter_passed('Quarter 2 2026/2027', date(2026, 10, 6)))
+        self.assertFalse(agent._quarter_passed('Quarter 3 2026/2027', date(2026, 10, 6)))
+        self.assertEqual([agent._often(n) for n in (0, 3, 10, 40)], [None, 'occasionally', 'regularly', 'frequently'])
+
+    def test_named_contact_is_greeted_by_first_name(self):
+        facts = agent.tender_facts(dict(release(), contact_name='Ms Bella Darmody'))
+        self.assertEqual(facts['greeting_name'], 'Bella')
+        self.assertEqual(agent.tender_facts(dict(release(), contact_name='Dr. Sam Lee'))['greeting_name'], 'Sam')
+        self.assertEqual(agent.tender_facts(dict(release(), contact_name='Procurement Team'))['greeting_name'], 'TA Procurement team')
+
+
+class GreetingTests(AgentTestCase):
+    def test_team_greeting_from_buyer_and_mailbox(self):
+        self.assertEqual(agent.team_greeting('Australian Prudential Regulation Authority', 'procurement@apra.gov.au'),
+                         'APRA Procurement team')
+        self.assertEqual(agent.team_greeting('Department of Agriculture, Fisheries and Forestry',
+                                             'DBDProcurement@aff.gov.au'), 'DAFF Procurement team')
+        self.assertEqual(agent.team_greeting('Australian Digital Health Agency', 'tenderresponses@digitalhealth.gov.au'),
+                         'ADHA Procurement team')
+
+    def test_named_contact_then_mailbox_owner_then_team(self):
+        row = release()
+        self.assertEqual(agent.greeting_for(dict(row, contact_name='Ms Bella Darmody')), 'Bella')
+        with patch.object(agent, 'person_for_address', return_value='Thi Anna Ly'):
+            self.assertEqual(agent.greeting_for(row), 'Thi Anna Ly')  # full name: given name unknown
+        with patch.object(agent, 'person_for_address', return_value=None):
+            self.assertEqual(agent.greeting_for(dict(row, buyer='Test Agency')), 'TA Procurement team')

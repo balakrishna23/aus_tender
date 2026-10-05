@@ -74,13 +74,13 @@ class OutreachTests(unittest.TestCase):
         subject, body = outreach.render(release(contact_name='Jordan Smith', title='7 Content Designers'))
         self.assertEqual(subject, 'Content Designers (LH-1) - suitable candidates available')
         self.assertIn('Hi Jordan,', body)
-        self.assertIn('we currently have Content Designers available', body)
+        self.assertIn('we can put forward suitable candidates for this Content Designers role', body)
         self.assertIn('Monday 12 October 2099', body)
         self.assertIn('ABN 12 345 678 901', body)
         self.assertIn('unsubscribe', body)
         _, generic = outreach.render(release(contact_name="No contact details reported. Please direct questions"))
         self.assertIn('Hi there,', generic)
-        self.assertIn('a Senior Business Analyst available', generic)
+        self.assertIn('suitable candidates for this Senior Business Analyst role', generic)
 
     def test_queue_then_send_only_approved_with_cooldown(self):
         store = MemoryStore([release(), release(url='https://x/2', contact_email='other@agency.gov.au'),

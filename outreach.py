@@ -56,6 +56,7 @@ SPECIALTIES = [  # first match wins: (keywords in title/category, how we describ
     (('data', 'developer', 'engineer', 'architect', 'analyst', 'ict', 'cyber', 'security', 'cloud',
       'tester', 'designer', 'digital', 'service desk', 'software'), 'ICT specialists'),
 ]
+TITLES = {'mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'prof', 'professor', 'sir', 'dame'}
 NOT_A_PERSON = re.compile(r'no contact|question|portal|procurement|tender|team|unit|branch|@', re.I)
 
 
@@ -102,9 +103,10 @@ def select_candidates(releases, already_queued, suppressed, today=None):
 # ── Personalisation ────────────────────────────────────────────────────────────
 def greeting_name(contact_name):
     name = (contact_name or '').strip()
-    if not name or NOT_A_PERSON.search(name) or len(name.split()) > 4:
+    words = [w for w in name.replace('.', ' ').split() if w.lower() not in TITLES]
+    if not words or NOT_A_PERSON.search(name) or len(words) > 4:
         return 'there'
-    return name.split()[0].title()
+    return words[0].title()
 
 
 def role_parts(title):
