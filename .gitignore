@@ -59,3 +59,6 @@ databases_live/
 
 # Business documents (attached by the outreach agent)
 templates/*.pdf
+
+# Generated operations dashboard (contains contact data)
+dashboard/

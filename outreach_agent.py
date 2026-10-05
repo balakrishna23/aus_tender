@@ -747,6 +747,11 @@ def main(argv=None):
             print(process_inbox(conn, AgentSheet()))
     else:
         print(summary())
+    try:  # keep the operations dashboard current; never fail the agent over it
+        import dashboard
+        dashboard.build()
+    except Exception as e:
+        log.warning('Dashboard not rebuilt: %s', e)
     return 0
 
 

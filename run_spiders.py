@@ -486,6 +486,11 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
                                                'feed': feed_line}, indent=2), encoding='utf-8')
 
     archive_logs(run_id, [r["spider"] for r in results])
+    try:  # the dashboard is a convenience; never let it fail a run
+        import dashboard
+        dashboard.build()
+    except Exception as e:
+        print(f"Dashboard not rebuilt: {e}")
     summary = "\n".join(f"{r['spider']}: {r['status']} new={r['new']} updated={r['updated']} "
                         f"({r['duration_seconds']}s)" for r in results) + "\n" + feed_line
     ping_healthcheck("/fail" if any_failed else "", summary)
