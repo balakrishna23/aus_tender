@@ -450,7 +450,31 @@ class BuyIctApiSpider(scrapy.Spider):
             "sys_id": summary.get("sys_id")
             or (re.search(r"sys_id=([0-9a-f]{32})", detail_url) or [None, None])[1],
             "status": summary.get("_status"),
+            # Everything else BuyICT shows, so nothing on the page is lost.
+            "description": html_to_text(opp_widget_data.get("description")),
+            "key_duties": html_to_text(opp_widget_data.get("key_duties")),
+            "response_requirements": opp_widget_data.get("response_requirements"),
+            "main_details": main_details_map,
+            "all_details": self._other_details(opp_widget_data),
         }
+
+    # Page-state flags, labels and the visitor's session: not part of the opportunity.
+    UI_KEYS = {"seller", "user", "page", "accordian", "access_message", "recTypeForDetailFilter",
+               "contractHeading", "criteriaLabel", "requirementsLabel", "documentsLabel", "badgeLabel",
+               "mainDetails", "requirements"}
+
+    def _other_details(self, data):
+        """The opportunity API's remaining sections, with HTML turned into text."""
+        def text(value):
+            if isinstance(value, str):
+                return html_to_text(value)
+            if isinstance(value, list):
+                return [text(v) for v in value]
+            if isinstance(value, dict):
+                return {k: text(v) for k, v in value.items()}
+            return value
+        return {k: text(v) for k, v in data.items()
+                if k not in self.UI_KEYS and not isinstance(v, bool) and v not in (None, "", [], {})}
 
     def _extract_g_ck(self, html_text):
         match = re.search(r"window\.g_ck\s*=\s*'([^']+)'", html_text or "")

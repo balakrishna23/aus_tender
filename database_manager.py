@@ -56,6 +56,12 @@ class DatabaseManager:
                     supplier_state_territory TEXT,
                     supplier_country TEXT,
                     supplier_abn TEXT,
+                    contact_phone TEXT,
+                    branch TEXT,
+                    division TEXT,
+                    atm_id TEXT,
+                    australian_business_engaged TEXT,
+                    all_details TEXT,  -- JSON: every labelled field on the page
                     url TEXT UNIQUE,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -92,6 +98,13 @@ class DatabaseManager:
                     contact_phone TEXT,
                     addenda_link TEXT,
                     atm_documents_link TEXT,
+                    multi_agency_access TEXT,
+                    panel_arrangement TEXT,
+                    multi_stage TEXT,
+                    other_instructions TEXT,
+                    timeframe_for_delivery TEXT,
+                    address_for_lodgement TEXT,
+                    all_details TEXT,  -- JSON: every labelled field on the page
                     url TEXT UNIQUE,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -169,6 +182,8 @@ class DatabaseManager:
                     current_suppliers TEXT,  -- JSON field
                     previous_suppliers TEXT, -- JSON field
                     participant_agencies TEXT, -- JSON field
+                    contact_phone TEXT,
+                    all_details TEXT,  -- JSON: every labelled field on the page
                     url TEXT UNIQUE,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -210,6 +225,11 @@ class DatabaseManager:
                     url TEXT UNIQUE,
                     sys_id TEXT,
                     status TEXT,
+                    description TEXT,
+                    key_duties TEXT,
+                    response_requirements TEXT,  -- JSON list
+                    main_details TEXT,  -- JSON: every field in the opportunity's main details
+                    all_details TEXT,   -- JSON: everything else the opportunity API returns
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -273,6 +293,23 @@ class DatabaseManager:
                     description TEXT,
                     contact_name TEXT,
                     contact_email TEXT,
+                    contact_phone TEXT,
+                    notice_type TEXT,
+                    location TEXT,
+                    procurement_type TEXT,
+                    covered_procurement TEXT,
+                    multi_agency_use TEXT,
+                    related_opportunities TEXT,
+                    timeframe_for_delivery TEXT,
+                    estimated_decision_date TEXT,
+                    project_goals TEXT,
+                    scope TEXT,
+                    related_files TEXT,
+                    requirements TEXT,
+                    assessment_criteria TEXT,
+                    notices TEXT,
+                    amendments TEXT,
+                    all_details TEXT,  -- JSON: every field on the opportunity page
                     illoura_relevant INTEGER DEFAULT 0,
                     url TEXT UNIQUE,
                     scraped_at TEXT,
@@ -342,6 +379,13 @@ class DatabaseManager:
             # Create table
             conn.execute(schema_info['schema'])
 
+            # Columns added to SCHEMAS after a database was created are added in place.
+            table_name = schema_info['table_name']
+            have = {row[1] for row in conn.execute(f'PRAGMA table_info({table_name})')}
+            for column, kind in self._schema_columns(schema_info['schema']):
+                if column not in have:
+                    conn.execute(f'ALTER TABLE {table_name} ADD COLUMN {column} {kind}')
+
             if spider_name == 'aus_contract':
                 columns = {row[1] for row in conn.execute('PRAGMA table_info(contracts)')}
                 if 'contract_value_raw' not in columns:
@@ -376,6 +420,17 @@ class DatabaseManager:
 
             conn.commit()
             self.logger.info(f"Initialized database for {spider_name}")
+
+    @staticmethod
+    def _schema_columns(schema):
+        """(name, type) of the plain columns in a CREATE TABLE statement (keys and defaults
+        cannot be added by ALTER TABLE, so only simple typed columns are returned)."""
+        columns = []
+        for line in schema.splitlines():
+            match = re.match(r'\s*([a-z_][a-z0-9_]*)\s+(TEXT|INTEGER|REAL|TIMESTAMP)\b(.*)', line, re.I)
+            if match and not re.search(r'PRIMARY|UNIQUE|DEFAULT', match.group(3), re.I):
+                columns.append((match.group(1), match.group(2).upper()))
+        return columns
 
     BUY_ICT_URL = 'https://www.buyict.gov.au/public?id=opportunity_details&table={table}&sys_id={sys_id}&entry=opp_page'
 

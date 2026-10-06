@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import scrapy
 
-from spiders.austender_common import (AusTenderListingMixin, austender_day, date_windows,
+from spiders.austender_common import (AusTenderListingMixin, austender_day, date_windows, page_details,
                                       parse_day, search_url)
 
 
@@ -34,12 +34,17 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         self._init_listing(since, refresh_existing)
         # refetch=missing_supplier: re-open stored notices from the last year whose supplier
         # town is blank (saved by an older version of this spider). Resumable: rerun to continue.
+        # refetch=missing_details: re-open notices saved before every page field was captured,
+        # published since `since` (all of them without it).
         self.refetch = refetch
         self.detail_callback = self.parse_contract
 
     def start_requests(self):
         if self.refetch == 'missing_supplier':
             yield from self._refetch_missing_supplier()
+            return
+        if self.refetch == 'missing_details':
+            yield from self.refetch_missing_details('contracts', self.since)
             return
         self.load_stored()
         if getattr(self, 'start_urls', None):
@@ -144,6 +149,12 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             "Confidentiality Reason(s) - Outputs": get_detail("Confidentiality Reason(s) - Outputs"),
             "Consultancy": get_detail("Consultancy"),
             "Agency Reference ID": get_detail("Agency Reference ID"),
+            "ATM ID": get_detail("ATM ID"),
+            "Australian Business Engaged": get_detail("Was an Australian business Engaged?"),
+            "Contact Phone": get_agency_detail("Phone"),
+            "Branch": get_agency_detail("Branch"),
+            "Division": get_agency_detail("Division"),
+            "All Details": page_details(response),
             "Supplier Name": get_supplier_detail("Name"),
             "Supplier Town/City": get_supplier_detail("Town/City"),
             "Supplier Postcode": get_supplier_detail("Postcode"),

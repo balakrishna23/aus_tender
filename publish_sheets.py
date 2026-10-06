@@ -33,7 +33,8 @@ from sheets_writer import replace_worksheets
 log = logging.getLogger('publish_sheets')
 
 REGISTRY = 'sheets_registry.json'
-HIDDEN_COLUMNS = {'content_hash', 'id'}
+# all_details/main_details: every field on the page as JSON; its useful parts are already columns.
+HIDDEN_COLUMNS = {'content_hash', 'id', 'all_details', 'main_details'}
 CELL_LIMIT = 49000  # Google Sheets rejects cells over 50,000 characters
 # Sheets show what is useful now: open/active items plus the last year. The databases
 # (and their backups) keep the full history.

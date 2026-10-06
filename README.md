@@ -228,9 +228,27 @@ Data clean-up applied on save (verified against the live sites, 2026-10-04):
 - Contract supplier state is filled from the postcode where the page lacked it;
   `scrapy crawl aus_contract -a refetch=missing_supplier` re-opens last-year notices
   whose supplier town is blank (resumable).
-- Not fixable from the data: AusTender ATM pages show no phone, many BuyICT buyers
-  publish no contact (questions go through the portal), and ACT tender pages sit
-  behind Cloudflare, so ACT rows carry listing fields only.
+- AusTender ATM pages repeat the contact block; the phone is read once (older rows that
+  stored it twice were repaired 2026-10-06).
+- Not fixable from the data: many agencies leave the contract/standing-offer phone blank,
+  many BuyICT buyers publish no contact (questions go through the portal), and ACT tender
+  pages sit behind Cloudflare, so ACT rows carry listing fields only.
+
+Every field a page shows is stored (2026-10-06):
+- Named columns for the useful fields, e.g. contract notices: contact phone, branch,
+  division, ATM ID, "Australian business engaged"; ATMs: multi-agency access, panel,
+  multi-stage, other instructions, timeframe for delivery, address for lodgement; standing
+  offers: contact phone; BuyICT: description, key duties, response requirements; NSW:
+  contact phone, type, covered procurement, decision date, project goals, scope, files,
+  requirements, assessment criteria, notices, amendments.
+- `all_details` (JSON) keeps every labelled field on the page as well, so a field the site
+  adds later is not lost. It is left out of the Google Sheets (its parts are columns).
+- New schema columns are added to existing databases automatically on the next run.
+- Records saved before this get the new fields when they are next re-read (open ATMs, open
+  BuyICT and NSW opportunities, current standing offers: automatically). To fill older ones
+  (resumable; about 47 pages a minute):
+  `scrapy crawl aus_contract -a refetch=missing_details -a since=2025-10-06`
+  (`aus_tender` and `standing_offer` take the same arguments; leave out `since` for all).
 
 #### Activity log (`activity_log.py`)
 

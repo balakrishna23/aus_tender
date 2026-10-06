@@ -2,7 +2,7 @@ from datetime import datetime, timedelta
 
 import scrapy
 
-from spiders.austender_common import AusTenderListingMixin, notice_guid, search_url
+from spiders.austender_common import AusTenderListingMixin, notice_guid, page_details, parse_day, search_url
 
 
 class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
@@ -23,14 +23,21 @@ class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
     RECHECK_DAYS = 7
     BASE = dict(SearchFrom='SonSearch', Type='Son', AgencyStatus='-1', KeywordTypeSearch='AllWord')
 
-    def __init__(self, since=None, refresh_existing=False, *args, **kwargs):
+    def __init__(self, since=None, refresh_existing=False, refetch=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.full = str(since).lower() == 'all'
         self._init_listing(None, refresh_existing)
+        # refetch=missing_details: re-open stored offers saved before every page field was
+        # captured, published since `since` (YYYY-MM-DD; all of them with since=all or none).
+        self.refetch = refetch
+        self.refetch_since = None if self.full else parse_day(since) if since else None
         self.detail_callback = self.parse_son
         self.checked_at = {}
 
     def start_requests(self):
+        if self.refetch == 'missing_details':
+            yield from self.refetch_missing_details('standing_offers', self.refetch_since)
+            return
         self.load_stored()
         for url, scraped_at in self.db_manager.load_column_map(self.name, 'url', 'scraped_at').items():
             self.checked_at[notice_guid(url)] = scraped_at
@@ -94,6 +101,8 @@ class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
             "Contact Name": response.xpath('//div[@class="contact-long"]/p[2]/text()').get(default="").strip(),
             "Email Address": response.xpath('//div[@class="contact-long"]//a[contains(@href, "mailto")]/text()').get(default="").strip(),
             "Office Postcode": get_contact_detail("Office Postcode"),
+            "Contact Phone": get_contact_detail("Phone"),
+            "All Details": page_details(response),
             "SON ID": get_detail("SON ID"),
             "Agency": get_detail("Agency"),
             "Publish Date": get_detail("Publish Date"),

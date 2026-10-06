@@ -51,6 +51,27 @@ def search_url(path, **params):
     return f"https://www.tenders.gov.au/Search/{path}?{urlencode(params)}"
 
 
+def _clean(parts):
+    return ' '.join(' '.join(parts).split())
+
+
+def page_details(response):
+    """Every labelled field on a notice page ({label: text}), including the contact block,
+    so whatever the site shows is kept even when a spider has no column for it yet."""
+    details = {}
+    for block in response.xpath('//div[contains(@class, "list-desc")][span]'):
+        label = _clean(block.xpath('./span//text()').getall()).rstrip(' :')
+        value = _clean(block.xpath('./div[contains(@class, "list-desc-inner")]//text()').getall())
+        if label and value:
+            details.setdefault(label, value)
+    for line in response.xpath('(//div[contains(@class, "contact-long")])[1]/p[not(contains(@class, "heading"))]'):
+        label = _clean(line.xpath('./span//text()').getall()).rstrip(' :') or 'Name'  # unlabelled line: the name
+        value = _clean(line.xpath('./node()[not(self::span)]//text() | ./text()').getall()).lstrip(': ')
+        if value and value != label:
+            details.setdefault(label if label.startswith('Contact') else f'Contact {label}', value)
+    return details
+
+
 class AusTenderListingMixin:
     """Walks AusTender listings and decides which detail pages to fetch.
 
@@ -83,6 +104,18 @@ class AusTenderListingMixin:
             if guid:
                 self.stored_urls[guid] = url
         self.logger.info('Loaded %s stored notices', len(self.stored_urls))
+
+    def refetch_missing_details(self, table, since=None):
+        """Re-open stored notices saved before all_details was captured, published since `since`
+        (a date; None = all). Resumable: each saved notice drops out of the next run's list."""
+        self.db_manager.initialize_database(self.name)
+        with self.db_manager.get_connection(self.name) as conn:
+            rows = conn.execute(f'SELECT url, publish_date FROM {table} WHERE all_details IS NULL '
+                                f"AND url LIKE 'https://www.tenders.gov.au/%'").fetchall()
+        urls = [url for url, published in rows if since is None or (parse_day(published) or since) >= since]
+        self.logger.info('Re-fetching %s stored notices to capture every page detail', len(urls))
+        for url in urls:
+            yield scrapy.Request(url, callback=self.detail_callback, meta={'refresh_existing': True})
 
     def listing_request(self, url, kind, window=None):
         return scrapy.Request(url, callback=self.parse,

@@ -1,9 +1,7 @@
 import json
 import os
-import sqlite3
 import tempfile
 import unittest
-from contextlib import closing
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -25,10 +23,6 @@ class ReleasesFeedTests(unittest.TestCase):
         self.exports = Path(self.temp.name) / 'exports'
         for name in ('aus_tender', 'buy_ict', 'act_tender', 'nsw_tender', 'planned_procurement'):
             self.db.initialize_database(name)
-        with closing(sqlite3.connect(Path(self.temp.name) / 'nsw_tender.db')) as conn:
-            conn.execute('ALTER TABLE nsw_tenders ADD COLUMN notice_type TEXT')
-            conn.execute('ALTER TABLE nsw_tenders ADD COLUMN location TEXT')
-            conn.commit()
 
     def add_atm(self, atm_id, published, closes='20-Dec-2099 2:00 pm', url_kind='Show'):
         self.db.insert_item('aus_tender', {

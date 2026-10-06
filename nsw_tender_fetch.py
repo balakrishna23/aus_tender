@@ -9,6 +9,7 @@ Run:  python nsw_tender_fetch.py
 Stealth must be applied BEFORE page.goto() — this is why we can't use
 scrapy-playwright (which applies PageMethods AFTER navigation).
 """
+import json
 import re
 import asyncio
 import logging
@@ -158,7 +159,7 @@ def init_db():
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
     columns = {row[1] for row in con.execute('PRAGMA table_info(nsw_tenders)')}
-    for column in ('notice_type', 'location'):
+    for column in ('notice_type', 'location', 'contact_phone', 'all_details') + DETAIL_COLUMNS:
         if column not in columns:
             con.execute(f'ALTER TABLE nsw_tenders ADD COLUMN {column} TEXT')
     con.commit()
@@ -328,32 +329,81 @@ EXTRACT_OPPORTUNITIES_JS = """
 """
 
 
-def _detail_field(text, label):
-    """Value printed on the line(s) after 'Label:' on an opportunity page."""
-    match = re.search(rf'^{re.escape(label)}:\s*\n+\s*(.+)$', text, re.M)
-    return match.group(1).strip() if match else ''
+# Overview fields and page sections of an opportunity, and the columns they are stored in.
+OVERVIEW_COLUMNS = {
+    'Type': 'procurement_type', 'Covered procurement': 'covered_procurement',
+    'Multi agency use': 'multi_agency_use', 'Related opportunities': 'related_opportunities',
+    'Estimated timeframe for delivery': 'timeframe_for_delivery',
+    'Estimated decision date': 'estimated_decision_date',
+}
+SECTION_COLUMNS = {
+    'Project goals': 'project_goals', 'Scope': 'scope', 'Related files': 'related_files',
+    'Requirements': 'requirements', 'Evaluation': 'assessment_criteria', 'Notices': 'notices',
+    'Amendments': 'amendments',
+}
+PAGE_SECTIONS = ['Description', 'Overview', *SECTION_COLUMNS, 'Terms and conditions',
+                 'Download opportunity package', 'Log in to respond']
+DETAIL_COLUMNS = tuple(OVERVIEW_COLUMNS.values()) + tuple(SECTION_COLUMNS.values())
+EMPTY_SECTION = re.compile(r'^No (notices|amendments) ha(ve|s) been', re.I)
+BOILERPLATE = {'Assessment Criteria', 'General assessment criteria that was used to evaluate this opportunity',
+               'Opportunity requirements'}
 
 
 def _parse_opportunity_detail(text):
-    contact = re.search(r'^Primary contact:\s*\n+\s*(.+)\n+\s*(\S+@\S+)', text, re.M)
-    return {
-        'publish_date': _detail_field(text, 'Publish date'),
-        'locations': _detail_field(text, 'Locations'),
-        'contact_name': contact.group(1).strip() if contact else '',
-        'contact_email': contact.group(2).strip() if contact else '',
+    """Every field and section of an opportunity page (its rendered text)."""
+    sections, current = {}, None
+    for line in (raw.strip() for raw in text.splitlines()):
+        if not line:
+            continue
+        if line in PAGE_SECTIONS:
+            current = sections.setdefault(line, [])
+        elif current is not None:
+            current.append(line)
+    # Overview: "Label:" lines, each followed by its value line(s); the whole page if the
+    # Overview heading is missing (older layout).
+    overview, label = {}, None
+    for line in sections.get('Overview') or [raw.strip() for raw in text.splitlines() if raw.strip()]:
+        match = re.fullmatch(r'([A-Z][^:]{1,60}):', line)
+        if match:
+            label = match.group(1)
+            overview[label] = []
+        elif label:
+            overview[label].append(line)
+    contact = overview.get('Primary contact', [])
+    email = next((x for x in contact if '@' in x), '')
+    phone = next((x for x in contact if re.fullmatch(r'[\d\s()+-]{6,}', x)), '')
+    name = next((x for x in contact if x not in (email, phone)), '')
+    info = {
+        'publish_date': ' '.join(overview.get('Publish date', [])),
+        'locations': '; '.join(overview.get('Locations', [])),
+        'contact_name': name, 'contact_email': email, 'contact_phone': phone,
     }
+    for label, column in OVERVIEW_COLUMNS.items():
+        info[column] = '; '.join(overview.get(label, []))
+    for heading, column in SECTION_COLUMNS.items():
+        lines = [x for x in sections.get(heading, []) if x not in BOILERPLATE]
+        info[column] = '' if lines and EMPTY_SECTION.match(lines[0]) else '\n'.join(lines)
+    details = {'Overview': {k: '; '.join(v) for k, v in overview.items() if v}}
+    details.update({k: '\n'.join(v) for k, v in sections.items()
+                    if v and k not in ('Overview', 'Download opportunity package', 'Log in to respond')})
+    info['all_details'] = json.dumps(details, ensure_ascii=False) if any(details.values()) else ''
+    return info
 
 
 def upsert_opportunity(con, item):
     """Insert a new open opportunity, or refresh listing fields; detail fields are kept when absent."""
     existing = con.execute('SELECT 1 FROM nsw_tenders WHERE url = ?', (item['url'],)).fetchone()
-    con.execute('''INSERT INTO nsw_tenders
+    detail = ('contact_phone', 'all_details') + DETAIL_COLUMNS
+    keep_detail = ''.join(f"{c}=COALESCE(NULLIF(excluded.{c}, ''), {c}),\n            " for c in detail)
+    con.execute(f'''INSERT INTO nsw_tenders
         (portal, reference, title, agency, category, status, notice_type, close_date, publish_date,
-         description, contact_name, contact_email, location, illoura_relevant, url, scraped_at)
+         description, contact_name, contact_email, location, illoura_relevant, url, scraped_at,
+         {', '.join(detail)})
         VALUES (:portal, :reference, :title, :agency, :category, :status, :notice_type, :close_date,
                 :publish_date, :description, :contact_name, :contact_email, :location,
-                :illoura_relevant, :url, :scraped_at)
+                :illoura_relevant, :url, :scraped_at, {', '.join(':' + c for c in detail)})
         ON CONFLICT(url) DO UPDATE SET
+            {keep_detail}
             title=excluded.title, agency=excluded.agency, category=excluded.category,
             status=excluded.status, notice_type=excluded.notice_type, close_date=excluded.close_date,
             description=excluded.description, illoura_relevant=excluded.illoura_relevant,
@@ -364,7 +414,7 @@ def upsert_opportunity(con, item):
             scraped_at=excluded.scraped_at,
             updated_at=CASE WHEN close_date IS NOT excluded.close_date OR title IS NOT excluded.title
                             OR status IS NOT excluded.status THEN CURRENT_TIMESTAMP ELSE updated_at END
-    ''', item)
+    ''', {**{c: '' for c in detail}, **item})
     con.commit()
     return existing is None
 
@@ -376,7 +426,8 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
     that drop off the open list are marked Closed.
     """
     known = {row[0] for row in con.execute(
-        "SELECT url FROM nsw_tenders WHERE portal = 'nsw_opportunity' AND publish_date != ''")}
+        "SELECT url FROM nsw_tenders WHERE portal = 'nsw_opportunity' AND publish_date != '' "
+        "AND COALESCE(all_details, '') != ''")}  # saved before every page field was kept: re-read once
     seen, schemes, new, detail_failures = set(), set(), 0, 0
     events = []  # for activity.db
     async with async_playwright() as p:
@@ -424,7 +475,9 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
                         try:
                             await detail.goto(opp_url, wait_until='load', timeout=45000)
                             await detail.wait_for_timeout(1500)
-                            info = _parse_opportunity_detail(await detail.inner_text('body'))
+                            # Only the opportunity itself, not the site's menus.
+                            body = 'main' if await detail.query_selector('main') else 'body'
+                            info = _parse_opportunity_detail(await detail.inner_text(body))
                         except Exception as e:
                             # Saved from the listing without a publish date, so the next run
                             # retries the detail page; one slow page must not sink the run.
@@ -439,6 +492,7 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
                         'publish_date': info['publish_date'], 'description': card['description'].strip(),
                         'contact_name': info['contact_name'], 'contact_email': info['contact_email'],
                         'location': info['locations'],
+                        **{c: info.get(c, '') for c in ('contact_phone', 'all_details') + DETAIL_COLUMNS},
                         'illoura_relevant': int(is_relevant(f"{card['title']} {category} {card['agency']}")),
                         'url': opp_url, 'scraped_at': datetime.utcnow().isoformat(),
                     })
