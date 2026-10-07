@@ -18,7 +18,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
 
     Default (incremental): from a few days before the last complete run to today.
     ``-a since=2025-01-01`` fills in every notice published since then.
-    ``-a scope=active_it`` fills in contracts still running in the ICT and labour-hire families.
+    ``-a scope=active_it`` fills in contracts still running in the ICT-services and labour-hire families.
     Contract notices never change once published (amendments get their own CN ID).
     """
 
@@ -57,9 +57,12 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         self.db_manager.initialize_database(self.name)
         stored = set(self.db_manager.load_column_map(self.name, 'cn_id', 'cn_id'))
         if self.scope == 'active_it':
-            notices = self._api_notices("v.cn_id IN (SELECT cn_id FROM contracts WHERE current_end_date >= ? "
-                                        "AND category_family IS NOT NULL)", self.today.isoformat())
-            self.logger.info('Running ICT and labour-hire contracts: %s notices', len(notices))
+            # Original notices only: the panel (SON ID) and the other page-only fields are set when
+            # the contract is let; amendments don't change them.
+            notices = self._api_notices("v.amendment_no = 0 AND v.cn_id IN (SELECT cn_id FROM contracts "
+                                        "WHERE current_end_date >= ? AND category_family IN "
+                                        "('ICT services', 'labour hire and recruitment'))", self.today.isoformat())
+            self.logger.info('Running ICT-services and labour-hire contracts: %s notices', len(notices))
         else:
             self.window_start = self.since or self._incremental_start()
             notices = self._api_notices('v.published_on >= ?', self.window_start.isoformat())
