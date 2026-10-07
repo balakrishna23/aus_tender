@@ -326,7 +326,13 @@ Re-matching refreshes the counts and keeps every review decision.
 `python activity_log.py` prints a summary; `--items 50` lists the latest records.
 Logging never stops a run; it is backed up and shipped to the VPS with the other databases.
 
-#### Outreach agent (`outreach_agent.py`) — autonomous
+#### Outreach agent (`outreach_agent.py`) — sending switched off
+
+**Autonomous sending is off in code** (`SENDING_ALLOWED = False`): the Illoura spec allows no
+autonomous emails (AI drafts, a person approves and sends) and no contact with a buyer while their
+tender is live, and this agent's candidates are open-tender buyers. `--dry-run` still writes drafts.
+It is to be rebuilt on the contact safety rules (spec section 8). What follows describes the
+original design.
 
 Runs every 15 minutes (Windows task `AusTenderOutreachAgent`; BuyICT is re-checked hourly in
 Sydney business hours by `AusTenderBuyIctHourly`). Each run: reads its inbox (unsubscribe →
