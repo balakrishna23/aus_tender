@@ -14,12 +14,15 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from project_paths import PROJECT_DIR, database_directory
+import action_tracker
 
 TWO_YEARS_AGO = (date.today() - timedelta(days=730)).isoformat()
 TABS = [
+    ('Prime briefs', 'Evidence-backed draft briefs for Lane; candidates and maths are unconfirmed',
+     'SELECT * FROM prime_briefs ORDER BY score DESC'),
     ('TODAY', 'Draft TODAY list: rules only; bench and relationships not scored yet',
      'SELECT rank, priority, score, organisation, action_type, why_now, person_and_route, offer, owner, due, '
-     'contact_safety, evidence, score_parts, assumptions FROM today ORDER BY rank'),
+     'status, stage, action_id, contact_safety, evidence, score_parts, assumptions FROM today ORDER BY rank'),
     ('Renewals 0-90 days', 'ICT and labour-hire contracts ending in the next 90 days',
      'SELECT window, days_left, current_end_date, buyer, supplier, supplier_on_mmr_list, description, category_family, '
      'current_value, contact_name, contact_email, contact_phone, branch, division, page_url FROM renewals '
@@ -74,8 +77,11 @@ def main():
     book = Workbook()
     book.remove(book.active)
     with closing(sqlite3.connect(f'file:{source}?mode=ro', uri=True)) as conn:
+        conn.execute('ATTACH DATABASE ? AS tracking', (str(database_directory() / 'actions.db'),))
         built = conn.execute('SELECT built_at FROM build_info').fetchone()[0]
-        for title, note, sql in TABS:
+        tracker_tab = ('Tracker', 'Tracking snapshot; edit the Google Sheet to sync changes',
+                       f"SELECT {', '.join(action_tracker.TRACKER_COLUMNS)} FROM tracking.actions ORDER BY score DESC")
+        for title, note, sql in [tracker_tab] + TABS:
             sheet = book.create_sheet(title[:31])
             try:
                 cursor = conn.execute(sql)
@@ -92,12 +98,15 @@ def main():
             count = 0
             for row in cursor:
                 sheet.append(list(row))
+                for cell in sheet[sheet.max_row]:
+                    if cell.data_type == 'f':
+                        cell.data_type = 's'  # snapshots contain data, never executable formulas
                 count += 1
             for i, name in enumerate(columns, 1):
                 width = 60 if name in ('why_now', 'description', 'title', 'assumptions', 'person_and_route') else (
                     45 if name.endswith('url') or name == 'evidence' else 18)
                 sheet.column_dimensions[get_column_letter(i)].width = width
-            if title == 'TODAY':
+            if title in ('TODAY', 'Tracker', 'Prime briefs'):
                 for row in sheet.iter_rows(min_row=3):
                     for cell in row:
                         cell.alignment = Alignment(wrap_text=True, vertical='top')

@@ -505,6 +505,12 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
             any_failed = True
             feed_line = f"releases feed: FAILED ({e})"
         # The engine views (renewals, opportunities, MMR, rates) are derived; rebuilt every run.
+        if os.environ.get("GSHEETS_FOLDER_ID") and not args.no_sync:
+            try:
+                import publish_sheets
+                publish_sheets.pull_tracker()
+            except Exception as e:
+                print(f"Tracker edits could not be read; continuing with stored tracking ({e})")
         try:
             import build_intelligence
             build_intelligence.main([])

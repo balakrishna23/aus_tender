@@ -175,6 +175,11 @@ def build(renewals, primes, exemption_use, hot_list, opportunities, today):
     actions = (prime_actions(renewals, primes, today) + agency_actions(renewals, exemption_use, today)
                + plan_actions(hot_list, today) + live_actions(opportunities, today))
     actions.sort(key=lambda a: -a['score'])
+    return actions, select_actions(actions)
+
+
+def select_actions(actions):
+    """Select a varied, ranked list from the current machine proposals."""
     limits = classify.config('scoring')['today_list']
     cap = max(2, limits['max_items'] // 3)
     eligible = [a for a in actions if a['priority'] != 'IGNORE']
@@ -193,4 +198,4 @@ def build(renewals, primes, exemption_use, hot_list, opportunities, today):
     picked.sort(key=lambda a: -a['score'])
     for rank, a in enumerate(picked, 1):
         a['rank'] = rank
-    return actions, picked
+    return picked

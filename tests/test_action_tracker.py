@@ -53,6 +53,13 @@ class TrackerTests(unittest.TestCase):
         self.assertEqual(at.record_edits(self.conn, [dict(action_id=a['action_id'], status='maybe',
                                                           follow_up='next week')]), 0)
 
+    def test_emptied_status_or_stage_keeps_stored_value(self):
+        a = action('DXC')
+        at.merge(self.conn, [a], TODAY)
+        self.assertEqual(at.record_edits(self.conn, [dict(action_id=a['action_id'], status='', stage=' ')]), 0)
+        row = self.conn.execute('SELECT status, stage FROM actions').fetchone()
+        self.assertEqual(tuple(row), ('proposed', 'identified'))
+
     def test_today_drops_closed_and_brings_back_due_follow_ups(self):
         done, snoozed, due, fresh = action('Done Co'), action('Later Co'), action('Due Co', score=50), action('New Co')
         at.merge(self.conn, [done, snoozed, due, fresh], TODAY)
@@ -72,6 +79,16 @@ class TrackerTests(unittest.TestCase):
         at.record_edits(self.conn, [dict(action_id=b['action_id'], status='declined'),
                                     dict(action_id=a['action_id'], status='accepted', follow_up='2026-01-01')])
         self.assertEqual([r['organisation'] for r in at.tracker_rows(self.conn)], ['A', 'C', 'B'])
+
+    def test_picked_action_is_promoted_when_follow_up_overdue(self):
+        a = action('DXC')
+        at.merge(self.conn, [a], TODAY)
+        at.record_edits(self.conn, [dict(action_id=a['action_id'], status='accepted', follow_up='2026-10-06')])
+        result = at.apply_to_today(self.conn, [a], TODAY)
+        self.assertEqual(len(result), 1)
+        self.assertEqual((result[0]['priority'], result[0]['due']), ('OVERDUE', '2026-10-06'))
+        at.record_edits(self.conn, [dict(action_id=a['action_id'], status='proposed', follow_up='')])
+        self.assertEqual(at.apply_to_today(self.conn, [a], TODAY)[0]['priority'], 'ACT NOW')
 
 
 if __name__ == '__main__':

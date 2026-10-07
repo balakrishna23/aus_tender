@@ -27,6 +27,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 import activity_log
+import action_tracker
 from project_paths import PROJECT_DIR, database_directory
 from sheets_writer import replace_worksheets
 
@@ -144,13 +145,78 @@ DATASETS = {
 }
 # Published only once a spreadsheet exists for them: no spare sheet in the folder is not a failure.
 OPTIONAL = {'intelligence'}
+TRACKER_TAB = 'Tracker'
+
+
+def _read_tracker(book):
+    try:
+        return book.worksheet(TRACKER_TAB).get_all_records(default_blank='')
+    except gspread.WorksheetNotFound:
+        return []
+
+
+def pull_tracker():
+    """Import human edits from the registered sheet; never create a sheet here."""
+    sheet_id = load_registry().get('intelligence')
+    if not sheet_id:
+        return 0
+    rows = _read_tracker(client().open_by_key(sheet_id))
+    with closing(action_tracker.connect()) as conn:
+        return action_tracker.record_edits(conn, rows)
+
+
+def _refresh_today():
+    """Apply newly read tracking without repeating the expensive source-data rebuild."""
+    import build_intelligence
+    import today_list
+    path = database_directory() / 'intelligence.db'
+    if not path.exists():
+        return
+    with closing(sqlite3.connect(path)) as conn, closing(action_tracker.connect()) as tracker:
+        conn.row_factory = sqlite3.Row
+        actions = [dict(r) for r in conn.execute('SELECT * FROM actions ORDER BY score DESC')]
+        picked = today_list.select_actions(actions)
+        today = action_tracker.apply_to_today(tracker, picked, date.today())
+        build_intelligence.write(conn, 'today', today, ['rank'] + build_intelligence.ACTION_COLUMNS)
+        for row in tracker.execute('SELECT action_id, owner, status, stage FROM actions'):
+            conn.execute('UPDATE actions SET owner=?, status=?, stage=? WHERE action_id=?',
+                         (row['owner'], row['status'], row['stage'], row['action_id']))
+        import prime_briefs
+        def records(table):
+            result = [dict(r) for r in conn.execute(f'SELECT * FROM {table}')]
+            return result if not result or 'empty' not in result[0] else []
+        briefs = build_intelligence.build_prime_briefs(records('actions'), records('mmr_primes'),
+                   records('mmr_candidates'), records('renewals'), records('panel_members'), records('buyict_links'))
+        build_intelligence.write(conn, 'prime_briefs', briefs, prime_briefs.COLUMNS)
+        conn.commit()
+    if path.parent == PROJECT_DIR / 'databases':
+        prime_briefs.export(briefs, PROJECT_DIR)
+
+
+def _tracker_validation(book):
+    ws = book.worksheet(TRACKER_TAB)
+    requests = []
+    for column, values in [('status', action_tracker.STATUSES), ('stage', action_tracker.STAGES)]:
+        index = action_tracker.TRACKER_COLUMNS.index(column)
+        requests.append({'setDataValidation': {
+            'range': {'sheetId': ws.id, 'startRowIndex': 1,
+                      'startColumnIndex': index, 'endColumnIndex': index + 1},
+            'rule': {'condition': {'type': 'ONE_OF_LIST',
+                                   'values': [{'userEnteredValue': v} for v in values]},
+                     'showCustomUi': True, 'strict': False}}})
+    book.batch_update({'requests': requests})
 
 
 def _engine_views():
+    _refresh_today()
+    with closing(action_tracker.connect()) as conn:
+        tracker = pd.DataFrame(action_tracker.tracker_rows(conn), columns=action_tracker.TRACKER_COLUMNS)
     q = lambda sql: _table('intelligence', sql)  # noqa: E731
     return {
+        TRACKER_TAB: tracker,
+        'prime_briefs': q('SELECT * FROM prime_briefs ORDER BY score DESC'),
         'TODAY': q('SELECT rank, priority, score, organisation, action_type, why_now, person_and_route, offer, '
-                   'owner, due, contact_safety, evidence, score_parts, assumptions FROM today ORDER BY rank'),
+                   'owner, due, status, stage, action_id, contact_safety, evidence, score_parts, assumptions FROM today ORDER BY rank'),
         'renewals_180_days': q('SELECT window, days_left, current_end_date, buyer, supplier, supplier_on_mmr_list, '
                                'description, category_family, current_value, contact_name, contact_email, '
                                'contact_phone, branch, division, page_url FROM renewals WHERE days_left <= 180 '
@@ -291,7 +357,7 @@ def _worksheet(book, title, frame):
 SPREADSHEET_CELL_LIMIT = 10_000_000
 
 
-def publish(book, tabs):
+def publish(book, tabs, before_swap=None):
     # Publishing stages a full copy of every tab before swapping it in, so a spreadsheet
     # needs room for twice its data. Warn well before Google's 10M-cell ceiling.
     cells = sum((len(f) + 1) * max(len(f.columns), 1) for f in tabs.values())
@@ -299,7 +365,10 @@ def publish(book, tabs):
         log.warning('%r holds %s cells; publishing needs %s of Google\'s 10M limit. '
                     'Split older rows into an archive sheet soon.', book.title, f'{cells:,}', f'{cells * 2:,}')
     replacements = [(_worksheet(book, title, frame), _truncate(frame)) for title, frame in tabs.items()]
-    replace_worksheets(book, replacements)
+    if before_swap is None:
+        replace_worksheets(book, replacements)
+    else:
+        replace_worksheets(book, replacements, before_swap=before_swap)
     # A new spreadsheet starts with an empty 'Sheet1'; drop it once real tabs exist.
     for ws in book.worksheets():
         if ws.title in ('Sheet1', 'Sheet 1') and ws.title not in tabs and len(book.worksheets()) > 1:
@@ -327,8 +396,20 @@ def publish_all(only=None):
             _track_access(gc, key, book)
             if build is None:
                 continue
+            if key == 'intelligence':
+                tracker_snapshot = _read_tracker(book)
+                with closing(action_tracker.connect()) as conn:
+                    action_tracker.record_edits(conn, tracker_snapshot)
             tabs = build()
-            publish(book, tabs)
+            if key == 'intelligence':
+                def check_tracker():
+                    if _read_tracker(book) != tracker_snapshot:
+                        raise RuntimeError('Tracker changed during upload; edits preserved. Run publish again.')
+                publish(book, tabs, before_swap=check_tracker)
+            else:
+                publish(book, tabs)
+            if key == 'intelligence':
+                _tracker_validation(book)
             activity_log.record_share(key, title, book.url, {t: len(f) for t, f in tabs.items()})
             log.info('Published %-15s %s', key, ', '.join(f'{t}: {len(f)} rows' for t, f in tabs.items()))
         except Exception as e:

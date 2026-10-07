@@ -491,6 +491,12 @@ def main(argv=None):
     with closing(action_tracker.connect()) as tracker:
         action_tracker.merge(tracker, actions, today)
         today_rows = action_tracker.apply_to_today(tracker, today_rows, today)
+        tracked = {r['action_id']: dict(r) for r in tracker.execute('SELECT * FROM actions')}
+        for action in actions:
+            action.update({field: tracked[action['action_id']][field] for field in ('owner', 'status', 'stage')})
+    panels = build_panel_members(counts)
+    import prime_briefs
+    briefs = build_prime_briefs(actions, primes, candidates, renewals, panels, links)
     path = database_directory() / 'intelligence.db'
     partial = path.with_name(path.name + '.partial')
     partial.unlink(missing_ok=True)
@@ -501,7 +507,7 @@ def main(argv=None):
         write(conn, 'exemption_use', exemption_use)
         write(conn, 'agency_contacts', build_agency_contacts(today))
         write(conn, 'buyict_links', links)
-        write(conn, 'panel_members', build_panel_members(counts))
+        write(conn, 'panel_members', panels)
         write(conn, 'mmr_primes', primes)
         write(conn, 'mmr_candidates', candidates)
         write(conn, 'nsw_small_contracts', build_nsw_small_contracts(),
@@ -512,12 +518,31 @@ def main(argv=None):
               ['raw_name', 'source', 'candidate_org', 'candidate_name', 'similarity', 'decision'])
         write(conn, 'actions', actions, ACTION_COLUMNS)
         write(conn, 'today', today_rows, ['rank'] + ACTION_COLUMNS)
+        write(conn, 'prime_briefs', briefs, prime_briefs.COLUMNS)
         write(conn, 'build_info', [dict(built_at=datetime.now().isoformat(timespec='seconds'),
                                         buyict_link_stats=json.dumps(link_stats))])
         conn.commit()
     partial.replace(path)
+    # Test builds use isolated DB folders and must not replace production briefs.
+    if path.parent == PROJECT_DIR / 'databases':
+        prime_briefs.export(briefs, PROJECT_DIR)
     log.info('Built %s in %.0fs', path, time.time() - started)
     return 0
+
+
+def build_prime_briefs(actions, primes, candidates, renewals, panels, links):
+    import prime_briefs
+    labour_counts = Counter()
+    for row in rows('contract_api', "SELECT supplier_abn, cn_id FROM contracts "
+                   "WHERE category_family = 'labour hire and recruitment' ORDER BY cn_id"):
+        number = abn(row['supplier_abn'])
+        if number:
+            labour_counts[number] += 1
+            # Representative source notices, not an unbounded list inside a Sheet cell.
+            ids = labour_counts.setdefault(number + ':ids', [])
+            if len(ids) < 3:
+                ids.append(row['cn_id'])
+    return prime_briefs.build(actions, primes, candidates, renewals, panels, links, labour_counts)
 
 
 if __name__ == '__main__':

@@ -89,6 +89,8 @@ def record_edits(conn, sheet_rows):
         for field in HUMAN:
             if field not in row:
                 continue
+            if field in ('status', 'stage') and not str(row[field] or '').strip():
+                continue  # an emptied drop-down keeps the stored value
             new = _clean(field, row[field])
             if new is None and str(row[field] or '').strip():
                 continue  # invalid value typed: ignore, keep the stored one
@@ -135,9 +137,8 @@ def apply_to_today(conn, picked, today):
             a = dict(a, owner=row['owner'] or a['owner'], status=row['status'], stage=row['stage'])
         kept.append(a)
     due = []
-    shown = {a['action_id'] for a in kept}
     for row in stored.values():
-        if row['action_id'] in shown or is_closed(row):
+        if is_closed(row):
             continue
         follow_up = row['follow_up'] or (row['due'] if row['status'] in ('accepted', 'in progress') else None)
         if row['status'] in ('accepted', 'in progress', 'snoozed') and follow_up and follow_up <= today.isoformat():
@@ -152,7 +153,8 @@ def apply_to_today(conn, picked, today):
                 score_parts=None, assumptions=None, desired_outcome=None, status=row['status'],
                 stage=row['stage'], action_id=row['action_id']))
     due.sort(key=lambda a: a['due'])
-    result = due + kept
+    due_ids = {a['action_id'] for a in due}
+    result = due + [a for a in kept if a['action_id'] not in due_ids]
     for rank, a in enumerate(result, 1):
         a['rank'] = rank
     return result

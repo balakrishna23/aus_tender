@@ -11,7 +11,7 @@ def write_literal_dataframe(worksheet, dataframe, **kwargs):
                        allow_formulas=False, string_escaping='full', **kwargs)
 
 
-def replace_worksheets(spreadsheet, replacements, chunk_size=5000):
+def replace_worksheets(spreadsheet, replacements, chunk_size=5000, before_swap=None):
     """Stage every worksheet, then publish all values in one atomic API batch.
 
     Target sheet IDs and formatting survive. Failed uploads never clear targets.
@@ -53,6 +53,8 @@ def replace_worksheets(spreadsheet, replacements, chunk_size=5000):
                                     'endColumnIndex': cols},
                     'pasteType': 'PASTE_VALUES'}}])
         if requests:
+            if before_swap is not None:
+                before_swap()
             spreadsheet.batch_update({'requests': requests})
     finally:
         for stage in staged:

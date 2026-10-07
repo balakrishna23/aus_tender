@@ -151,6 +151,19 @@ class SheetsSafetyTests(unittest.TestCase):
         self.assertTrue(writer.call_args.kwargs['include_column_header'])
         spreadsheet.batch_update.assert_called_once()
 
+    def test_tracking_conflict_prevents_swap_and_cleans_staging(self):
+        spreadsheet = Mock()
+        stage = self.target(2)
+        spreadsheet.add_worksheet.return_value = stage
+        guard = Mock(side_effect=RuntimeError('Tracker changed'))
+        with patch('sheets_writer.write_literal_dataframe') as writer:
+            with self.assertRaisesRegex(RuntimeError, 'Tracker changed'):
+                replace_worksheets(spreadsheet, [(self.target(), pd.DataFrame({'x': [1]}))], before_swap=guard)
+            writer.assert_called_once()
+        guard.assert_called_once_with()
+        spreadsheet.batch_update.assert_not_called()
+        spreadsheet.del_worksheet.assert_called_once_with(stage)
+
 
 class CrawlFailureTests(unittest.TestCase):
     def test_empty_listing_after_other_success_is_recorded(self):

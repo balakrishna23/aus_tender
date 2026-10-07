@@ -70,16 +70,21 @@ NEXT_PAGE_JS = """
 """
 
 # ── Logging ────────────────────────────────────────────────────────────────────
-LOG_FILE.parent.mkdir(exist_ok=True)
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding='utf-8'),
-        logging.StreamHandler(),
-    ]
-)
+# Configured only when run as a script: importing this module (tests, other tools) must not
+# send their log lines into logs/nsw_tender.log.
 log = logging.getLogger('nsw_tender_fetch')
+
+
+def setup_logging():
+    LOG_FILE.parent.mkdir(exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
+        handlers=[
+            logging.FileHandler(LOG_FILE, encoding='utf-8'),
+            logging.StreamHandler(),
+        ]
+    )
 
 
 ICT_KEYWORDS = [
@@ -554,6 +559,7 @@ async def main(max_pages: int = 5):
 
 
 if __name__ == '__main__':
+    setup_logging()
     parser = argparse.ArgumentParser(description='Fetch NSW buy.nsw.gov.au notices')
     parser.add_argument('--pages', type=int, default=5, help='Max pages per notice type (default 5 = 50 notices)')
     args = parser.parse_args()

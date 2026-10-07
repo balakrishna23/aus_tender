@@ -543,6 +543,46 @@ This setup gives you a robust, scalable solution that automatically manages data
 
 ## Audit fixes and data recovery
 
+### Tracking actions
+
+Edit the **Tracker** tab in the Engine Views spreadsheet. Keep `action_id` unchanged.
+People own `owner`, `status`, `stage`, `follow_up`, `outcome`, `win_loss_reason` and
+`notes`; refreshes update the evidence without replacing these fields. Every edit
+is recorded in `databases/actions.db` with a change history. Machine columns such
+as score and evidence are refreshed from the source data.
+
+Statuses: proposed, accepted, in progress, done, declined, snoozed.
+Stages: identified, contacted, meeting booked, proposal, won, lost, no fit.
+Follow-up dates accept ISO (`2026-10-15`), Australian (`15/10/2026`) or written
+dates (`15 Oct 2026`). Invalid values retain the previous value.
+
+Accepted/in-progress actions with a due follow-up return to TODAY as **FOLLOW UP**
+or **OVERDUE**, including actions already selected. Without a follow-up date, their
+action due date is used. Done/declined and won/lost/no-fit actions leave TODAY;
+snoozed actions with a future follow-up stay out until that date. Clearing a
+follow-up and returning status to proposed restores the original recommendation.
+
+`python publish_sheets.py --only intelligence` reads edits, refreshes TODAY and
+prime briefs from the saved engine data, then publishes Tracker and the other
+views. A final read before the atomic sheet replacement detects edits made during
+the upload: publishing stops and preserves those edits; run it again. Batch runs
+also pull edits before building the engine. `--no-sync` leaves the Sheet alone.
+The Excel export includes a read-only Tracker snapshot; edit Google Sheets to sync.
+
+### Prime briefs
+
+`python build_intelligence.py` produces briefs for the ten highest-scored open
+prime actions in `intelligence.db/prime_briefs` and `exports/briefs/*.html`.
+The Sheet has a `prime_briefs` tab and the Excel export has **Prime briefs**.
+Open an HTML brief in a browser and print on A4. Each brief follows the nine
+prime-engine steps, groups legal entities by configured ABNs, cites its evidence,
+and labels candidates, assumed contractor-years and participation maths.
+RAP facts, verified prime people and bench readiness remain pending until supplied.
+Historical labour-hire counts are derived from `contract_api.db/contracts` for
+the matched ABNs; briefs cite representative notices. Linked analysis-contract
+rates are estimates, deduplicated by contract ID, with their source set in the
+brief table. Outputs are drafts for human review and do not send outreach.
+
 Contract values are stored as numbers, with source text retained in
 `contract_value_raw`. Database initialization repairs legacy text amounts in a
 transaction; unparseable amounts become NULL while their source text is preserved.
