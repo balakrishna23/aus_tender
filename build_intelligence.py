@@ -442,7 +442,8 @@ def main(argv=None):
         write(conn, 'panel_members', build_panel_members(counts))
         write(conn, 'mmr_primes', primes)
         write(conn, 'mmr_candidates', candidates)
-        write(conn, 'nsw_small_contracts', build_nsw_small_contracts())
+        write(conn, 'nsw_small_contracts', build_nsw_small_contracts(),
+              ['reference', 'title', 'agency', 'value', 'category', 'relevance_reason', 'published', 'url'])
         write(conn, 'organisations', organisations)
         write(conn, 'organisation_names', names)
         write(conn, 'organisation_review', review,

@@ -266,8 +266,32 @@ contracts only; tenders, standing offers and plans are still read from the websi
 
 Every batch run fetches notices created or amended since the last run (`contract_api` step).
 One-off loads, resumable (a finished month is skipped when rerun):
-`python austender_api.py --history 2020-01-01` (every contract published since then, about a
-minute and a half per month) and `--active` (contracts still running, whenever published).
+`python austender_api.py --history 2020-01-01` (every contract published since then, about
+four minutes per month) and `--active` (contracts still running, whenever published).
+`--ids CN1,CN2` fetches named contracts (e.g. old contracts amended after they ended).
+
+#### Which AusTender pages are read (robots.txt)
+
+tenders.gov.au's robots.txt disallows `/Search/`, `/Reports/`, `/Cn/List` and `/Son/List`.
+- **Contract notices:** the API lists them; `aus_contract` opens only each notice's own page
+  (`/Cn/Show/<id>`, the id comes from the API record) for the fields the API leaves out: SON ID
+  and its link, ATM ID, consultancy, confidentiality, suppliers invited, extension options.
+  `-a scope=active_it` fills these in for running ICT and labour-hire contracts.
+- **Open tenders:** the Current ATM list (`/Atm`); a stored open ATM that drops off the list is
+  opened once more (its page redirects to the closed version). Withdrawn pages are remembered.
+- **Panels:** found through the SON links on contract notices; current panels re-checked weekly.
+- **Planned procurements:** still read through `/Search/` (no allowed list exists). Flagged.
+
+#### Engine views (`build_intelligence.py`, `today_list.py`, `config/`)
+
+Rebuilt after every run into `databases/intelligence.db` (derived; source data never changes),
+driven by the YAML files in `config/` (categories and keywords, panels, procurement rules,
+scoring, organisation aliases, seed contacts):
+`opportunities` (real status, ICT relevance with its reason, role family, contact safety),
+`hot_list`, `renewals`, `exemption_use`, `buyict_links` (estimated day rates), `panel_members`,
+`mmr_primes`, `mmr_candidates`, `nsw_small_contracts`, `organisations` (+ names, review queue),
+`actions` and `today` (the TODAY list draft). `python export_views.py` writes them all to
+`exports/illoura_views_<date>.xlsx` for review.
 
 #### MMR list (`mmr_list.py`)
 
