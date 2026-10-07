@@ -36,6 +36,7 @@ from difflib import SequenceMatcher
 import holidays
 
 import classify
+import action_tracker
 import today_list
 from project_paths import PROJECT_DIR, database_directory
 
@@ -452,6 +453,11 @@ def build_organisations():
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
+ACTION_COLUMNS = ['priority', 'score', 'organisation', 'action_type', 'why_now', 'person_and_route', 'offer',
+                  'owner', 'due', 'contact_safety', 'evidence', 'score_parts', 'assumptions', 'status', 'stage',
+                  'action_id']
+
+
 def write(conn, table, records, columns=None):
     conn.execute(f'DROP TABLE IF EXISTS {table}')
     columns = columns or (list(records[0]) if records else ['empty'])
@@ -481,6 +487,10 @@ def main(argv=None):
     primes, candidates = build_mmr(today, counts)
     renewals, exemption_use, hot = build_renewals(today, mmr_abns), build_exemption_use(), hot_list(opportunities, today)
     actions, today_rows = today_list.build(renewals, primes, exemption_use, hot, opportunities, today)
+    # People's tracking (status, follow-ups) shapes TODAY: done or declined drop out, due follow-ups return.
+    with closing(action_tracker.connect()) as tracker:
+        action_tracker.merge(tracker, actions, today)
+        today_rows = action_tracker.apply_to_today(tracker, today_rows, today)
     path = database_directory() / 'intelligence.db'
     partial = path.with_name(path.name + '.partial')
     partial.unlink(missing_ok=True)
@@ -500,8 +510,8 @@ def main(argv=None):
         write(conn, 'organisation_names', names)
         write(conn, 'organisation_review', review,
               ['raw_name', 'source', 'candidate_org', 'candidate_name', 'similarity', 'decision'])
-        write(conn, 'actions', actions)
-        write(conn, 'today', today_rows)
+        write(conn, 'actions', actions, ACTION_COLUMNS)
+        write(conn, 'today', today_rows, ['rank'] + ACTION_COLUMNS)
         write(conn, 'build_info', [dict(built_at=datetime.now().isoformat(timespec='seconds'),
                                         buyict_link_stats=json.dumps(link_stats))])
         conn.commit()

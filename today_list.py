@@ -40,13 +40,16 @@ def score(parts):
     return total, label
 
 
-def _action(kind, organisation, why, person, offer, owner, safety, evidence, parts, assumptions, today):
+def _action(kind, organisation, why, person, offer, owner, safety, evidence, parts, assumptions, today,
+            subject=None):
+    """`subject` keeps the action's identity across runs (default: the organisation; a plan or a live
+    item when one organisation has several)."""
     total, label = score(parts)
     due = _friday(today) if label == 'ACT NOW' else _friday(today, 1)
     return dict(priority=label, score=total, organisation=organisation, action_type=kind, why_now=why,
                 person_and_route=person, offer=offer, owner=owner, due=due.isoformat(), contact_safety=safety,
                 evidence=evidence, score_parts=', '.join(f'{k} {v:.1f}' for k, v in parts.items()),
-                assumptions=assumptions, desired_outcome=None, status='proposed')
+                assumptions=assumptions, desired_outcome=None, status='proposed', subject=subject or organisation)
 
 
 # Contracts a Tier-2 partner can staff (not hardware or licences).
@@ -139,7 +142,7 @@ def plan_actions(hot_list, today):
             f"Procurement plan: {p['title']!r} expected {p['expected_from']} to {p['expected_to']}",
             f"{p['contact_name'] or 'Listed contact'} <{p['contact_email'] or p['contact_phone']}> (procurement plan)",
             'Ask to be notified when it is released', 'Sirish', 'SAFE_GENERAL', p['url'], parts,
-            'Value unknown until released; delivery readiness neutral (no bench data)', today))
+            'Value unknown until released; delivery readiness neutral (no bench data)', today, subject=p['url']))
     return out
 
 
@@ -162,7 +165,8 @@ def live_actions(opportunities, today):
             f"Live {o['source']} {o['kind']}: {o['title']!r} ({o['source_id']}) closes {o['closes']}",
             'None while live: questions through the formal Q&A only', 'Check bench; respond only if a strong match',
             'Recruiter', 'FORMAL_CHANNEL_ONLY', o['url'], parts,
-            'No informal contact while live (probity); delivery readiness neutral (no bench data)', today))
+            'No informal contact while live (probity); delivery readiness neutral (no bench data)', today,
+            subject=o['url'] or o['source_id']))
     return out
 
 
