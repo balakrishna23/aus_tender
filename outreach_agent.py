@@ -78,7 +78,7 @@ def mode():
 
 
 def sender():
-    return env('OUTREACH_FROM_EMAIL', 'heroanand2000@gmail.com')
+    return env('OUTREACH_FROM_EMAIL')  # set in .env
 
 
 def mail_password():

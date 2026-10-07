@@ -22,4 +22,4 @@ signature:
   name: Test Sender
   title: Business Development (TEST)
   phone: "+61 2 0000 0000"        # TEST
-  email: heroanand2000@gmail.com
+  email: ""                       # blank: the sender address from .env (OUTREACH_FROM_EMAIL)
