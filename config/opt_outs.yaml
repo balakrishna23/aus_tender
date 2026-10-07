@@ -1,0 +1,4 @@
+# Permanent opt-outs (spec section 5): anyone listed here is NO_CONTACT everywhere.
+# Honour within 5 business days. Live-mode unsubscribes recorded by the outreach agent
+# (outreach_agent.db, table suppressed) are applied as well.
+emails: []

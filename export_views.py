@@ -46,6 +46,9 @@ TABS = [
     ('Unclear titles', 'Open items with a single weak keyword: for AI or a person to decide',
      "SELECT source, source_id, title, buyer, category, relevance_reason, url FROM opportunities "
      "WHERE status_effective = 'Open' AND needs_review = 1"),
+    ('Agency contacts', 'Published procurement contacts: source, verified date, confidence; STALE after 18 months',
+     'SELECT organisation, name, email, phone, branch, source, verified, confidence, stale, opted_out, '
+     'contact_safety, usable_for_outreach, source_url FROM agency_contacts ORDER BY organisation, verified DESC'),
     ('BuyICT rates', 'BuyICT requests linked to their contracts; day rate is an estimate',
      'SELECT buyict_id, role_title, buyer, supplier, contract_value, start_date, end_date, business_days, '
      'estimated_day_rate, rate_note, page_url FROM buyict_links ORDER BY buyict_id'),

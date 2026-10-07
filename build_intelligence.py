@@ -9,6 +9,7 @@ Source data is never changed; everything here is derived and stored separately
   hot_list             planned ICT procurements expected this quarter or the next two   [engine 1]
   renewals             ICT and labour-hire contracts ending within a year, by window    [engine 2]
   exemption_use        Appendix A item 16 contracts by agency and supplier             [engine 4]
+  agency_contacts      published procurement contacts: source, date, confidence, STALE, opt-outs [engine 6]
   buyict_links         BuyICT requests linked to the contracts that filled them, with an
                        estimated day rate (spec 3.6)                                    [engine 5]
   panel_members        current members of the watched panels, with ABNs and contract counts [engine 3]
@@ -197,6 +198,45 @@ def build_renewals(today, mmr_abns):
             contact_email=r['contact_email'], contact_phone=r['contact_phone'], branch=r['contact_branch'],
             division=r['contact_division'], is_indigenous_exemption=r['is_indigenous_exemption'],
             contact_safety='SAFE_GENERAL', page_url=r['page_url'], api_url=r['source_url']))
+    return out
+
+
+# ── Engine 6: agency contacts ─────────────────────────────────────────────────
+def opted_out():
+    emails = {e.strip().lower() for e in classify.config('opt_outs').get('emails') or []}
+    emails |= {r['email'].strip().lower() for r in rows('outreach_agent', "SELECT email FROM suppressed WHERE mode = 'live'")}
+    return emails
+
+
+def build_agency_contacts(today):
+    """Published procurement contacts per agency (spec section 5): seed contacts (High confidence) and
+    the latest contract-notice contact per agency and address (Medium). Every person has a source, a
+    verified date and a confidence; STALE after 18 months; opt-outs are NO_CONTACT everywhere."""
+    stale_after = classify.config('scoring')['stale_after_months'] * 30
+    blocked = opted_out()
+    out = []
+    for c in classify.config('seed_contacts')['contacts']:
+        out.append(dict(organisation=c['organisation'], name=None, email=c.get('email'), phone=c.get('phone'),
+                        branch=None, source=f"Spec seed list: {c['source']}", verified='2026-10-01',
+                        confidence='High', source_url=None))
+    latest = {}
+    for r in rows('contract_api', "SELECT buyer, contact_name, contact_email, contact_phone, contact_branch, "
+                                  "first_published, page_url FROM contracts WHERE contact_email LIKE '%@%' "
+                                  "AND first_published >= ?", ((today - timedelta(days=stale_after * 2)).isoformat(),)):
+        key = (r['buyer'], r['contact_email'].strip().lower())
+        if key not in latest or (r['first_published'] or '') > latest[key]['first_published']:
+            latest[key] = r
+    for (buyer, email), r in latest.items():
+        out.append(dict(organisation=buyer, name=r['contact_name'], email=r['contact_email'].strip(),
+                        phone=r['contact_phone'], branch=r['contact_branch'], source='AusTender contract notice',
+                        verified=r['first_published'], confidence='Medium', source_url=r['page_url']))
+    for c in out:
+        age = (today - date.fromisoformat(c['verified'])).days if c['verified'] else None
+        c['stale'] = int(age is not None and age > stale_after)
+        c['opted_out'] = int((c['email'] or '').lower() in blocked)
+        # A published procurement contact outside a live procurement: general introduction only.
+        c['contact_safety'] = 'NO_CONTACT' if c['opted_out'] else 'SAFE_GENERAL'
+        c['usable_for_outreach'] = int(not c['opted_out'] and not c['stale'] and c['confidence'] in ('High', 'Medium'))
     return out
 
 
@@ -438,6 +478,7 @@ def main(argv=None):
         write(conn, 'hot_list', hot, list(opportunities[0]) if opportunities else None)
         write(conn, 'renewals', renewals)
         write(conn, 'exemption_use', exemption_use)
+        write(conn, 'agency_contacts', build_agency_contacts(today))
         write(conn, 'buyict_links', links)
         write(conn, 'panel_members', build_panel_members(counts))
         write(conn, 'mmr_primes', primes)

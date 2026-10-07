@@ -93,6 +93,22 @@ class BuildTests(unittest.TestCase):
         self.assertEqual([c['cn_id'] for c in candidates], ['CN4262189'])
         self.assertTrue(candidates[0]['status'].startswith('candidate'))
 
+    def test_agency_contacts_have_source_date_confidence_and_safety(self):
+        with closing(sqlite3.connect(self.dir / 'contract_api.db')) as conn:
+            conn.execute("UPDATE contracts SET contact_name = 'Thi Anna Ly', contact_email = 'buyer@apra.gov.au', "
+                         "first_published = '2026-01-01' WHERE cn_id = 'CN4226826'")
+            conn.execute("UPDATE contracts SET contact_email = 'old@defence.gov.au', first_published = '2024-01-01' "
+                         "WHERE cn_id = 'CN1'")
+            conn.commit()
+        with patch.object(bi, 'opted_out', return_value={'old@defence.gov.au'}):
+            contacts = {c['email']: c for c in bi.build_agency_contacts(TODAY)}
+        dva = contacts['procurement@dva.gov.au']   # spec seed contact
+        self.assertEqual((dva['confidence'], dva['contact_safety'], dva['stale']), ('High', 'SAFE_GENERAL', 0))
+        apra = contacts['buyer@apra.gov.au']
+        self.assertEqual((apra['confidence'], apra['verified'], apra['usable_for_outreach']), ('Medium', '2026-01-01', 1))
+        old = contacts['old@defence.gov.au']
+        self.assertEqual((old['stale'], old['contact_safety'], old['usable_for_outreach']), (1, 'NO_CONTACT', 0))
+
     def test_quarters_and_business_days(self):
         self.assertEqual(bi.fy_quarter_range('Quarter 3 2026/2027'), (date(2027, 1, 1), date(2027, 3, 31)))
         self.assertEqual(bi.fy_quarter_range('Quarter 2 2026/2027'), (date(2026, 10, 1), date(2026, 12, 31)))
