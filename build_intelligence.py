@@ -157,7 +157,10 @@ def build_opportunities():
             description=r.get('description') or '', published=r.get('publish_date'),
             contact=(r.get('contact_name'), r.get('contact_email'), r.get('contact_phone')), location=r.get('location') or 'NSW',
             retrieved_at=r.get('scraped_at')))
-    for r in rows('planned_procurement', 'SELECT * FROM planned_procurements'):
+    # Only plans still listed: every crawl re-stamps each listed item, so anything not re-seen within
+    # a day of the newest stamp has been removed from its agency's plan (as publish_sheets does).
+    for r in rows('planned_procurement', "SELECT * FROM planned_procurements WHERE scraped_at >= "
+                                         "(SELECT datetime(MAX(scraped_at), '-1 day') FROM planned_procurements)"):
         expected = fy_quarter_range(r.get('estimated_date_of_approach_to_market'))
         out.append(opportunity(
             'AusTender plan', r.get('agency_reference') or r.get('url'), 'Planned procurement', r.get('title'), r.get('agency'),
