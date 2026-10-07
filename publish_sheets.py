@@ -139,7 +139,42 @@ DATASETS = {
     'standing_offers': ('AusTender - Standing Offers (Panels)', _standing_offers),
     # Managed by outreach.py (drafts are edited by people); only created here, never overwritten.
     'outreach': ('Tender Feed - Outreach', None),
+    # The engine views (build_intelligence.py): TODAY list, renewals, MMR, pathways, contacts.
+    'intelligence': ('Illoura - Engine Views', lambda: _engine_views()),
 }
+# Published only once a spreadsheet exists for them: no spare sheet in the folder is not a failure.
+OPTIONAL = {'intelligence'}
+
+
+def _engine_views():
+    q = lambda sql: _table('intelligence', sql)  # noqa: E731
+    return {
+        'TODAY': q('SELECT rank, priority, score, organisation, action_type, why_now, person_and_route, offer, '
+                   'owner, due, contact_safety, evidence, score_parts, assumptions FROM today ORDER BY rank'),
+        'renewals_180_days': q('SELECT window, days_left, current_end_date, buyer, supplier, supplier_on_mmr_list, '
+                               'description, category_family, current_value, contact_name, contact_email, '
+                               'contact_phone, branch, division, page_url FROM renewals WHERE days_left <= 180 '
+                               'ORDER BY days_left, current_value DESC'),
+        'mmr_primes': q('SELECT organisation, abn, mmr_contracts, list_date, match, match_review, contracts, '
+                        'active_contracts, active_it_contracts, active_over_7_5m FROM mmr_primes '
+                        'ORDER BY active_it_contracts DESC'),
+        'mmr_candidates_it': q('SELECT supplier, buyer, cn_id, description, category_family, current_value, '
+                               'current_end_date, days_left, status, page_url FROM mmr_candidates '
+                               'WHERE it_contract = 1 ORDER BY current_value DESC'),
+        'exemption_16': q('SELECT buyer, supplier, supplier_abn, cn_id, description, category_family, current_value, '
+                          'first_published, current_end_date, page_url FROM exemption_use '
+                          'ORDER BY first_published DESC'),
+        'hot_list': q('SELECT buyer, title, expected_from, expected_to, contact_name, contact_email, contact_phone, '
+                      'relevance_reason, url FROM hot_list ORDER BY expected_from'),
+        'open_ict': q("SELECT source, source_id, kind, title, buyer, closes, role_families, relevance_reason, "
+                      "contact_safety, url FROM opportunities WHERE status_effective = 'Open' AND is_relevant = 1 "
+                      "ORDER BY closes_at"),
+        'buyict_rates': q('SELECT buyict_id, role_title, buyer, supplier, contract_value, start_date, end_date, '
+                          'business_days, estimated_day_rate, rate_note, page_url FROM buyict_links'),
+        'agency_contacts': q('SELECT organisation, name, email, phone, branch, source, verified, confidence, '
+                             'contact_safety, source_url FROM agency_contacts WHERE stale = 0 AND opted_out = 0 '
+                             'ORDER BY organisation, verified DESC'),
+    }
 
 
 def registry_path():
@@ -297,6 +332,9 @@ def publish_all(only=None):
             activity_log.record_share(key, title, book.url, {t: len(f) for t, f in tabs.items()})
             log.info('Published %-15s %s', key, ', '.join(f'{t}: {len(f)} rows' for t, f in tabs.items()))
         except Exception as e:
+            if key in OPTIONAL and book is None and 'No spare spreadsheet' in str(e):
+                log.warning('Not publishing %s yet: %s', key, e)
+                continue
             failures.append(f'{key}: {e}')
             activity_log.record_share(key, title, book.url if book else '', status='failed', error=e)
             log.error('Failed to publish %s: %s', key, e)
