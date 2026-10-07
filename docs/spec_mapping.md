@@ -14,7 +14,7 @@ Week 0 deliverable (spec section 2). Status as of 7 October 2026. Illoura confid
 | 4 | BuyICT IDs appear in some contract descriptions | 207 distinct BuyICT IDs found in contract descriptions, 100% of which exist in BuyICT; 368 contracts linked. |
 | 5 | UNSPSC codes from AusTender and buy.nsw | AusTender: yes (API and ATM/plan categories). buy.nsw: category names only, so a category-name rule is used. |
 | 6 | Outreach can be switched off on its own | Yes: sending is switched off in code; nothing else depends on it. |
-| 7 | Each source's terms allow collection | AusTender: the API is CC BY 3.0 AU; robots.txt disallows `/Search/`, which contracts, tenders and panels no longer use. **Planned procurements still need `/Search/`** (no allowed list). Tenders ACT disallows its detail pages (not used). |
+| 7 | Each source's terms allow collection | AusTender: the API is CC BY 3.0 AU; robots.txt disallows `/Search/`, which nothing uses any more (contracts via the API, tenders via `/Atm`, plans via `/App/List`, panels via their links). Scrapy now obeys robots.txt. Tenders ACT disallows its detail pages (not used). |
 
 ## Reused as is
 
@@ -28,6 +28,7 @@ migration; Google Sheets publishing; backups; run reports; activity log; tests a
 | Contract notices | Listed by the API; only each notice's own page is opened for SON ID, ATM ID and other page-only fields (`/Cn/Show`, allowed). The old search route also missed about half of all amendments. |
 | Approaches to market | From the Current ATM list (`/Atm`, allowed), not `/Search/`. |
 | Standing offers | Found through the SON links on contract notices; current panels re-checked weekly. |
+| Planned procurements | From each agency's Annual Procurement Plan page (`/App/List` "List By Agency" → `/App/Show`): 143 agency plans, against 66 the search reached. |
 | Contract categories | UNSPSC families moved to `config/categories.yaml` and widened (4320–4322): 21,386 more IT contracts, e.g. DFAT "IT Support" ($32.2m). |
 | buy.nsw | IT categories added; ICT keywords. |
 | Outreach agent | Autonomous sending off (spec Week 0 item 1). |
@@ -56,6 +57,5 @@ migration; Google Sheets publishing; backups; run reports; activity log; tests a
 - Bench / ATS capability (delivery readiness), relationships and warm paths (engine 6), RAP table,
   commercial assumptions (engine 8), portfolio Indigenous targets and the agency → portfolio map.
 - Tenders ACT contacts (needs the export file).
-- Planned procurements without `/Search/` (decision).
 - AI classification of unclear titles (rules leave ~10 open items for a person or AI).
 - TODAY screen (Sprint 3); Sheets tab is ready once a blank sheet exists in the folder.

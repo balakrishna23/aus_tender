@@ -280,7 +280,10 @@ tenders.gov.au's robots.txt disallows `/Search/`, `/Reports/`, `/Cn/List` and `/
 - **Open tenders:** the Current ATM list (`/Atm`); a stored open ATM that drops off the list is
   opened once more (its page redirects to the closed version). Withdrawn pages are remembered.
 - **Panels:** found through the SON links on contract notices; current panels re-checked weekly.
-- **Planned procurements:** still read through `/Search/` (no allowed list exists). Flagged.
+- **Planned procurements:** the "List By Agency" tab (`/App/List`) links every agency's Annual
+  Procurement Plan (`/App/Show/<plan>`), which lists all its planned procurements.
+
+`ROBOTSTXT_OBEY` is on (settings.py), so a future change can't reach a disallowed page.
 
 #### Engine views (`build_intelligence.py`, `today_list.py`, `config/`)
 

@@ -24,8 +24,9 @@ NEWSPIDER_MODULE = "spiders"
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
-# Obey robots.txt rules
-ROBOTSTXT_OBEY = False
+# Obey robots.txt rules. Every route now uses pages the sites allow (contract notices are listed
+# by AusTender's API, tenders by /Atm, plans by /App/List, panels by their links); this keeps it so.
+ROBOTSTXT_OBEY = True
 
 # Concurrency and throttling settings
 CONCURRENT_REQUESTS = 8
@@ -45,8 +46,7 @@ DEFAULT_REQUEST_HEADERS = {
         'Accept-Language': 'en-US,en;q=0.9',
 }
 
-# Enable the custom User-Agent rotating downloader middleware
-# Use default Scrapy UserAgentMiddleware and disable custom UA rotation
+# Scrapy's default UserAgentMiddleware; no user-agent rotation.
 DOWNLOADER_MIDDLEWARES = {
     # Runs before RetryMiddleware (550) so 429s slow the crawl instead of dropping notices.
     "middlewares.RateLimitBackoffMiddleware": 560,
