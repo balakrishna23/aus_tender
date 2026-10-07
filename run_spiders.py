@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 from typing import Tuple
 from dotenv import load_dotenv
@@ -91,6 +92,29 @@ def ping_healthcheck(suffix: str = "", body: str = "") -> None:
         urllib.request.urlopen(url.rstrip("/") + suffix, data=body.encode()[:10000], timeout=15)
     except Exception as e:
         print(f"WARNING: health check ping failed: {e}")
+
+
+def data_quality_warnings(results, reports_dir=None, history=7, exclude=None):
+    """Spec section 11: row counts per source after every run, with an alert on a drop of more
+    than 30%; also flags a source that brought nothing new when it usually does."""
+    reports_dir = reports_dir or LOG_DIR / "runs"
+    previous = defaultdict(list)
+    earlier = [p for p in sorted(reports_dir.glob("*.json")) if exclude is None or p != Path(exclude)]
+    for path in earlier[-history:]:
+        try:
+            for r in json.loads(path.read_text(encoding="utf-8")).get("results", []):
+                previous[r["spider"]].append(r.get("saved") or 0)
+        except (ValueError, KeyError, OSError):
+            continue
+    warnings = []
+    for r in results:
+        before, after = r.get("before") or 0, r.get("after") or 0
+        if before and after < before * 0.7:
+            warnings.append(f"{r['spider']}: row count fell {before} -> {after} (more than 30%)")
+        usual = sorted(previous.get(r["spider"], []))
+        if len(usual) >= 3 and usual[len(usual) // 2] >= 10 and not r.get("saved"):
+            warnings.append(f"{r['spider']}: nothing new this run (usually about {usual[len(usual) // 2]})")
+    return warnings
 
 
 def archive_logs(run_id: str, spiders) -> Path:
@@ -458,6 +482,10 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
             print("Fail-fast: stopping batch.")
             break
 
+    quality = data_quality_warnings(results, exclude=args.report)
+    for line in quality:
+        print(f"DATA QUALITY: {line}")
+
     # The product feed is rebuilt even after a partial failure: what was scraped is still valid.
     feed_line = "releases feed: skipped"
     if not args.no_feed:
@@ -492,6 +520,8 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
             except Exception as e:
                 any_failed = True
                 feed_line += f"; spreadsheets FAILED ({e})"
+        if quality:
+            feed_line += "; DATA QUALITY: " + " | ".join(quality)
         print(f"\n{feed_line}")
         if args.report:
             args.report.write_text(json.dumps({'success': not any_failed, 'results': results,

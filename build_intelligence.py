@@ -16,6 +16,7 @@ Source data is never changed; everything here is derived and stored separately
   mmr_candidates       their active contracts of $7.5m or more (candidates, never confirmed) [engine 3]
   nsw_small_contracts  NSW ICT contract awards of $250,000 or less                      [engine 4]
   organisations, organisation_names, organisation_review   one record per company (section 4)
+  actions, today       proposed actions, scored, and the TODAY selection (today_list.py) [engine 7]
 
 Usage:
   python build_intelligence.py
@@ -34,6 +35,7 @@ from difflib import SequenceMatcher
 import holidays
 
 import classify
+import today_list
 from project_paths import PROJECT_DIR, database_directory
 
 log = logging.getLogger('build_intelligence')
@@ -426,14 +428,16 @@ def main(argv=None):
     organisations, names, review = build_organisations()
     counts = contract_counts(today)
     primes, candidates = build_mmr(today, counts)
+    renewals, exemption_use, hot = build_renewals(today, mmr_abns), build_exemption_use(), hot_list(opportunities, today)
+    actions, today_rows = today_list.build(renewals, primes, exemption_use, hot, opportunities, today)
     path = database_directory() / 'intelligence.db'
     partial = path.with_name(path.name + '.partial')
     partial.unlink(missing_ok=True)
     with closing(sqlite3.connect(partial)) as conn:
         write(conn, 'opportunities', opportunities)
-        write(conn, 'hot_list', hot_list(opportunities, today), list(opportunities[0]) if opportunities else None)
-        write(conn, 'renewals', build_renewals(today, mmr_abns))
-        write(conn, 'exemption_use', build_exemption_use())
+        write(conn, 'hot_list', hot, list(opportunities[0]) if opportunities else None)
+        write(conn, 'renewals', renewals)
+        write(conn, 'exemption_use', exemption_use)
         write(conn, 'buyict_links', links)
         write(conn, 'panel_members', build_panel_members(counts))
         write(conn, 'mmr_primes', primes)
@@ -443,6 +447,8 @@ def main(argv=None):
         write(conn, 'organisation_names', names)
         write(conn, 'organisation_review', review,
               ['raw_name', 'source', 'candidate_org', 'candidate_name', 'similarity', 'decision'])
+        write(conn, 'actions', actions)
+        write(conn, 'today', today_rows)
         write(conn, 'build_info', [dict(built_at=datetime.now().isoformat(timespec='seconds'),
                                         buyict_link_stats=json.dumps(link_stats))])
         conn.commit()
