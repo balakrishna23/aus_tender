@@ -2,15 +2,17 @@ from datetime import datetime, timedelta
 
 import scrapy
 
-from spiders.austender_common import AusTenderListingMixin, notice_guid, page_details, parse_day, search_url
+from spiders.austender_common import AusTenderListingMixin, notice_guid, page_details, parse_day
 
 
 class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
-    """Standing offer notices (panels).
+    """Standing offer notices (panels), from their own pages (/Son/Show, allowed by robots.txt;
+    the /Search and /Son/List pages it disallows are not used).
 
-    Every run lists all current SONs: new ones are fetched, stored ones are
-    re-checked once their copy is older than RECHECK_DAYS (SONs get amended and
-    gain suppliers). ``-a since=all`` walks every SON ever published (~5,300).
+    New panels are found through contract notices: each notice bought under a standing offer
+    links to it (aus_contract stores the link), so every panel in use is picked up. Stored
+    panels that are still current are re-checked once their copy is older than RECHECK_DAYS
+    (SONs get amended and gain suppliers).
     """
 
     name = "standing_offer"
@@ -21,7 +23,6 @@ class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': True,
     }
     RECHECK_DAYS = 7
-    BASE = dict(SearchFrom='SonSearch', Type='Son', AgencyStatus='-1', KeywordTypeSearch='AllWord')
 
     def __init__(self, since=None, refresh_existing=False, refetch=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -39,26 +40,37 @@ class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
             yield from self.refetch_missing_details('standing_offers', self.refetch_since)
             return
         self.load_stored()
-        for url, scraped_at in self.db_manager.load_column_map(self.name, 'url', 'scraped_at').items():
-            self.checked_at[notice_guid(url)] = scraped_at
         if getattr(self, 'start_urls', None):
             for url in self.start_urls:
-                yield self.listing_request(url, 'default')
+                yield scrapy.Request(url, callback=self.parse_son, meta={'refresh_existing': True})
             return
-        date_type = 'Publish Date' if self.full else 'Current'
-        yield self.listing_request(search_url('SonAdvancedSearch', DateType=date_type, **self.BASE),
-                                   'current')
+        with self.db_manager.get_connection(self.name) as conn:
+            stored = conn.execute('SELECT url, scraped_at, standing_offer_period FROM standing_offers').fetchall()
+        due = [url for url, checked, period in stored if self._current(period) and self._stale(checked)]
+        self.db_manager.initialize_database('aus_contract')
+        linked = self.db_manager.load_column_map('aus_contract', 'son_url', 'son_url')
+        new = sorted({url for url in linked if url and notice_guid(url) not in self.stored_urls})
+        self.logger.info('Standing offers: %s new from contract notices; %s current ones due a re-check',
+                         len(new), len(due))
+        for url in new + due:
+            yield scrapy.Request(url, callback=self.parse_son, meta={'refresh_existing': True})
 
     async def start(self):
         for request in self.start_requests():
             yield request
 
-    def should_fetch(self, guid, stored_url, listing_kind):
+    def _current(self, period):
+        end = parse_day((period or '').split(' to ')[-1])
+        return end is None or end >= self.today
+
+    def _stale(self, checked):
         try:
-            checked = datetime.fromisoformat(str(self.checked_at.get(guid)))
+            return datetime.now() - datetime.fromisoformat(str(checked)) > timedelta(days=self.RECHECK_DAYS)
         except ValueError:
             return True
-        return datetime.now() - checked > timedelta(days=self.RECHECK_DAYS)
+
+    def should_fetch(self, guid, stored_url, listing_kind):
+        return False
 
     def parse_son(self, response):
         def get_detail(label):

@@ -1,0 +1,107 @@
+# What counts as Illoura's work (spec 3.3 and section 13). DRAFT for approval.
+# Order: category code, then the category name, then title keywords; an exclude keyword
+# overrides any match. Every record gets vertical and relevance_reason.
+
+vertical: ICT
+
+# UNSPSC code prefixes -> family. Longest prefix wins. Codes come from contract notices,
+# AusTender tenders and plans ("81110000 - Computer services").
+# Spec starting set: 801116, 801117, 8111, 8116, 4323. Widened after the full contract load
+# showed big IT contracts coded at family level (e.g. DFAT "IT Support", 43200000, $32m).
+families:
+  "801116": labour hire and recruitment      # temporary personnel services
+  "801117": labour hire and recruitment      # personnel recruitment
+  "8111": ICT services                        # computer services
+  "8116": ICT services                        # IT service delivery (incl. cloud, managed services)
+  "4323": ICT services                        # software
+  "4320": ICT equipment and general           # IT, broadcasting and telecoms (family level)
+  "4321": ICT equipment and general           # computer equipment and accessories
+  "4322": ICT equipment and general           # data, voice and network equipment
+
+# Category names (portals without codes, e.g. buy.nsw "Information and technology - ...").
+ict_category_names:
+  - information and technology
+  - information technology
+  - computer services
+  - software
+  - ICT
+
+# Title keywords. The spec's include list, split after testing it on real titles: on its own,
+# a word like "system" or "data" also matched pigeon-pea research, demolition and ship sustainment.
+# A strong word makes a title relevant; weak words need two different ones (e.g. "Digital
+# platform"). A title with a single weak word is "unclear": left for AI or a person (spec: AI only
+# for unclear titles).
+strong_keywords:
+  - ICT
+  - IT
+  - software
+  - cloud
+  - cyber
+  - AI
+  - artificial intelligence
+  - telephony
+  - telecommunications
+  - labour hire
+  - ERP
+  - CRM
+  - ICMS
+  - ServiceNow
+  - SAP
+  - SaaS
+  - information system
+  - information technology
+  - case management system
+  - digital transformation
+  - data centre
+  - business analyst
+  - developer
+  - penetration testing
+
+weak_keywords:
+  - digital
+  - system
+  - application
+  - data
+  - architecture
+  - integration
+  - contractor
+  - recruitment
+  - technology
+  - platform
+  - network
+  - discovery
+  - case management
+  - portal
+  - analytics
+
+exclude_keywords:
+  - cleaning
+  - construction
+  - catering
+  - printing
+  - furniture
+  - equipment supply
+  - vehicles
+  - mannequins
+  - imaging equipment
+  - traffic management
+  - first aid
+  - head contractor
+  - demolition
+  - building works
+  - fit-out
+  - interior architect
+
+# Role families (engine 1), matched on titles. A title gets every family it names.
+role_families:
+  cyber: [cyber, security architect, security analyst, penetration, infosec, SOC analyst, IRAP]
+  AI/data: [data engineer, data scientist, data analyst, AI, artificial intelligence, machine learning, analytics, Power BI]
+  architecture: [enterprise architect, solution architect, technical architect, data architect, cloud architect, security architect]
+  delivery: [project manager, program manager, delivery manager, scrum master, product owner, change manager, PMO]
+  analysis: [business analyst, process analyst, systems analyst, BA]
+  engineering: [developer, software engineer, devops, cloud engineer, network engineer, systems engineer]
+  testing: [tester, test analyst, test manager, software testing, test automation]
+  platforms: [ServiceNow, SAP, Dynamics 365, Salesforce, Oracle, Microsoft 365, Azure, Amazon Web Services]
+
+# Families whose roles alone make a title relevant (e.g. "Senior Business Analyst").
+relevant_role_families: [cyber, AI/data, architecture, analysis, engineering, testing, platforms]

@@ -1,21 +1,25 @@
+import sqlite3
+from contextlib import closing
 from datetime import timedelta
 
 import scrapy
 
-from spiders.austender_common import (AusTenderListingMixin, austender_day, date_windows, page_details,
-                                      parse_day, search_url)
+from project_paths import database_directory
+from spiders.austender_common import AusTenderListingMixin, page_details, parse_day
 
 
 class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
-    """Contract notices by publish date, plus the "recently updated" list.
+    """Contract notice pages, for the fields AusTender's API leaves out (SON ID, ATM ID,
+    consultancy, confidentiality, suppliers invited, extension options, office postcode).
 
-    Default (incremental): from a few days before the last proven-complete run to today.
-    ``-a since=2025-01-01`` backfills from that date. Contract notices never change
-    once published (amendments get their own CN ID), so stored ones are skipped.
+    Which notices exist comes from the API (austender_api.py, run first): every notice and
+    amendment published in the window that isn't stored yet. Only the notices' own pages are
+    requested (/Cn/Show, allowed by robots.txt); the /Search pages robots.txt disallows are not.
 
-    The site files an amendment (CN123-A1) under the ORIGINAL contract's publish date,
-    so a new amendment to an older contract never appears in a recent date window.
-    The newest-first "Last Updated" list catches those.
+    Default (incremental): from a few days before the last complete run to today.
+    ``-a since=2025-01-01`` fills in every notice published since then.
+    ``-a scope=active_it`` fills in contracts still running in the ICT and labour-hire families.
+    Contract notices never change once published (amendments get their own CN ID).
     """
 
     name = "aus_contract"
@@ -25,11 +29,9 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         'LOG_LEVEL': 'INFO',
         'AUTOTHROTTLE_ENABLED': True,
     }
-    # ~1,100 notices are published per week; weekly windows stay far below the 10,000 cap.
-    WINDOW_DAYS = 7
     OVERLAP_DAYS = 3
 
-    def __init__(self, since=None, refresh_existing=False, refetch=None, *args, **kwargs):
+    def __init__(self, since=None, refresh_existing=False, refetch=None, scope=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._init_listing(since, refresh_existing)
         # refetch=missing_supplier: re-open stored notices from the last year whose supplier
@@ -37,7 +39,9 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         # refetch=missing_details: re-open notices saved before every page field was captured,
         # published since `since` (all of them without it).
         self.refetch = refetch
+        self.scope = scope
         self.detail_callback = self.parse_contract
+        self.window_start = None
 
     def start_requests(self):
         if self.refetch == 'missing_supplier':
@@ -46,26 +50,41 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         if self.refetch == 'missing_details':
             yield from self.refetch_missing_details('contracts', self.since)
             return
-        self.load_stored()
         if getattr(self, 'start_urls', None):
             for url in self.start_urls:
-                yield self.listing_request(url, 'default')
+                yield scrapy.Request(url, callback=self.parse_contract)
             return
-        since = self.since or self._incremental_start()
-        self.window_start = since
-        self.logger.info('Contract notices published %s to %s', since, self.today)
-        for start, end in date_windows(since, self.today, self.WINDOW_DAYS):
-            yield self.listing_request(search_url(
-                'CnAdvancedSearch', SearchFrom='CnSearch', Type='Cn', AgencyStatus='-1',
-                KeywordTypeSearch='AllWord', DateType='Publish Date', OrderBy='Publish Date',
-                DateStart=austender_day(start), DateEnd=austender_day(end)), 'published')
-        yield self.recent_request(search_url(
-            'CnAdvancedSearch', SearchFrom='CnSearch', Type='Cn', AgencyStatus='-1',
-            KeywordTypeSearch='AllWord', OrderBy='Last Updated'), 'updated')
+        self.db_manager.initialize_database(self.name)
+        stored = set(self.db_manager.load_column_map(self.name, 'cn_id', 'cn_id'))
+        if self.scope == 'active_it':
+            notices = self._api_notices("v.cn_id IN (SELECT cn_id FROM contracts WHERE current_end_date >= ? "
+                                        "AND category_family IS NOT NULL)", self.today.isoformat())
+            self.logger.info('Running ICT and labour-hire contracts: %s notices', len(notices))
+        else:
+            self.window_start = self.since or self._incremental_start()
+            notices = self._api_notices('v.published_on >= ?', self.window_start.isoformat())
+            self.logger.info('Contract notices published %s to %s: %s in the API', self.window_start,
+                             self.today, len(notices))
+        todo = [(notice, url) for notice, url in notices if notice not in stored]
+        self.logger.info('%s notices to fetch, %s already stored', len(todo), len(notices) - len(todo))
+        for notice, url in todo:
+            yield scrapy.Request(url, callback=self.parse_contract, meta={'refresh_existing': True,
+                                                                          'notice_id': notice})
 
     async def start(self):
         for request in self.start_requests():
             yield request
+
+    def _api_notices(self, where, value):
+        """(notice id, page URL) for API versions matching `where`."""
+        path = database_directory() / 'contract_api.db'
+        if not path.exists():
+            self._record_failure('No contract API database at %s: run austender_api.py first', path)
+            return []
+        with closing(sqlite3.connect(f'file:{path}?mode=ro', uri=True)) as api:
+            return api.execute(f'SELECT DISTINCT v.notice_id, v.page_url FROM contract_versions v '
+                               f'WHERE {where} AND v.page_url IS NOT NULL ORDER BY v.notice_id',
+                               (value,)).fetchall()
 
     def _refetch_missing_supplier(self):
         self.db_manager.initialize_database(self.name)
@@ -79,27 +98,18 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             yield scrapy.Request(url, callback=self.parse_contract, meta={'refresh_existing': True})
 
     def _incremental_start(self):
-        """Resume from the last date a run proved complete, never from the newest row.
-
-        Starting from the newest stored notice would silently skip any gap left by an
-        interrupted or partial run.
-        """
+        """Resume from the last date a run proved complete, never from the newest row."""
         covered = parse_day(self.db_manager.get_state(self.name, 'covered_through') or '')
-        if covered is None:
-            dates = self.db_manager.load_column_map(self.name, 'publish_date', 'publish_date')
-            covered = max(filter(None, (parse_day(d) for d in dates)), default=None)
-            self.logger.warning('No completed-run marker yet; resuming from newest stored notice %s', covered)
         if covered is None:
             return self.today - timedelta(days=30)
         return min(covered, self.today) - timedelta(days=self.OVERLAP_DAYS)
 
     def closed(self, reason):
-        super().closed(reason)
         stats = self.crawler.stats.get_stats()
         complete = reason == 'finished' and not any(
-            stats.get(k) for k in ('crawl/extraction_failed', 'crawl/coverage_failed', 'retry/max_reached',
-                                   'database/items_failed'))
-        if complete and not getattr(self, 'start_urls', None) and not self.refetch:
+            stats.get(k) for k in ('crawl/extraction_failed', 'retry/max_reached', 'database/items_failed',
+                                   'downloader/response_status_count/404'))
+        if complete and self.window_start and not self.refetch:
             previous = parse_day(self.db_manager.get_state(self.name, 'covered_through') or '')
             # A backfill only extends coverage if it joins up with what was already covered.
             if previous is None or self.window_start <= previous + timedelta(days=1):
@@ -110,6 +120,12 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         return False
 
     def parse_contract(self, response):
+        if '/System/NotFound' in response.url:
+            # In the API but not (or no longer) shown on the site, e.g. withdrawn: nothing to add.
+            self.logger.info('No page on the site for %s', response.meta.get('notice_id') or response.url)
+            self.crawler.stats.inc_value('contract/page_not_found')
+            return
+
         def get_detail(label):
             xpath = f'//div[@class="list-desc"][span/text()="{label}:"]/div[@class="list-desc-inner"]//text()'
             results = response.xpath(xpath).getall()
@@ -125,6 +141,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             return response.xpath(f'//div[@class="list-desc"][span/text()="{label}:"]/div[@class="list-desc-inner"]//text()').get(default="").strip()
 
         publish_date = get_detail("Publish Date") or get_detail("Amendment Publish Date")
+        son_link = response.xpath('//div[@class="list-desc"][span/text()="SON ID:"]//a/@href').get()
 
         yield {
             "Professional services": response.css('p.lead::text').get(),
@@ -151,6 +168,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             "Agency Reference ID": get_detail("Agency Reference ID"),
             "ATM ID": get_detail("ATM ID"),
             "Australian Business Engaged": get_detail("Was an Australian business Engaged?"),
+            "SON URL": response.urljoin(son_link) if son_link else "",
             "Contact Phone": get_agency_detail("Phone"),
             "Branch": get_agency_detail("Branch"),
             "Division": get_agency_detail("Division"),

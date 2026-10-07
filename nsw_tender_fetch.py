@@ -25,7 +25,8 @@ from undetected_playwright import stealth_async
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 BASE        = 'https://buy.nsw.gov.au'
-CATEGORIES  = 'healthcare%2Crecruitment-services'
+# IT first (Illoura spec); healthcare kept for the later healthcare vertical.
+CATEGORIES  = 'information-and-technology%2Crecruitment-services%2Chealthcare'
 NOTICE_TYPES = ['can', 'son']   # can = contract awards, son = standing offers
 DB_PATH     = database_directory() / 'nsw_tender.db'
 LOG_FILE    = Path(__file__).parent / 'logs' / 'nsw_tender.log'
@@ -81,9 +82,18 @@ logging.basicConfig(
 log = logging.getLogger('nsw_tender_fetch')
 
 
+ICT_KEYWORDS = [
+    'information and technology', 'ict', 'digital', 'software', 'cyber', 'cloud', 'data', 'network',
+    'application', 'platform', 'it services', 'it contractor', 'contingent workforce', 'labour hire',
+]
+
+
+ICT_PATTERN = re.compile(r'\b(?:' + '|'.join(re.escape(k) for k in ICT_KEYWORDS) + r')\b')
+
+
 def is_relevant(text):
     t = (text or '').lower()
-    return any(kw in t for kw in HEALTH_KEYWORDS)
+    return any(kw in t for kw in HEALTH_KEYWORDS) or bool(ICT_PATTERN.search(t))
 
 
 # ── Text parsing ───────────────────────────────────────────────────────────────

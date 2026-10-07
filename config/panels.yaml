@@ -1,0 +1,16 @@
+# Panel watch list (spec section 5). DRAFT for approval.
+# Names as AusTender shows them; members and their ABNs come from the standing offer pages
+# (standing_offer spider). Member counts on 7 Oct 2026 in brackets.
+panels:
+  - son_id: SON4102906
+    name: Digital Marketplace Panel 2
+  - son_id: SON3897769
+    name: People Panel - Phase 1, Recruitment and Search Services Panel     # (78)
+  - son_id: SON3965020
+    name: People Panel Phase 2 - Labour Hire Services                       # (112)
+  - son_id: SON4241474
+    name: People Panel - Professional Contractor Services                   # (572)
+  - son_id: SON3520191
+    name: Information Communication Technology Provider Arrangement (Defence)  # (540)
+  - son_id: SON3538332
+    name: Capability Support Services Panel                                 # (204) spec Tier-2 example, CN3991220

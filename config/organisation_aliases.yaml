@@ -1,0 +1,14 @@
+# Organisation aliases (spec section 4, step 3). DRAFT for approval.
+# Used after ABN and normalised-name matching. Government renames go here too.
+# canonical: the name shown; abn: when known; aliases: other names that mean the same organisation.
+organisations:
+  - canonical: DXC Technology Australia
+    abn: "18008476944"
+    aliases:
+      - DXC TECHNOLOGY AUSTRALIA PTY LTD
+      - DXC Technology Australia Pty Limited
+      - DXC Technology
+  - canonical: City and Environment Directorate (ACT)
+    aliases:
+      - Digital Canberra
+      - Digital Canberra ATN

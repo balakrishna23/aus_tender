@@ -1,0 +1,48 @@
+# Published procurement contacts (spec section 13, October 2026). Load as High-confidence
+# records with the source noted; use only under the contact safety rules (section 8).
+contacts:
+  - organisation: Department of Home Affairs
+    email: procurement@homeaffairs.gov.au
+    source: Annual procurement plan
+  - organisation: Australian Taxation Office
+    email: ATOPROCUREMENTANDLEASING@ATO.GOV.AU
+    source: Contract notices, Jul 2026
+  - organisation: Services Australia
+    email: cooperative.procurement@servicesaustralia.gov.au
+    phone: 1800 906 144
+    source: AusTender
+  - organisation: Department of Employment and Workplace Relations
+    email: Procurementandgrants@dewr.gov.au
+    source: Contract notices
+  - organisation: Department of Veterans' Affairs
+    email: procurement@dva.gov.au
+    phone: (02) 6289 1134
+    source: Contract notices
+  - organisation: Department of Health, Disability and Ageing
+    email: enquiries@health.gov.au
+    phone: (02) 6289 1555
+    source: Contract notices
+  - organisation: Department of Finance
+    email: contracts@finance.gov.au
+    phone: (02) 6215 3070
+    source: "Notices 2019-21: confirm"
+  - organisation: Attorney-General's Department
+    email: procurement@ag.gov.au
+    source: Contract notices
+  - organisation: Department of Foreign Affairs and Trade
+    email: supplier.engagement@dfat.gov.au
+    phone: (02) 6261 1111
+    source: DFAT supplier engagement
+  - organisation: Department of Defence
+    phone: 1300 333 362
+    source: Switchboard
+  - organisation: National Indigenous Australians Agency
+    phone: (02) 6271 6000
+    source: Contract notices
+  - organisation: Department of Finance (People Panel)
+    email: peoplepanelcontract@finance.gov.au
+    source: Finance
+  - organisation: NSW Aboriginal business concierge
+    email: sourcing@treasury.nsw.gov.au
+    phone: 1800 679 289
+    source: buy.nsw

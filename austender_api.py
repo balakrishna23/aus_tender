@@ -15,6 +15,7 @@ Usage:
   python austender_api.py --history 2020-01-01   # every contract published since then (resumable)
   python austender_api.py --active               # contracts still running, whenever published
   python austender_api.py --rollup               # rebuild the contracts table only
+  python austender_api.py --ids CN1,CN2          # every version of these contracts
 """
 import argparse
 import json
@@ -30,6 +31,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 import activity_log
+import classify
 from database_manager import DatabaseManager
 from project_paths import PROJECT_DIR, database_directory
 
@@ -38,14 +40,14 @@ log = logging.getLogger('austender_api')
 NAME = 'contract_api'
 BY_DATES = 'https://api.tenders.gov.au/ocds/findByDates/{kind}/{start}/{end}'
 BY_ID = 'https://api.tenders.gov.au/ocds/findById/{cn_id}'
+# The notice's page on tenders.gov.au (allowed by its robots.txt, unlike /Search).
+PAGE = 'https://www.tenders.gov.au/Cn/Show/{}'
+GUID = re.compile(r'([0-9a-f]{8})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{4})([0-9a-f]{12})$', re.I)
 HEADERS = {'User-Agent': 'Mozilla/5.0 (compatible; IllouraTenderFeed/1.0)', 'Accept': 'application/json'}
 SYDNEY = ZoneInfo('Australia/Sydney')
 PAUSE = 0.3  # seconds between pages: about 3 requests a second at most
 # Appendix A item 16: direct purchase from Indigenous SMEs ("App A: 16. ...").
 INDIGENOUS_EXEMPTION = re.compile(r'app(?:endix)?\s*a\s*[:.\-]?\s*(?:item\s*)?16\b', re.I)
-# UNSPSC families (Illoura spec, section 13); longest prefix wins.
-FAMILIES = {'801116': 'labour hire and recruitment', '801117': 'labour hire and recruitment',
-            '8111': 'ICT services', '8116': 'ICT services', '4323': 'ICT services'}
 
 ROLLUP_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS contracts (
@@ -61,7 +63,7 @@ CREATE TABLE IF NOT EXISTS contracts (
     amendment_count INTEGER, extension_count INTEGER,
     first_published TEXT, last_amended TEXT,
     contact_name TEXT, contact_email TEXT, contact_phone TEXT, contact_branch TEXT, contact_division TEXT,
-    source_url TEXT, retrieved_at TEXT
+    source_url TEXT, page_url TEXT, retrieved_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_contracts_end ON contracts(current_end_date);
 CREATE INDEX IF NOT EXISTS idx_contracts_buyer ON contracts(buyer);
@@ -126,6 +128,16 @@ def _abn(party):
     return next((i.get('id') for i in party.get('additionalIdentifiers') or [] if i.get('scheme') == 'AU-ABN'), None)
 
 
+def page_url(*ids):
+    """The notice page from an OCDS id ending in its 32-hex page id: the item id ('81111700-<id>')
+    names the page of that very notice (an amendment has its own); the award id names the original."""
+    for value in ids:
+        match = GUID.search(value or '')
+        if match:
+            return PAGE.format('-'.join(match.groups()).lower())
+    return None
+
+
 def version_row(release, retrieved_at):
     """Flatten one OCDS release (a contract notice or one amendment) into a row."""
     contract = (release.get('contracts') or [{}])[0]
@@ -167,6 +179,7 @@ def version_row(release, retrieved_at):
         'contact_phone': contact.get('telephone'), 'contact_branch': contact.get('branch'),
         'contact_division': contact.get('division'),
         'source_url': BY_ID.format(cn_id=contract.get('id')),
+        'page_url': page_url(item.get('id'), ((release.get('awards') or [{}])[0]).get('id')),
         'raw_json': json.dumps(release, separators=(',', ':')),
         'retrieved_at': retrieved_at,
     }
@@ -180,7 +193,24 @@ def connect():
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')
     conn.executescript(ROLLUP_SCHEMA)
+    if 'page_url' not in {row[1] for row in conn.execute('PRAGMA table_info(contracts)')}:
+        conn.execute('ALTER TABLE contracts ADD COLUMN page_url TEXT')
+    backfill_page_urls(conn)
     return conn
+
+
+def backfill_page_urls(conn):
+    """Page links for versions stored before they were recorded (read from the raw release)."""
+    if not conn.execute('SELECT 1 FROM contract_versions WHERE page_url IS NULL LIMIT 1').fetchone():
+        return
+    conn.create_function('page_url', 2, page_url, deterministic=True)
+    conn.execute("UPDATE contract_versions SET page_url = page_url("
+                 "json_extract(raw_json, '$.contracts[0].items[0].id'), json_extract(raw_json, '$.awards[0].id')) "
+                 "WHERE page_url IS NULL")
+    conn.execute('UPDATE contracts SET page_url = (SELECT v.page_url FROM contract_versions v '
+                 'WHERE v.cn_id = contracts.cn_id AND v.amendment_no = 0) WHERE page_url IS NULL')
+    conn.commit()
+    log.info('Recorded page links for stored contract notices')
 
 
 def save(conn, releases, retrieved_at):
@@ -214,9 +244,8 @@ def set_state(conn, key, value):
 
 # ── One record per contract ───────────────────────────────────────────────────
 def family(unspsc):
-    code = str(unspsc or '')
-    return next((name for prefix, name in sorted(FAMILIES.items(), key=lambda kv: -len(kv[0]))
-                 if code.startswith(prefix)), None)
+    """UNSPSC family from config/categories.yaml (Illoura spec, section 13)."""
+    return classify.family(unspsc)
 
 
 def rollup_one(versions):
@@ -246,7 +275,7 @@ def rollup_one(versions):
         'contact_name': latest('contact_name'), 'contact_email': latest('contact_email'),
         'contact_phone': latest('contact_phone'), 'contact_branch': latest('contact_branch'),
         'contact_division': latest('contact_division'),
-        'source_url': first['source_url'], 'retrieved_at': latest('retrieved_at'),
+        'source_url': first['source_url'], 'page_url': first['page_url'], 'retrieved_at': latest('retrieved_at'),
     }
 
 
@@ -254,7 +283,7 @@ ROLLUP_FIELDS = ['cn_id', 'buyer', 'buyer_abn', 'supplier', 'supplier_abn', 'sup
                  'description', 'agency_reference', 'unspsc', 'procurement_method', 'exemption',
                  'limited_tender_reason', 'value', 'start_date', 'end_date', 'amendment_no', 'release_date',
                  'published_on', 'contact_name', 'contact_email', 'contact_phone', 'contact_branch',
-                 'contact_division', 'source_url', 'retrieved_at']
+                 'contact_division', 'source_url', 'page_url', 'retrieved_at']
 
 
 def rollup(conn, cn_ids=None):
@@ -351,6 +380,19 @@ def run_active(conn, http=requests, sleep=time.sleep):
     return total
 
 
+def run_ids(conn, cn_ids, http=requests, sleep=time.sleep):
+    """Every version of the named contracts (e.g. old contracts amended after they ended)."""
+    retrieved = datetime.now().isoformat(timespec='seconds')
+    new, touched = [], set()
+    for cn_id in cn_ids:
+        added, ids = save(conn, get_json(BY_ID.format(cn_id=cn_id), http).get('releases') or [], retrieved)
+        new, touched = new + added, touched | ids
+        sleep(PAUSE)
+    rollup(conn, touched)
+    log.info('By id: %s contracts requested, %s new versions', len(cn_ids), len(new))
+    return len(new)
+
+
 def run_incremental(conn, http=requests, sleep=time.sleep):
     """New and amended notices (any contract) since the last run, with two days of overlap."""
     today = date.today()
@@ -372,6 +414,7 @@ def main(argv=None):
     parser.add_argument('--history', metavar='YYYY-MM-DD', help='Every contract published since this date')
     parser.add_argument('--active', action='store_true', help='Every contract that has not ended yet')
     parser.add_argument('--rollup', action='store_true', help='Only rebuild the contracts table')
+    parser.add_argument('--ids', metavar='CN1,CN2', help='Fetch these contracts (all versions)')
     args = parser.parse_args(argv)
     (PROJECT_DIR / 'logs').mkdir(exist_ok=True)
     logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(name)s] %(levelname)s: %(message)s',
@@ -388,7 +431,9 @@ def main(argv=None):
             new += run_history(conn, date.fromisoformat(args.history))
         if args.active:
             new += run_active(conn)
-        if not args.history and not args.active:
+        if args.ids:
+            new += run_ids(conn, [i.strip() for i in args.ids.split(',') if i.strip()])
+        if not args.history and not args.active and not args.ids:
             new += run_incremental(conn)
         versions, contracts = (conn.execute('SELECT COUNT(*) FROM contract_versions').fetchone()[0],
                                conn.execute('SELECT COUNT(*) FROM contracts').fetchone()[0])

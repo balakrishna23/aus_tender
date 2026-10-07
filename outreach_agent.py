@@ -65,6 +65,10 @@ BOUNCE_FROM_RE = re.compile(r'mailer-daemon|postmaster', re.I)
 WARMUP_DAYS, WARMUP_CAP = 14, 5
 
 
+# Off by design: see run(). Only tests turn it on.
+SENDING_ALLOWED = False
+
+
 def env(name, default=''):
     return os.environ.get(name, default).strip().strip('"').strip("'")
 
@@ -811,6 +815,12 @@ def forward(message, intended, smtp_factory):
 def run(now=False, dry_run=False, use_ai=True, max_emails=None, sheet=None, smtp_factory=smtp_connection,
         ai=ai_write, profile=None, releases=None, sleep=time.sleep):
     run_mode = mode()
+    if not SENDING_ALLOWED and not dry_run:
+        # Illoura spec, Week 0 item 1 and section 8: no autonomous emails, and never to a buyer
+        # while their tender is live. The candidates here are open-tender buyers, so sending stays
+        # off until outreach is rebuilt as drafts a person approves. Dry runs still write drafts.
+        log.info('Autonomous sending is switched off (AI drafts, a person approves); nothing sent')
+        return []
     profile = profile or load_profile()
     with closing(state_db()) as conn:
         if not dry_run:

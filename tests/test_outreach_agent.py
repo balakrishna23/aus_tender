@@ -163,6 +163,20 @@ class GuardrailTests(AgentTestCase):
 
 
 class RunTests(AgentTestCase):
+    def setUp(self):
+        super().setUp()
+        allowed = patch.object(agent, 'SENDING_ALLOWED', True)  # the send path itself, still tested
+        allowed.start()
+        self.addCleanup(allowed.stop)
+
+    def test_sending_is_switched_off_by_default(self):
+        smtp = Mock()
+        with patch.object(agent, 'SENDING_ALLOWED', False):
+            results = agent.run(now=True, sheet=FakeSheet(), smtp_factory=lambda: smtp, profile=PROFILE,
+                                releases=[release('LH-1', 'p1@x.gov.au')], sleep=lambda s: None)
+        self.assertEqual(results, [])
+        smtp.send_message.assert_not_called()
+
     def run_agent(self, sheet, releases, **kw):
         smtp = Mock()
         results = agent.run(now=True, sheet=sheet, smtp_factory=lambda: smtp, profile=PROFILE, releases=releases,

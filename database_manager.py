@@ -61,6 +61,7 @@ class DatabaseManager:
                     division TEXT,
                     atm_id TEXT,
                     australian_business_engaged TEXT,
+                    son_url TEXT,
                     all_details TEXT,  -- JSON: every labelled field on the page
                     url TEXT UNIQUE,
                     scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -286,6 +287,7 @@ class DatabaseManager:
                     contact_branch TEXT,
                     contact_division TEXT,
                     source_url TEXT,
+                    page_url TEXT,
                     raw_json TEXT,
                     retrieved_at TEXT
                 )

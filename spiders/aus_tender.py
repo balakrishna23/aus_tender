@@ -1,18 +1,17 @@
-from datetime import timedelta
-
 import scrapy
 
-from spiders.austender_common import (AusTenderListingMixin, austender_day, date_windows, page_details,
-                                      search_url)
+from spiders.austender_common import AusTenderListingMixin, notice_guid, page_details
+
+ATM_LIST = 'https://www.tenders.gov.au/Atm'
 
 
 class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
     """Approaches to market (ATMs).
 
-    Every run: all open ATMs (re-fetched, they get addenda and new close dates),
-    all recently closed ATMs and ATMs archived in the last ARCHIVE_LOOKBACK_DAYS.
-    A closed ATM is fetched once; after that its stored /ShowClosed/ page is final.
-    ``-a since=2015-01-01`` backfills the archive in monthly windows.
+    Every run walks AusTender's Current ATM list (/Atm, allowed by robots.txt; the /Search
+    pages it disallows are not used) and fetches every open ATM (they get addenda and new close
+    dates). A stored ATM that has dropped off the list is opened once more: its page then
+    redirects to the closed version, which is final.
     """
 
     name = "aus_tender"
@@ -22,10 +21,6 @@ class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
         'LOG_LEVEL': 'INFO',
         'AUTOTHROTTLE_ENABLED': True,
     }
-    # Only a safety net for downtime: anything newer was already seen as open or closed.
-    ARCHIVE_LOOKBACK_DAYS = 14
-    # ~85 ATMs are published per month; monthly windows stay far below the 10,000 cap.
-    WINDOW_DAYS = 31
 
     def __init__(self, since=None, refresh_existing=False, refetch=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -39,19 +34,17 @@ class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
         if self.refetch == 'missing_details':
             yield from self.refetch_missing_details('tenders', self.since)
             return
+        if self.since:
+            self.logger.warning('since= is ignored: the archive is only searchable through /Search, '
+                                'which robots.txt disallows')
         self.load_stored()
+        with self.db_manager.get_connection(self.name) as conn:
+            self.gone = {key[5:] for (key,) in conn.execute("SELECT key FROM crawl_state WHERE key LIKE 'gone:%'")}
         if getattr(self, 'start_urls', None):
             for url in self.start_urls:
                 yield self.listing_request(url, 'default')
             return
-        base = dict(Type='Atm', AgencyStatus='0', KeywordTypeSearch='AllWord')
-        for kind in ('published', 'closed'):
-            yield self.listing_request(search_url('AtmAdvancedSearch', AtmType=kind, **base), kind)
-        since = self.since or (self.today - timedelta(days=self.ARCHIVE_LOOKBACK_DAYS))
-        for start, end in date_windows(since, self.today, self.WINDOW_DAYS):
-            yield self.listing_request(search_url(
-                'AtmAdvancedSearch', AtmType='archived', PublishFrom=austender_day(start),
-                PublishTo=austender_day(end), **base), 'archived')
+        yield self.listing_request(ATM_LIST, 'published')
 
     async def start(self):
         for request in self.start_requests():
@@ -61,7 +54,27 @@ class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
         # Open notices change; a stored closed notice is final.
         return listing_kind in ('published', 'default') or '/ShowClosed/' not in stored_url
 
+    def parse(self, response):
+        yield from super().parse(response)
+        if response.css('li.next a::attr(href)').get() or response.meta.get('listing_kind') != 'published':
+            return
+        # Last page of the list: anything stored as open but no longer listed has closed.
+        listed = self.window_seen.get(response.meta.get('window'), set())
+        dropped = [url for guid, url in self.stored_urls.items()
+                   if '/ShowClosed/' not in url and guid not in listed and guid not in self.gone]
+        self.logger.info('Current ATM list: %s listed; re-checking %s stored ATMs no longer listed',
+                         len(listed), len(dropped))
+        for url in dropped:
+            yield scrapy.Request(url, callback=self.parse_tender, meta={'refresh_existing': True})
+
     def parse_tender(self, response):
+        if '/System/NotFound' in response.url:
+            # Withdrawn: the page no longer exists. Remember it so it isn't re-checked every run.
+            guid = notice_guid((response.meta.get('redirect_urls') or [response.url])[0])
+            if guid:
+                self.db_manager.set_state(self.name, f'gone:{guid}', self.today.isoformat())
+            self.logger.info('ATM page no longer on the site: %s', guid)
+            return
         """
         Parse individual ATM tender page
         Updated with tested selectors for ATM Documents and Addenda links

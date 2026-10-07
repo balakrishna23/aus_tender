@@ -1,0 +1,25 @@
+# Scoring (spec section 7). DRAFT for approval. Weights add up to 100; the founders can change
+# weights and thresholds here without code.
+weights:
+  attractiveness: 20         # real demand, size, frequency
+  illoura_fit: 20            # capability, clearances, eligibility
+  access: 20                 # panel, direct, Tier-2 route, named person, warm path
+  timing: 15                 # plans, expiries, repeat demand
+  delivery_readiness: 15     # verified candidates; clearance, location and rate fit
+  commercial_potential: 10   # positions, duration, expansion
+
+thresholds:
+  ACT NOW: 85
+  INVESTIGATE: 70
+  WATCH: 50
+  # below WATCH: IGNORE
+
+today_list:
+  min_items: 5
+  max_items: 15
+
+# Renewal windows (engine 2), days to the current end date.
+renewal_windows: [[0, 30], [31, 60], [61, 90], [91, 180], [181, 365]]
+
+# Contacts older than this are STALE (spec section 5).
+stale_after_months: 18

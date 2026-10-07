@@ -31,8 +31,8 @@ from database_manager import DatabaseManager
 from project_paths import PROJECT_DIR
 
 DEFAULT_SPIDERS = [
-    "aus_contract",
-    "contract_api",
+    "contract_api",    # first: aus_contract opens the pages of the notices it lists,
+    "aus_contract",    # and standing_offer follows the panel links aus_contract stores
     "aus_tender",
     "planned_procurement",
     "standing_offer",
@@ -476,6 +476,14 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
         except Exception as e:
             any_failed = True
             feed_line = f"releases feed: FAILED ({e})"
+        # The engine views (renewals, opportunities, MMR, rates) are derived; rebuilt every run.
+        try:
+            import build_intelligence
+            build_intelligence.main([])
+            feed_line += "; intelligence views rebuilt"
+        except Exception as e:
+            any_failed = True
+            feed_line += f"; intelligence views FAILED ({e})"
         # One spreadsheet per dataset in the Shared Drive (publish_sheets.py), refreshed every run.
         if os.environ.get("GSHEETS_FOLDER_ID") and not args.no_sync:
             try:

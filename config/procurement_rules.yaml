@@ -1,0 +1,30 @@
+# Indigenous procurement routes (spec engine 4 and section 5). DRAFT for approval; review monthly.
+# The platform never implies that Indigenous status guarantees work.
+rules:
+  - id: mandatory_set_aside
+    name: Mandatory Set-Aside (Commonwealth)
+    min_value: 80000
+    max_value: 200000
+    jurisdiction: Commonwealth
+    treatment: Flag only where value and scope fit; never imply automatic award
+  - id: exemption_16
+    name: Exemption 16 (Appendix A item 16, direct purchase from Indigenous SMEs)
+    jurisdiction: Commonwealth
+    treatment: Rank agencies that actually use it higher
+  - id: mmr
+    name: Mandatory Minimum Requirements (MMR)
+    min_value: 7500000
+    jurisdiction: Commonwealth
+    contract_based_target_pct: 4
+    organisation_based_target_pct: 3
+    treatment: Contracts of $7.5m+ held by NIAA-listed companies are candidates only; public data never confirms which carry MMRs
+  - id: act_single_quote
+    name: ACT single quote from an Aboriginal enterprise
+    max_value: 200000
+    jurisdiction: ACT
+    treatment: ACT pathway; no unsolicited proposals (policy updating 2026-27)
+  - id: nsw_direct_engagement
+    name: NSW direct engagement of an Aboriginal business
+    max_value: 250000
+    jurisdiction: NSW
+    treatment: NSW pathway; small-contract view
