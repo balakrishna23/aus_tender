@@ -15,7 +15,7 @@ then fix this file.
    "[pipelines] ERROR: ... Failed to save item for aus_tender" is an existing *negative* test; ignore it.)
    pytest is not installed; use unittest.
 3. Git: your branch is `main`, tracking remote **`github`** = `https://github.com/balakrishna23/aus_tender`
-   (private at the time of writing). **Ignore the remote called `origin`** (git@github.com:992panda/aus_tender)
+   (public). **Ignore the remote called `origin`** (git@github.com:992panda/aus_tender)
    and the local branch `main-old-history`: that is an older, unrelated history. Always `git push github main`.
    CI (GitHub Actions, `.github/workflows/tests.yml`) runs the tests on Ubuntu and Windows on every push.
 4. Do the two unfinished tasks in section 9 (Tracker tab sync, then prime briefs), in that order.
@@ -310,9 +310,7 @@ Overall ≈ 60–65% of the spec. Week 0 ~90%, Sprint 1 ~90%, Sprint 2 ~60%, Spr
   `python publish_sheets.py --only intelligence` (panel contract counts improve).
 - Git: everything up to commit `a39adcd` ("Action tracker ...") is pushed to `github/main`.
   GitHub had a major git-operations outage on 7 Oct ~20:40; if a push returns HTTP 500, check githubstatus.com and retry.
-- Repo visibility: private. Sirish asked to make it public; that was put to him as a question because spec §13
-  says code/config are Illoura confidential, and `templates/company_profile.yaml` + `outreach_agent.py` contain a
-  personal Gmail address as a default sender. A private repo can be connected to ChatGPT/Codex via the GitHub app instead.
+- Repo visibility: **public** (Sirish's decision, 7 Oct 2026, knowing spec §13 marks the code and config confidential). Since it is public: never commit `inputs/`, `exports/`, `databases/`, `.env`, keys, contact exports or anything from Illoura's own data (bench, relationships, RAP research, scores). The sender address now comes only from `.env` (`OUTREACH_FROM_EMAIL`); an older personal address remains in commits from 6–7 Oct by Sirish's choice.
 
 ---
 
