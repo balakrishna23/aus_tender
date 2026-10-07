@@ -64,3 +64,6 @@ templates/*.pdf
 
 # Generated operations dashboard (contains contact data)
 dashboard/
+
+# Business inputs (spec section 13: confidential research, lists, exports)
+inputs/
