@@ -12,3 +12,11 @@ organisations:
     aliases:
       - Digital Canberra
       - Digital Canberra ATN
+
+# Company groups: separate legal entities (own ABNs) counted together where it matters. NIAA lists
+# DXC Technology Australia (5 MMR contracts) and DXC Enterprise Australia (1): the spec's "6" for DXC.
+# Keys are the group name shown; values are names exactly as on the NIAA list.
+groups:
+  DXC Technology (group):
+    - DXC TECHNOLOGY AUSTRALIA PTY LIMITED
+    - DXC ENTERPRISE AUSTRALIA PTY LTD

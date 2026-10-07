@@ -344,13 +344,21 @@ def build_mmr(today, counts):
                m.review FROM mmr_list l JOIN mmr_matches m ON m.organisation = l.organisation
         WHERE l.list_date = (SELECT MAX(list_date) FROM mmr_list) AND COALESCE(m.review, '') != 'rejected' ''')
     primes, candidates = [], []
+    # Company groups (config): legal entities counted together, e.g. DXC's two listed entities.
+    group_of = {name: group for group, names in (classify.config('organisation_aliases').get('groups') or {}).items()
+                for name in names}
+    group_mmr = Counter()
+    for organisation, count in {(r['organisation'], r['mmr_contracts']) for r in listed}:
+        group_mmr[group_of.get(organisation, organisation)] += count or 0
     by_abn = defaultdict(list)
     for r in listed:
         by_abn[r['supplier_abn']].append(r)
     for number, entries in by_abn.items():
         c = counts.get(number, Counter())
         for e in entries:
-            primes.append(dict(organisation=e['organisation'], abn=number, mmr_contracts=e['mmr_contracts'],
+            group = group_of.get(e['organisation'], e['organisation'])
+            primes.append(dict(organisation=e['organisation'], group_name=group, abn=number,
+                               mmr_contracts=e['mmr_contracts'], group_mmr_contracts=group_mmr[group],
                                list_date=e['list_date'], match=e['match_method'],
                                match_review=e['review'] or 'unreviewed', contracts=c['contracts'],
                                active_contracts=c['active'], active_it_contracts=c['active_it'],

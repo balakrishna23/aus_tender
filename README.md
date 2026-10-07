@@ -299,7 +299,10 @@ scoring, organisation aliases, seed contacts):
 #### MMR list (`mmr_list.py`)
 
 NIAA's "IPP companies with active MMR contracts" workbook gives only company names and contract
-counts. Keep it in `inputs/mmr/` (git-ignored, Illoura confidential) and run:
+counts. NIAA republishes it every few months on its Resource Centre
+(https://www.niaa.gov.au/resource-centre/ipp-companies-active-mmr-contracts-0; the copy loaded
+on 7 Oct 2026 is "as at 25 February 2026"). Pass that date with `--date`. Keep the file in
+`inputs/mmr/` (git-ignored, Illoura confidential) and run:
 
 ```bash
 python mmr_list.py --load inputs/mmr/<file>.xlsx --date YYYY-MM-DD   # stored as received, per list date

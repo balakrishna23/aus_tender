@@ -55,7 +55,8 @@ TIER2_FAMILIES = {'labour hire and recruitment', 'ICT services'}
 
 def prime_actions(renewals, primes, today):
     """Staffing or IT-services renewals in the next 6 months held by a NIAA-listed prime ->
-    Tier-2 offer to the prime (Lane). One action per company, whatever number of ABNs it uses."""
+    Tier-2 offer to the prime (Lane). One action per company or company group, whatever number of
+    ABNs it uses; MMR counts are the group's (DXC: 5 + 1 = 6)."""
     company = {}
     for p in primes:
         company.setdefault(p['abn'], p)
@@ -63,10 +64,11 @@ def prime_actions(renewals, primes, today):
     for r in renewals:
         prime = company.get(re.sub(r'\D', '', r['supplier_abn'] or ''))
         if prime and r['days_left'] <= 180 and r['category_family'] in TIER2_FAMILIES:
-            by_company[prime['organisation']].append((prime, r))
+            by_company[prime.get('group_name') or prime['organisation']].append((prime, r))
     out = []
     for organisation, pairs in by_company.items():
         prime, items = pairs[0][0], [r for _, r in pairs]
+        mmr = prime.get('group_mmr_contracts') or prime['mmr_contracts'] or 1
         # The hook: the renewal best placed in time (31-60 days is ideal), then the largest.
         hook = max(items, key=lambda r: (_timing(r['days_left']), r['current_value'] or 0))
         roles = {f for r in items for f in (classify.classify(r['description'] or '')['role_families'] or '').split(', ') if f}
@@ -75,14 +77,14 @@ def prime_actions(renewals, primes, today):
                      illoura_fit=0.8 if roles & ILLOURA_ROLES or staffing else NEUTRAL,
                      # MMR obligations give the prime a policy reason to talk to Illoura; more
                      # obligations, a stronger reason.
-                     access=min(1.0, 0.6 + 0.05 * (prime['mmr_contracts'] or 1)),
+                     access=min(1.0, 0.6 + 0.05 * mmr),
                      timing=_timing(hook['days_left']), delivery_readiness=NEUTRAL,
                      commercial_potential=min(1.0, 0.3 + 0.1 * len(items)))
-        why = (f"{prime['mmr_contracts']} active MMR contract(s) (NIAA list {prime['list_date']}); "
+        why = (f"{mmr} active MMR contract(s) (NIAA list as at {prime['list_date']}); "
                f"{len(items)} staffing/IT-services contract(s) ending within 6 months. Hook: {hook['buyer']} "
                f"{hook['description']!r} ends {hook['current_end_date']} ({hook['days_left']} days)")
         out.append(_action(
-            'Tier-2 offer to prime', prime['organisation'], why,
+            'Tier-2 offer to prime', organisation, why,
             'Social impact or Indigenous procurement lead; warm path not known yet',
             'Illoura contractors for the renewal; every placement counts toward their MMR target', 'Lane',
             'SAFE_GENERAL', hook['page_url'] or hook['api_url'], parts,

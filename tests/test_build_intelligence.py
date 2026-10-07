@@ -109,6 +109,16 @@ class BuildTests(unittest.TestCase):
         old = contacts['old@defence.gov.au']
         self.assertEqual((old['stale'], old['contact_safety'], old['usable_for_outreach']), (1, 'NO_CONTACT', 0))
 
+    def test_company_groups_add_up_their_mmr_contracts(self):
+        with closing(sqlite3.connect(self.dir / 'organisations.db')) as conn:
+            conn.execute("INSERT INTO mmr_list VALUES ('2026-10-07', 'DXC ENTERPRISE AUSTRALIA PTY LTD', 1)")
+            conn.execute("INSERT INTO mmr_matches VALUES ('DXC ENTERPRISE AUSTRALIA PTY LTD', '16612896527', 'name', NULL)")
+            conn.commit()
+        primes, _ = bi.build_mmr(TODAY, bi.contract_counts(TODAY))
+        self.assertEqual({(p['organisation'], p['group_name'], p['group_mmr_contracts']) for p in primes},
+                         {('DXC TECHNOLOGY AUSTRALIA PTY LIMITED', 'DXC Technology (group)', 6),
+                          ('DXC ENTERPRISE AUSTRALIA PTY LTD', 'DXC Technology (group)', 6)})
+
     def test_quarters_and_business_days(self):
         self.assertEqual(bi.fy_quarter_range('Quarter 3 2026/2027'), (date(2027, 1, 1), date(2027, 3, 31)))
         self.assertEqual(bi.fy_quarter_range('Quarter 2 2026/2027'), (date(2026, 10, 1), date(2026, 12, 31)))
