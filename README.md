@@ -269,6 +269,23 @@ One-off loads, resumable (a finished month is skipped when rerun):
 `python austender_api.py --history 2020-01-01` (every contract published since then, about a
 minute and a half per month) and `--active` (contracts still running, whenever published).
 
+#### MMR list (`mmr_list.py`)
+
+NIAA's "IPP companies with active MMR contracts" workbook gives only company names and contract
+counts. Keep it in `inputs/mmr/` (git-ignored, Illoura confidential) and run:
+
+```bash
+python mmr_list.py --load inputs/mmr/<file>.xlsx --date YYYY-MM-DD   # stored as received, per list date
+python mmr_list.py --match --export inputs/mmr/mmr_review.csv         # suggest supplier ABNs
+python mmr_list.py --review inputs/mmr/mmr_review.csv                 # save confirmed / rejected
+```
+
+`databases/organisations.db`: `mmr_list` (the list, never overwritten) and `mmr_matches`
+(company → supplier ABN from `contract_api.db`, with contract, ICT, labour-hire and active
+counts, active contracts of $7.5m or more, and the review decision). Matching is by name;
+`loose name` matches drop words like AUSTRALIA or SERVICES and need a person to check them.
+Re-matching refreshes the counts and keeps every review decision.
+
 #### Activity log (`activity_log.py`)
 
 `databases/activity.db` is the audit trail of what was scraped and shared, and when:
