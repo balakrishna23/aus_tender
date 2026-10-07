@@ -29,6 +29,8 @@ databases/
 dazzling-tiger-*.json
 service-account-*.json
 credentials.json
+# Public AusTender API responses used as test fixtures
+!tests/fixtures/*.json
 
 # Scrapy specific
 scrapy.log

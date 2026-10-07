@@ -243,6 +243,60 @@ class DatabaseManager:
             ]
         },
 
+        # AusTender's official contract API (austender_api.py): one row per published version
+        # (original notice or amendment), exactly as received; never overwritten.
+        'contract_api': {
+            'table_name': 'contract_versions',
+            'schema': '''
+                CREATE TABLE IF NOT EXISTS contract_versions (
+                    release_id TEXT PRIMARY KEY,
+                    ocid TEXT,
+                    cn_id TEXT,
+                    notice_id TEXT,
+                    amendment_no INTEGER,
+                    tag TEXT,
+                    release_date TEXT,
+                    published_on TEXT,
+                    date_signed TEXT,
+                    start_date TEXT,
+                    end_date TEXT,
+                    value REAL,
+                    currency TEXT,
+                    description TEXT,
+                    agency_reference TEXT,
+                    unspsc TEXT,
+                    procurement_method TEXT,
+                    limited_tender_exempt TEXT,
+                    exemption_code TEXT,
+                    exemption TEXT,
+                    limited_tender_reason_code TEXT,
+                    limited_tender_reason TEXT,
+                    buyer TEXT,
+                    buyer_abn TEXT,
+                    supplier TEXT,
+                    supplier_abn TEXT,
+                    supplier_street TEXT,
+                    supplier_locality TEXT,
+                    supplier_region TEXT,
+                    supplier_postcode TEXT,
+                    supplier_country TEXT,
+                    contact_name TEXT,
+                    contact_email TEXT,
+                    contact_phone TEXT,
+                    contact_branch TEXT,
+                    contact_division TEXT,
+                    source_url TEXT,
+                    raw_json TEXT,
+                    retrieved_at TEXT
+                )
+            ''',
+            'indexes': [
+                'CREATE INDEX IF NOT EXISTS idx_versions_cn ON contract_versions(cn_id, amendment_no)',
+                'CREATE INDEX IF NOT EXISTS idx_versions_published ON contract_versions(published_on)',
+                'CREATE INDEX IF NOT EXISTS idx_versions_end ON contract_versions(end_date)',
+            ]
+        },
+
         'act_tender': {
             'table_name': 'act_tenders',
             'schema': '''

@@ -32,6 +32,7 @@ from project_paths import PROJECT_DIR
 
 DEFAULT_SPIDERS = [
     "aus_contract",
+    "contract_api",
     "aus_tender",
     "planned_procurement",
     "standing_offer",
@@ -50,6 +51,8 @@ STATE_SPIDERS = [
 # Maps spider name → (script path, extra args list)
 STANDALONE_SCRIPTS = {
     "nsw_tender": ("nsw_tender_fetch.py", ["--pages", "5"]),
+    # AusTender's official contract API: new and amended contract notices since the last run.
+    "contract_api": ("austender_api.py", []),
 }
 
 LOG_DIR = PROJECT_DIR / "logs"

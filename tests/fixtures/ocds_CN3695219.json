@@ -1,0 +1,664 @@
+{
+ "uri": "https://api.tenders.gov.au/ocds/findById/CN3695219",
+ "publisher": {
+  "name": "Department of Finance"
+ },
+ "publishedDate": "2020-06-29T06:24:51Z",
+ "version": "1.1",
+ "releases": [
+  {
+   "ocid": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+   "id": "prod-7a0ce6004e6e404b86e3ba38201053d6-b454ecd3dc5c3cf0a9ca582f78458000",
+   "date": "2020-06-29T06:24:51Z",
+   "initiationType": "tender",
+   "language": "EN",
+   "parties": [
+    {
+     "id": "cc83d235bab74b168d0fcf38385ef76b",
+     "name": "Grant Tidswell",
+     "additionalIdentifiers": [
+      {
+       "id": "82139631854",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {
+      "locality": "Balmain East",
+      "region": "NSW",
+      "postalCode": "2041",
+      "countryName": "AUSTRALIA"
+     },
+     "contactPoint": {
+      "name": "PURCHASING HELPDESK",
+      "email": "",
+      "telephone": "18 0090 6144",
+      "branch": "",
+      "division": ""
+     },
+     "roles": [
+      "supplier"
+     ]
+    },
+    {
+     "id": "96d126b6fe36b2fec3a0f824a342959c",
+     "name": "Services Australia",
+     "roles": [
+      "procuringEntity"
+     ],
+     "additionalIdentifiers": [
+      {
+       "id": "90794605008",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {},
+     "contactPoint": {
+      "email": "tenders@finance.gov.au"
+     }
+    }
+   ],
+   "awards": [
+    {
+     "id": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "suppliers": [
+      {
+       "id": "cc83d235bab74b168d0fcf38385ef76b",
+       "name": "Grant Tidswell"
+      }
+     ],
+     "date": "2020-06-29T06:24:51Z"
+    }
+   ],
+   "contracts": [
+    {
+     "id": "CN3695219",
+     "awardID": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "dateSigned": "2020-06-29T06:24:51Z",
+     "description": "Labour Hire",
+     "title": "C000004207",
+     "items": [
+      {
+       "id": "80111600-f276d90823ec4d1883513a1ec0a7b95e",
+       "classification": {
+        "scheme": "UNSPSC",
+        "id": "80111600"
+       }
+      }
+     ],
+     "period": {
+      "startDate": "2020-05-17T14:00:00Z",
+      "endDate": "2023-05-04T14:00:00Z"
+     },
+     "value": {
+      "currency": "AUD",
+      "amount": "427580.00"
+     },
+     "status": "active"
+    }
+   ],
+   "tag": [
+    "contract"
+   ],
+   "tender": {
+    "id": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+    "procurementMethod": "limited",
+    "procurementMethodDetails": "Limited tender",
+    "limitedTenderExempt": "1",
+    "exemptionCode": "LH",
+    "exemption": "App A: 14. Contracts for labour hire."
+   }
+  },
+  {
+   "ocid": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+   "id": "prod-7a0ce6004e6e404b86e3ba38201053d6-e7fbe47f1692343db2fce06aeb8db495",
+   "date": "2023-04-27T08:08:01Z",
+   "initiationType": "tender",
+   "language": "EN",
+   "parties": [
+    {
+     "id": "cc83d235bab74b168d0fcf38385ef76b",
+     "name": "Grant Tidswell",
+     "additionalIdentifiers": [
+      {
+       "id": "82139631854",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {
+      "locality": "Balmain East",
+      "region": "NSW",
+      "postalCode": "2041",
+      "countryName": "AUSTRALIA"
+     },
+     "contactPoint": {
+      "name": "PURCHASING HELPDESK",
+      "email": "",
+      "telephone": "18 0090 6144",
+      "branch": "",
+      "division": ""
+     },
+     "roles": [
+      "supplier"
+     ]
+    },
+    {
+     "id": "96d126b6fe36b2fec3a0f824a342959c",
+     "name": "Services Australia",
+     "roles": [
+      "procuringEntity"
+     ],
+     "additionalIdentifiers": [
+      {
+       "id": "90794605008",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {},
+     "contactPoint": {
+      "email": "tenders@finance.gov.au"
+     }
+    }
+   ],
+   "awards": [
+    {
+     "id": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "suppliers": [
+      {
+       "id": "cc83d235bab74b168d0fcf38385ef76b",
+       "name": "Grant Tidswell"
+      }
+     ],
+     "date": "2020-06-29T06:24:51Z"
+    }
+   ],
+   "contracts": [
+    {
+     "id": "CN3695219",
+     "awardID": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "dateSigned": "2020-06-29T06:24:51Z",
+     "description": "Labour Hire",
+     "title": "C000004207",
+     "items": [
+      {
+       "id": "80111600-92e064dfadce43c98221d47207e88554",
+       "classification": {
+        "scheme": "UNSPSC",
+        "id": "80111600"
+       }
+      }
+     ],
+     "period": {
+      "startDate": "2020-05-17T14:00:00Z",
+      "endDate": "2023-05-04T14:00:00Z"
+     },
+     "value": {
+      "currency": "AUD",
+      "amount": "907040.00"
+     },
+     "status": "active",
+     "amendments": [
+      {
+       "id": "CN3695219-A1",
+       "releaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-e7fbe47f1692343db2fce06aeb8db495",
+       "amendsReleaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-b454ecd3dc5c3cf0a9ca582f78458000"
+      }
+     ]
+    }
+   ],
+   "tag": [
+    "contractAmendment"
+   ],
+   "tender": {
+    "id": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+    "procurementMethod": "limited",
+    "procurementMethodDetails": "Limited tender",
+    "limitedTenderExempt": "1",
+    "exemptionCode": "LH",
+    "exemption": "App A: 14. Contracts for labour hire."
+   }
+  },
+  {
+   "ocid": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+   "id": "prod-7a0ce6004e6e404b86e3ba38201053d6-9ab78edfc21f32fca11f5e0b2ad9c67a",
+   "date": "2023-04-27T08:08:01Z",
+   "initiationType": "tender",
+   "language": "EN",
+   "parties": [
+    {
+     "id": "cc83d235bab74b168d0fcf38385ef76b",
+     "name": "Grant Tidswell",
+     "additionalIdentifiers": [
+      {
+       "id": "82139631854",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {
+      "locality": "Balmain East",
+      "region": "NSW",
+      "postalCode": "2041",
+      "countryName": "AUSTRALIA"
+     },
+     "contactPoint": {
+      "name": "PURCHASING HELPDESK",
+      "email": "",
+      "telephone": "18 0090 6144",
+      "branch": "",
+      "division": ""
+     },
+     "roles": [
+      "supplier"
+     ]
+    },
+    {
+     "id": "96d126b6fe36b2fec3a0f824a342959c",
+     "name": "Services Australia",
+     "roles": [
+      "procuringEntity"
+     ],
+     "additionalIdentifiers": [
+      {
+       "id": "90794605008",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {},
+     "contactPoint": {
+      "email": "tenders@finance.gov.au"
+     }
+    }
+   ],
+   "awards": [
+    {
+     "id": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "suppliers": [
+      {
+       "id": "cc83d235bab74b168d0fcf38385ef76b",
+       "name": "Grant Tidswell"
+      }
+     ],
+     "date": "2020-06-29T06:24:51Z"
+    }
+   ],
+   "contracts": [
+    {
+     "id": "CN3695219",
+     "awardID": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "dateSigned": "2020-06-29T06:24:51Z",
+     "description": "Labour Hire",
+     "title": "C000004207",
+     "items": [
+      {
+       "id": "80111600-01bc8f87b0924466b2f30ceefcf3527b",
+       "classification": {
+        "scheme": "UNSPSC",
+        "id": "80111600"
+       }
+      }
+     ],
+     "period": {
+      "startDate": "2020-05-17T14:00:00Z",
+      "endDate": "2023-05-04T14:00:00Z"
+     },
+     "value": {
+      "currency": "AUD",
+      "amount": "1437590.00"
+     },
+     "status": "active",
+     "amendments": [
+      {
+       "id": "CN3695219-A2",
+       "releaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-9ab78edfc21f32fca11f5e0b2ad9c67a",
+       "amendsReleaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-b454ecd3dc5c3cf0a9ca582f78458000"
+      }
+     ]
+    }
+   ],
+   "tag": [
+    "contractAmendment"
+   ],
+   "tender": {
+    "id": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+    "procurementMethod": "limited",
+    "procurementMethodDetails": "Limited tender",
+    "limitedTenderExempt": "1",
+    "exemptionCode": "LH",
+    "exemption": "App A: 14. Contracts for labour hire."
+   }
+  },
+  {
+   "ocid": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+   "id": "prod-7a0ce6004e6e404b86e3ba38201053d6-aa904bd82eb33305b6f32c3c44cc5586",
+   "date": "2023-04-27T08:08:01Z",
+   "initiationType": "tender",
+   "language": "EN",
+   "parties": [
+    {
+     "id": "cc83d235bab74b168d0fcf38385ef76b",
+     "name": "Grant Tidswell",
+     "additionalIdentifiers": [
+      {
+       "id": "82139631854",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {
+      "streetAddress": "",
+      "locality": "Balmain East",
+      "region": "NSW",
+      "postalCode": "2041",
+      "countryName": "AUSTRALIA"
+     },
+     "contactPoint": {
+      "name": "PURCHASING HELPDESK",
+      "email": "",
+      "telephone": "18 0090 6144",
+      "branch": "",
+      "division": ""
+     },
+     "roles": [
+      "supplier"
+     ]
+    },
+    {
+     "id": "96d126b6fe36b2fec3a0f824a342959c",
+     "name": "Services Australia",
+     "roles": [
+      "procuringEntity"
+     ],
+     "additionalIdentifiers": [
+      {
+       "id": "90794605008",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {},
+     "contactPoint": {
+      "email": "tenders@finance.gov.au"
+     }
+    }
+   ],
+   "awards": [
+    {
+     "id": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "suppliers": [
+      {
+       "id": "cc83d235bab74b168d0fcf38385ef76b",
+       "name": "Grant Tidswell"
+      }
+     ],
+     "date": "2020-06-29T06:24:51Z"
+    }
+   ],
+   "contracts": [
+    {
+     "id": "CN3695219",
+     "awardID": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "dateSigned": "2020-06-29T06:24:51Z",
+     "description": "Labour Hire",
+     "title": "C000004207",
+     "items": [
+      {
+       "id": "80111600-8339dcd38c614229b55857a8dd633bb3",
+       "classification": {
+        "scheme": "UNSPSC",
+        "id": "80111600"
+       }
+      }
+     ],
+     "period": {
+      "startDate": "2020-05-17T14:00:00Z",
+      "endDate": "2023-05-04T14:00:00Z"
+     },
+     "value": {
+      "currency": "AUD",
+      "amount": "1948490.39"
+     },
+     "status": "active",
+     "amendments": [
+      {
+       "id": "CN3695219-A3",
+       "releaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-aa904bd82eb33305b6f32c3c44cc5586",
+       "amendsReleaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-b454ecd3dc5c3cf0a9ca582f78458000"
+      }
+     ]
+    }
+   ],
+   "tag": [
+    "contractAmendment"
+   ],
+   "tender": {
+    "id": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+    "procurementMethod": "limited",
+    "procurementMethodDetails": "Limited tender",
+    "limitedTenderExempt": "1",
+    "exemptionCode": "LH",
+    "exemption": "App A: 14. Contracts for labour hire."
+   }
+  },
+  {
+   "ocid": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+   "id": "prod-7a0ce6004e6e404b86e3ba38201053d6-33f2801d6337318fa68d7c24849e0a7f",
+   "date": "2023-04-27T08:08:01Z",
+   "initiationType": "tender",
+   "language": "EN",
+   "parties": [
+    {
+     "id": "cc83d235bab74b168d0fcf38385ef76b",
+     "name": "Grant Tidswell",
+     "additionalIdentifiers": [
+      {
+       "id": "82139631854",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {
+      "streetAddress": "",
+      "locality": "Balmain East",
+      "region": "NSW",
+      "postalCode": "2041",
+      "countryName": "AUSTRALIA"
+     },
+     "contactPoint": {
+      "name": "PURCHASING HELPDESK",
+      "email": "",
+      "telephone": "18 0090 6144",
+      "branch": "",
+      "division": ""
+     },
+     "roles": [
+      "supplier"
+     ]
+    },
+    {
+     "id": "96d126b6fe36b2fec3a0f824a342959c",
+     "name": "Services Australia",
+     "roles": [
+      "procuringEntity"
+     ],
+     "additionalIdentifiers": [
+      {
+       "id": "90794605008",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {},
+     "contactPoint": {
+      "email": "tenders@finance.gov.au"
+     }
+    }
+   ],
+   "awards": [
+    {
+     "id": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "suppliers": [
+      {
+       "id": "cc83d235bab74b168d0fcf38385ef76b",
+       "name": "Grant Tidswell"
+      }
+     ],
+     "date": "2020-06-29T06:24:51Z"
+    }
+   ],
+   "contracts": [
+    {
+     "id": "CN3695219",
+     "awardID": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "dateSigned": "2020-06-29T06:24:51Z",
+     "description": "Labour Hire",
+     "title": "C000004207",
+     "items": [
+      {
+       "id": "80111600-3de3a891932443cb8dade35d2e7399d0",
+       "classification": {
+        "scheme": "UNSPSC",
+        "id": "80111600"
+       }
+      }
+     ],
+     "period": {
+      "startDate": "2020-05-17T14:00:00Z",
+      "endDate": "2023-05-04T14:00:00Z"
+     },
+     "value": {
+      "currency": "AUD",
+      "amount": "2298490.39"
+     },
+     "status": "active",
+     "amendments": [
+      {
+       "id": "CN3695219-A4",
+       "releaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-33f2801d6337318fa68d7c24849e0a7f",
+       "amendsReleaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-b454ecd3dc5c3cf0a9ca582f78458000"
+      }
+     ]
+    }
+   ],
+   "tag": [
+    "contractAmendment"
+   ],
+   "tender": {
+    "id": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+    "procurementMethod": "limited",
+    "procurementMethodDetails": "Limited tender",
+    "limitedTenderExempt": "1",
+    "exemptionCode": "LH",
+    "exemption": "App A: 14. Contracts for labour hire."
+   }
+  },
+  {
+   "ocid": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+   "id": "prod-7a0ce6004e6e404b86e3ba38201053d6-3c20af2c90653bd48d004f2da6a73ab2",
+   "date": "2023-04-27T08:08:01Z",
+   "initiationType": "tender",
+   "language": "EN",
+   "parties": [
+    {
+     "id": "cc83d235bab74b168d0fcf38385ef76b",
+     "name": "Grant Tidswell",
+     "additionalIdentifiers": [
+      {
+       "id": "82139631854",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {
+      "streetAddress": "",
+      "locality": "Balmain East",
+      "region": "NSW",
+      "postalCode": "2041",
+      "countryName": "AUSTRALIA"
+     },
+     "contactPoint": {
+      "name": "PURCHASING HELPDESK",
+      "email": "",
+      "telephone": "18 0090 6144",
+      "branch": "",
+      "division": ""
+     },
+     "roles": [
+      "supplier"
+     ]
+    },
+    {
+     "id": "96d126b6fe36b2fec3a0f824a342959c",
+     "name": "Services Australia",
+     "roles": [
+      "procuringEntity"
+     ],
+     "additionalIdentifiers": [
+      {
+       "id": "90794605008",
+       "scheme": "AU-ABN"
+      }
+     ],
+     "address": {},
+     "contactPoint": {
+      "email": "tenders@finance.gov.au"
+     }
+    }
+   ],
+   "awards": [
+    {
+     "id": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "suppliers": [
+      {
+       "id": "cc83d235bab74b168d0fcf38385ef76b",
+       "name": "Grant Tidswell"
+      }
+     ],
+     "status": "active",
+     "date": "2020-06-29T06:24:51Z"
+    }
+   ],
+   "contracts": [
+    {
+     "id": "CN3695219",
+     "awardID": "CN3695219-f276d90823ec4d1883513a1ec0a7b95e",
+     "dateSigned": "2020-06-29T06:24:51Z",
+     "description": "Labour Hire",
+     "title": "C000004207",
+     "items": [
+      {
+       "id": "80111600-f96639036df7472597f6f7d72d861ef7",
+       "classification": {
+        "scheme": "UNSPSC",
+        "id": "80111600"
+       }
+      }
+     ],
+     "period": {
+      "startDate": "2020-05-17T14:00:00Z",
+      "endDate": "2023-05-04T14:00:00Z"
+     },
+     "value": {
+      "currency": "AUD",
+      "amount": "2558490.39"
+     },
+     "status": "active",
+     "amendments": [
+      {
+       "id": "CN3695219-A5",
+       "releaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-3c20af2c90653bd48d004f2da6a73ab2",
+       "amendsReleaseID": "prod-7a0ce6004e6e404b86e3ba38201053d6-b454ecd3dc5c3cf0a9ca582f78458000"
+      }
+     ]
+    }
+   ],
+   "tag": [
+    "contractAmendment"
+   ],
+   "tender": {
+    "id": "prod-7a0ce6004e6e404b86e3ba38201053d6",
+    "procurementMethod": "limited",
+    "procurementMethodDetails": "Limited tender",
+    "limitedTenderExempt": "1",
+    "exemptionCode": "LH",
+    "exemption": "App A: 14. Contracts for labour hire."
+   }
+  }
+ ],
+ "extensions": [
+  "http://cdn.tenders.gov.au/ocds/schema/extension.json"
+ ]
+}

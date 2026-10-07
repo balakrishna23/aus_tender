@@ -33,6 +33,8 @@ class DatabaseTests(unittest.TestCase):
 
     def test_all_schemas_and_upserts(self):
         for name, schema in self.db.SCHEMAS.items():
+            if name == 'contract_api':  # filled from the API by austender_api.py, not scraped pages
+                continue
             with self.subTest(name=name):
                 self.db.initialize_database(name)
                 self.assertTrue(self.db.insert_item(name, {'url': 'https://example.test/1'}))

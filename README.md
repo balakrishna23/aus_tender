@@ -250,6 +250,25 @@ Every field a page shows is stored (2026-10-06):
   `scrapy crawl aus_contract -a refetch=missing_details -a since=2025-10-06`
   (`aus_tender` and `standing_offer` take the same arguments; leave out `since` for all).
 
+#### Contract notices from AusTender's API (`austender_api.py`)
+
+AusTender's official open-data API (https://api.tenders.gov.au/ocds, Department of Finance,
+CC BY 3.0 AU: credit AusTender) carries every contract notice and amendment. It covers
+contracts only; tenders, standing offers and plans are still read from the website.
+
+`databases/contract_api.db`:
+- `contract_versions`: one row per published version (the notice and each amendment) exactly
+  as received, with the raw JSON. A version already held is never overwritten.
+- `contracts`: one row per contract, derived from its versions: original and current value,
+  start, original and current end (Canberra dates), amendment and extension counts, UNSPSC
+  code and family, Limited Tender Exemption and `is_indigenous_exemption` (Appendix A item 16),
+  buyer, supplier and ABNs, agency contact (name, email, phone, branch, division).
+
+Every batch run fetches notices created or amended since the last run (`contract_api` step).
+One-off loads, resumable (a finished month is skipped when rerun):
+`python austender_api.py --history 2020-01-01` (every contract published since then, about a
+minute and a half per month) and `--active` (contracts still running, whenever published).
+
 #### Activity log (`activity_log.py`)
 
 `databases/activity.db` is the audit trail of what was scraped and shared, and when:
