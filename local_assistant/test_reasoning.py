@@ -164,6 +164,64 @@ class RetrievalTests(unittest.TestCase):
         self.assertIn('22 matching',result['sections'][0])
         self.assertEqual(8,len(result['facts']))
 
+    def test_semantic_candidates_keep_exact_constraints(self):
+        from unittest.mock import patch
+        plan=rule_plan('Contracts held by DXC ending within 90 days at least $100 excluding assessments and equipment')
+        plan.update(hybrid=True,search_topic='incident response',explicit_search_topic=True)
+        def fake_rank(rows,topic,field):
+            self.assertEqual({'CN2','CN4'},{r['cn_id'] for r in rows})
+            return rows,{'mode':'hybrid','topic':topic,'eligible_records':len(rows),'matched_records':len(rows)}
+        with patch('hybrid.rank',side_effect=fake_rank):
+            result=analyse(plan,assistant.read_rows,assistant.like,date(2026,10,8))
+        self.assertEqual({'CN2','CN4'},{r['cn_id'] for r in result['facts']})
+
+    def test_semantic_search_cannot_relax_value_or_abn(self):
+        from unittest.mock import patch
+        for question in ['Cyber contracts ending within 90 days above $100',
+                         'Cyber contracts ending within 90 days for ABN 12345678901']:
+            plan=rule_plan(question);plan.update(hybrid=True,search_topic='cyber')
+            with patch('hybrid.rank',return_value=([],{'mode':'hybrid','topic':'cyber','eligible_records':0,'matched_records':0})) as ranked:
+                result=analyse(plan,assistant.read_rows,assistant.like,date(2026,10,8))
+                self.assertEqual([],ranked.call_args.args[0])
+                self.assertFalse(result['facts'])
+
+    def test_semantic_failure_falls_back_without_broadening(self):
+        from unittest.mock import patch
+        plan=rule_plan('Which cyber contracts end within 90 days?')
+        plan.update(hybrid=True,search_topic='cyber')
+        with patch('hybrid.rank',side_effect=ValueError('index unavailable')):
+            result=analyse(plan,assistant.read_rows,assistant.like,date(2026,10,8))
+        self.assertEqual({'CN2','CN3'},{r['cn_id'] for r in result['facts']})
+        self.assertEqual('keyword fallback',result['retrieval_status'][0]['mode'])
+
+    def test_semantic_search_keeps_excluded_roles(self):
+        from unittest.mock import patch
+        plan=rule_plan('Contracts ending within 90 days excluding cyber')
+        plan.update(hybrid=True,search_topic='business analysis',explicit_search_topic=True)
+        with patch('hybrid.rank',side_effect=lambda rows,*args:(rows,{'mode':'hybrid','topic':'business analysis','eligible_records':len(rows),'matched_records':len(rows)})):
+            result=analyse(plan,assistant.read_rows,assistant.like,date(2026,10,8))
+        self.assertTrue(all(r['cn_id'] not in ('CN2','CN3') for r in result['facts']))
+
+    def test_explicit_topic_keeps_separate_positive_role_constraint(self):
+        from unittest.mock import patch
+        plan=rule_plan('Cyber contracts ending within 90 days')
+        plan.update(hybrid=True,search_topic='cloud migration',explicit_search_topic=True)
+        with patch('hybrid.rank',side_effect=lambda rows,*args:(rows,{'mode':'hybrid','topic':'cloud migration','eligible_records':len(rows),'matched_records':len(rows)})) as ranked:
+            analyse(plan,assistant.read_rows,assistant.like,date(2026,10,8))
+        self.assertEqual({'CN2','CN3'},{r['cn_id'] for r in ranked.call_args.args[0]})
+
+    def test_staffing_priority_survives_high_service_similarity(self):
+        from unittest.mock import patch
+        plan=rule_plan('Cyber labour hire contracts ending within 90 days')
+        plan.update(hybrid=True,search_topic='cyber',explicit_search_topic=True)
+        def fake_rank(rows,*args):
+            rows.sort(key=lambda row:row['cn_id']=='CN2')
+            for index,row in enumerate(rows):row['retrieval']={'fusion_score':1-index*0.1}
+            return rows,{'mode':'hybrid','topic':'cyber','eligible_records':len(rows),'matched_records':len(rows)}
+        with patch('hybrid.rank',side_effect=fake_rank):
+            result=analyse(plan,assistant.read_rows,assistant.like,date(2026,10,8))
+        self.assertEqual('CN2',result['facts'][0]['cn_id'])
+
 
 if __name__=='__main__':
     unittest.main()

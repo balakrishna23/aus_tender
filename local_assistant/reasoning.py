@@ -26,6 +26,38 @@ def analyse(plan, query, like, today=None):
     start=today+timedelta(days=plan.get('start_days',0))
     end=today+timedelta(days=plan['days'])
     facts, sections, missing, metrics = [], [], list(plan['missing']), {}
+    retrieval_status=[]
+    hybrid_enabled=bool(plan.get('hybrid') and plan.get('search_topic'))
+
+    def hybrid_select(rows,field,view):
+        from hybrid import rank,lexical_scores
+        from urllib.error import URLError
+        import sqlite3
+        try:
+            selected,status=rank(rows,plan['search_topic'],field)
+            if not plan.get('explicit_search_topic') and plan['roles'] and view!='public_research':
+                # Preserve existing exact role matches as the lexical leg of the union.
+                def identity(row):return (row.get('cn_id'),row.get('source'),row.get('source_id'))
+                selected_ids={identity(row) for row in selected}
+                for row in rows:
+                    if identity(row) not in selected_ids and any(re.search(r'(?<!\w)'+re.escape(word)+r'(?!\w)',row.get(field,'') or '',re.I)
+                            for role in plan['roles'] for word in ROLE_WORDS[role]):
+                        selected.append({**row,'retrieval':{'method':'exact role keyword','topic':plan['search_topic'],
+                            'limit':'Role wording only; not verified capability or current demand.'}})
+                status['matched_records']=len(selected)
+        except (ValueError,OSError,URLError,TimeoutError,sqlite3.Error,ImportError) as exc:
+            # Always apply lexical relevance on fallback; never return all SQL candidates.
+            if plan.get('explicit_search_topic'):
+                scores=lexical_scores(plan['search_topic'],[r.get(field,'') for r in rows])
+                selected=[r for r,score in zip(rows,scores) if score>0]
+            else:
+                selected=[r for r in rows if any(re.search(r'(?<!\w)'+re.escape(word)+r'(?!\w)',r.get(field,'') or '',re.I)
+                    for role in plan['roles'] for word in ROLE_WORDS[role])]
+            status={'mode':'keyword fallback','topic':plan['search_topic'],'eligible_records':len(rows),
+                    'matched_records':len(selected),'reason':str(exc)}
+            missing.append('Semantic search unavailable: '+str(exc)+'. Keyword results are shown; related wording may be missed.')
+        status['view']=view;retrieval_status.append(status)
+        return selected
 
     def evidence(view, rows):
         for row in rows:
@@ -38,7 +70,7 @@ def analyse(plan, query, like, today=None):
     def q(sql, params=(),db='intelligence.db'):
         return query(db,sql,params)
 
-    def conditions(name='description',entity_columns=('buyer','supplier'),entities=None,contract_filters=True,category_filter=True):
+    def conditions(name='description',entity_columns=('buyer','supplier'),entities=None,contract_filters=True,category_filter=True,semantic=False):
         clauses,params=[],[]
         entities=plan['entities'] if entities is None else entities
         if entities:
@@ -47,7 +79,7 @@ def analyse(plan, query, like, today=None):
                 terms.append('('+' OR '.join(f"{column} LIKE ? ESCAPE '\\'" for column in entity_columns)+')')
                 params += [like(entity)]*len(entity_columns)
             clauses.append('('+' OR '.join(terms)+')')
-        if plan['roles']:
+        if plan['roles'] and not (semantic and hybrid_enabled and not plan.get('explicit_search_topic')):
             terms=[]
             for role in plan['roles']:
                 for word in ROLE_WORDS[role]:
@@ -151,7 +183,7 @@ def analyse(plan, query, like, today=None):
                 missing.append(f'{cn} was not found in the stored contract table; no details are invented.')
 
     if 'renewals' in plan['tasks']:
-        where,params=conditions()
+        where,params=conditions(semantic=True)
         params=[start.isoformat(),end.isoformat()]+params
         predicate='date(current_end_date) BETWEEN date(?) AND date(?) AND '+where
         total=q('SELECT COUNT(*) AS n FROM renewals WHERE '+predicate,params)[0]['n']
@@ -159,17 +191,22 @@ def analyse(plan, query, like, today=None):
         # Retrieve the complete bounded window before selecting; no AI sample determines the rank.
         rows=q('SELECT cn_id,buyer,supplier,supplier_abn,description,category_family,current_value,current_end_date,'
                'contact_safety,page_url,api_url FROM renewals WHERE '+predicate+' ORDER BY '+sort,params)
+        if hybrid_enabled:
+            rows=hybrid_select(rows,'description','renewals');total=len(rows)
         for row in rows:
             row['days_until_end']=(date_value(row['current_end_date'])-today).days
             explicit=bool(re.search(r'\b(labour hire|contractor|personnel|analyst|architect|developer|engineer|staff|recruitment)\b',row['description'] or '',re.I))
             row['staffing_fit']='Explicit staffing/role wording; availability and demand unconfirmed' if explicit else 'Services signal only; staffing suitability unconfirmed'
         if plan['staffing_only'] and plan['sort']!='value':
-            rows.sort(key=lambda r:(not r['staffing_fit'].startswith('Explicit'),r['days_until_end'],-(r['current_value'] or 0)))
+            rows.sort(key=lambda r:(not r['staffing_fit'].startswith('Explicit'),
+                -r.get('retrieval',{}).get('fusion_score',0) if hybrid_enabled else 0,
+                r['days_until_end'],-(r['current_value'] or 0)))
+        if hybrid_enabled and plan['sort']=='value':rows.sort(key=lambda r:-(r['current_value'] or 0))
         selected=evidence('renewals',rows[:max(8,plan['top'])])
         role=' OR '.join(plan['roles']) or 'all roles'
         if plan.get('exclude_roles'):role+='; excluding '+', '.join(plan['exclude_roles'])
         sections.append(f"Renewals: {total:,} matching stored contracts ({role}), from {start} through {end}, "
-                        f"inclusive, using Australia/Canberra dates. Ranking: {'recorded value' if plan['sort']=='value' else 'explicit staffing wording first, then nearest end date' if plan['staffing_only'] else 'nearest end date'}. "
+                        f"inclusive, using Australia/Canberra dates. Ranking: {'recorded value within relevant results' if plan['sort']=='value' else 'explicit staffing wording first, then hybrid relevance and end date' if hybrid_enabled and plan['staffing_only'] else 'hybrid relevance within exact constraints' if hybrid_enabled else 'explicit staffing wording first, then nearest end date' if plan['staffing_only'] else 'nearest end date'}. "
                         'An end date does not confirm a renewal or vacancy.')
         for row in selected[:plan['top']]:
             sections.append(f"{row['cn_id']} — {row['supplier']} / {row['buyer']}: {row['description']}; "
@@ -184,7 +221,7 @@ def analyse(plan, query, like, today=None):
                 for r in shortlist)+'. This prioritises investigation; no candidate readiness or buyer demand is established.')
 
     if 'opportunities' in plan['tasks']:
-        where,params=conditions('title',('buyer',),contract_filters=False)
+        where,params=conditions('title',('buyer',),contract_filters=False,semantic=True)
         if plan.get('abns') or 'min_value' in plan or 'max_value' in plan:
             missing.append('Contract-value and supplier ABN filters apply to contracts; opportunity notices do not expose comparable contract values or awarded suppliers here.')
         open_predicate="(lower(status_effective)='open' AND closes_at IS NOT NULL AND julianday(closes_at)>julianday('now'))"
@@ -197,9 +234,11 @@ def analyse(plan, query, like, today=None):
             params+=[datetime.combine(start,datetime.min.time(),zone).isoformat(),
                      datetime.combine(end+timedelta(days=1),datetime.min.time(),zone).isoformat()]
         total=q('SELECT COUNT(*) AS n FROM opportunities WHERE '+predicate,params)[0]['n']
-        rows=evidence('opportunities',q('SELECT source,source_id,title,buyer,role_families,category_family,'
+        opportunity_rows=q('SELECT source,source_id,title,buyer,role_families,category_family,'
             'closes_at,expected_from,expected_to,status_effective,contact_safety,url,retrieved_at FROM opportunities WHERE '+predicate+
-            " ORDER BY CASE WHEN lower(status_effective)='planned' THEN 1 ELSE 0 END,closes_at LIMIT 8",params))
+            " ORDER BY CASE WHEN lower(status_effective)='planned' THEN 1 ELSE 0 END,closes_at"+('' if hybrid_enabled else ' LIMIT 8'),params)
+        if hybrid_enabled:opportunity_rows=hybrid_select(opportunity_rows,'title','opportunities');total=len(opportunity_rows)
+        rows=evidence('opportunities',opportunity_rows[:8])
         label='open notices' if status=='open' else 'stored plans' if status=='planned' else 'open notices or stored plans'
         sections.append(f'Opportunities: {total:,} relevant {label} match the filters. Closed timestamps are excluded; dates missing from open notices are not treated as current.')
         for row in rows[:plan['top']]:
@@ -339,7 +378,12 @@ def analyse(plan, query, like, today=None):
 
     if plan.get('research_requested') or (plan['entities'] and any(t in plan['tasks'] for t in ['company','contacts','comparison'])):
         from public_research import findings
-        research=evidence('public_research',findings(plan['entities'],plan['roles']))
+        research_rows=findings(plan['entities'],plan['roles'])
+        available_research=research_rows[:]
+        if hybrid_enabled and plan.get('research_requested'):
+            research_rows=[{**r,'search_text':r.get('title','')+'. '+r.get('finding','')} for r in research_rows]
+            research_rows=hybrid_select(research_rows,'search_text','public_research')
+        research=evidence('public_research',research_rows)
         for row in research:
             sections.append(f"Public evidence — {row['organisation']}: {row['title']}. {row['finding']} "
                             f"{row.get('period_status','')} Scope: {row['limit']} "
@@ -348,7 +392,7 @@ def analyse(plan, query, like, today=None):
                 sections.append(f"Published route: {row['email']}; {row['locator']}. This is not a warm relationship. [{row['evidence_id']}]")
         if plan.get('research_requested'):
             missing=[x for x in missing if not x.startswith('Current RAP commitments and action numbers')]
-            covered={r['organisation'].casefold() for r in research if r['kind']=='RAP' and r.get('review_age_days',999)<=30}
+            covered={r['organisation'].casefold() for r in available_research if r['kind']=='RAP' and r.get('review_age_days',999)<=30}
             for entity in plan['entities']:
                 if not any(org in entity.casefold() or entity.casefold() in org for org in covered):
                     missing.append(f'{entity}: no recent RAP review is available in the public research register. A current plan and procurement commitments remain to be checked.')
@@ -392,4 +436,5 @@ def analyse(plan, query, like, today=None):
                 row['data_quality_issue']='Recorded end date precedes start date; term planning is unconfirmed.'
                 missing.append(f"{row.get('cn_id','Contract')}: recorded end date precedes start date. Check the official notice; no replacement date is guessed.")
     return {'facts':facts,'sections':sections,'missing':list(dict.fromkeys(missing)),
-            'metrics':metrics,'as_of_date':today.isoformat(),'timezone':'Australia/Canberra'}
+            'metrics':metrics,'as_of_date':today.isoformat(),'timezone':'Australia/Canberra',
+            'retrieval_status':retrieval_status}

@@ -2,6 +2,22 @@
 
 ## Local assistant update — 8 October 2026
 
+Sheets follow-up: pilot 2.3 adds a read-only import of the 10 registered project
+workbooks into private `databases/sheet_imports.db`. Initial import: 26 tabs,
+51,637 rows, no failed reads. The browser has a manual Sync Google Sheets button
+and optional imported Sheet context. Exact row/tab lookups include provenance;
+snapshots retain history and failures retain the previous active tab. Generic
+Sheet arithmetic, Sheet edit history and semantic Sheet-row indexing are not
+implemented. Source databases and Google Sheet cells are unchanged. Assistant
+unit checks now total 83; see the README for prompt examples and sync limits.
+
+Hybrid retrieval follow-up: pilot 2.2 now has CPU `all-minilm:22m` embeddings,
+BM25 and reciprocal rank fusion over SQL-filtered records. The first private index
+contains 5,840 unique chunks from renewals, relevant current opportunities and
+reviewed research findings. Full historical contracts, RAP PDFs and CVs are outside
+this first index. Run `local_assistant/build_hybrid_index.py` after refreshes; missing
+chunks/model outages cause a labelled keyword fallback. See the assistant README.
+
 - Added `local_assistant/`: browser UI, read-only SQLite query coordinator, validated
   rules/Qwen planning, deterministic evidence formatting and optional official API
   checks for up to three selected contracts. No model-generated SQL or facts.

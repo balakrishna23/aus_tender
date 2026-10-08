@@ -2,7 +2,7 @@
 import re
 
 TASKS = ['summary','company','renewals','opportunities','panels','today','exemptions',
-         'rates','mmr','contacts','comparison','draft','quality','fact_check','research']
+         'rates','mmr','contacts','comparison','draft','quality','fact_check','research','sheets']
 ROLE_WORDS = {
     'cyber': ['cyber','cybersecurity','information security','security analyst','security architect','penetration','infosec','irap'],
     'analysis': ['business analyst','business analysts','process analyst','systems analyst'],
@@ -37,6 +37,8 @@ def rule_plan(question):
     lower=re.sub(r'\b(?:next|coming) week\b','next 7 days',lower)
     lower=re.sub(r'\bfortnight\b','14 days',lower)
     tasks, missing = [], []
+    if re.search(r'\b(google sheets?|spreadsheet\w*|worksheets?|sheets?)\b|\btracker\s+(?:tab|notes?|rows?|status)\b|\brow\s+\d+\b.{0,60}\btab\b',lower):
+        tasks.append('sheets')
     roles = [role for role, words in ROLE_WORDS.items() if any(contains(lower,w) for w in words)]
     if re.search(r'\bBAs?\b',question) and 'analysis' not in roles:roles.append('analysis')
     entities = [value for key,value in ALIASES.items() if contains(question,key)]
@@ -206,7 +208,7 @@ def validated_model_plan(question, chat, initial):
         plan['tasks']=guessed.get('tasks',[])
     if not plan['entities']:
         plan['entities']=entities
-    if plan['entities'] and not plan['tasks'] and re.search(r'\b(about|contracts?|footprint|know)\b',question,re.I):
+    if plan['entities'] and not initial['tasks'] and re.search(r'\b(about|contracts?|footprint|know)\b',question,re.I):
         plan['tasks']=['company']
     plan['parser']='rules + local model'
     return plan

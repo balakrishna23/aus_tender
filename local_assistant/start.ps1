@@ -8,7 +8,7 @@ catch {
     $env:OLLAMA_MODELS = Join-Path $pilotRoot 'runtime\models'
     $env:OLLAMA_CONTEXT_LENGTH = '4096'
     $env:OLLAMA_NUM_PARALLEL = '1'
-    $env:OLLAMA_MAX_LOADED_MODELS = '1'
+    $env:OLLAMA_MAX_LOADED_MODELS = '2'
     Start-Process -FilePath $pilotOllama -ArgumentList 'serve' -WindowStyle Hidden -RedirectStandardOutput (Join-Path $pilotRoot 'runtime\server.log') -RedirectStandardError (Join-Path $pilotRoot 'runtime\server-error.log')
     for ($attempt = 0; $attempt -lt 30; $attempt++) {
         Start-Sleep -Seconds 1

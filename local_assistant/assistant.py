@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_DB_DIR = ROOT.parent / 'databases' if (ROOT.parent / 'databases').is_dir() else Path(r'C:\work\aus_tender\databases')
+DEFAULT_DB_DIR = ROOT.parent / 'databases' if (ROOT.parent / 'databases' / 'intelligence.db').is_file() else Path(r'C:\work\aus_tender\databases')
 DB_DIR = Path(os.environ.get('ILLOURA_PILOT_DB_DIR', DEFAULT_DB_DIR))
 MODEL = os.environ.get('ILLOURA_PILOT_MODEL', 'illoura-planner:latest')
 OLLAMA = 'http://127.0.0.1:11434'
@@ -252,7 +252,7 @@ def evidence_summary(intent, facts, selected, total):
     return '\n\n'.join(lines)
 
 
-def answer(question, explain=True, plan=None, verify=None):
+def answer(question, explain=True, plan=None, verify=None, hybrid=False, search_topic=None, include_sheets=False):
     """Multi-view version. Explicit legacy plans remain supported for regression tests."""
     if plan is not None and 'intent' in plan:
         return legacy_answer(question,explain,plan)
@@ -263,11 +263,20 @@ def answer(question, explain=True, plan=None, verify=None):
     from planning import rule_plan,validated_model_plan
     from reasoning import analyse
     plan=plan or rule_plan(question)
+    from hybrid import topic_for
+    topic=topic_for(question,plan,search_topic) if hybrid else ''
+    plan={**plan,'hybrid':bool(hybrid),'search_topic':topic,
+          'explicit_search_topic':bool(search_topic and search_topic.strip()) or bool(re.search(r'\brelated to\b|\b(?:about|for)\s+["“]',question,re.I))}
     model_used=False
     model_error=None
     needs_entity=not plan['entities'] and not plan.get('abns') and re.search(r'\b(about|does|compare|approach\w*|brief for|held by|awarded to|for|with|at|include\w*)\b',question,re.I) and not plan['contract_ids'] and not plan['panel_ids']
     if plan['roles'] and not re.search(r'\b(held by|awarded to|at|for [A-Z][a-z]+)\b',question):
         needs_entity=False
+    if topic and re.search(r'\b(?:about|related to|for)\s+["“]',question,re.I) and not re.search(r'\b(held by|awarded to)\b',question,re.I):
+        needs_entity=False
+    if 'sheets' in plan['tasks'] and not plan['entities']:
+        # Explicit row/tab searches have their own scope; no company guess is required.
+        if re.search(r'\b(row\s+\d+|tab|worksheet|containing|mentions?|search for)\b',question,re.I):needs_entity=False
     if explain and (needs_entity or not plan['tasks']) and not (plan['missing'] and not plan['tasks']):
         try:
             plan=validated_model_plan(question,local_chat,plan)
@@ -293,6 +302,27 @@ def answer(question, explain=True, plan=None, verify=None):
             raise ValueError('The database is being rebuilt. Retry in a few seconds for a consistent answer.')
         after=final
     sections=result['sections'][:]
+    if 'sheets' in plan['tasks'] or include_sheets:
+        from sheet_data import query_sheets
+        contracts=list(dict.fromkeys(r['cn_id'] for r in result['facts'] if r.get('cn_id')))
+        explicit='sheets' in plan['tasks']
+        if explicit or contracts or plan['entities']:
+            sheets=query_sheets(question,plan,read_rows,DB_DIR,topic if explicit else '',
+                                None if explicit or not contracts else contracts)
+            sections+=sheets['sections'];result['missing']+=sheets['missing']
+            for row in sheets['facts']:
+                row['evidence_id']='E'+str(len(result['facts'])+1);result['facts'].append(row)
+                if row.get('view')=='google_sheets_row':
+                    sections.append(f"Sheet {row['source_key']} / {row['tab_title']}, row {row['row_number']}: "
+                                    f"{row['excerpt']} [{row['evidence_id']}]\nLast read {row['last_read_utc']}.")
+    for status in result.get('retrieval_status',[]):
+        sections.append(f"Retrieval ({status['view']}): {status['mode']}; topic {status['topic']!r}; "
+                        f"{status['matched_records']} relevant records from {status['eligible_records']} eligible records. "
+                        'Semantic similarity is a relevance signal, not proof of demand or suitability.')
+    if hybrid and not topic:
+        sections.append('Hybrid search needs a role or a short search topic; this answer used the existing structured queries.')
+    if hybrid and topic and not result.get('retrieval_status'):
+        sections.append('Hybrid search currently covers renewal descriptions, current opportunity titles and reviewed research text. Other views use their existing structured queries.')
     checks=[]
     if (verify if verify is not None else plan.get('verify_live',False)):
         from verification import verify_evidence
@@ -321,7 +351,8 @@ def answer(question, explain=True, plan=None, verify=None):
             'model_used':model_used,'model_error':model_error,
             'elapsed_seconds':round(time.monotonic()-began,2),
             'as_of_date':result['as_of_date'],'timezone':result['timezone'],
-            'missing':result['missing'],'metrics':result['metrics'],'verifications':checks,'version':'2.1'}
+            'missing':result['missing'],'metrics':result['metrics'],'verifications':checks,
+            'retrieval_status':result.get('retrieval_status',[]),'version':'2.3'}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -364,12 +395,18 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; frame-ancestors 'none'")
             self.end_headers()
             self.wfile.write(data)
+        elif self.path == '/api/sheets-status':
+            from sheet_sync_service import state
+            self.send_json(200,state())
         else:
             self.send_json(404, {'error': 'Not found'})
 
     def do_POST(self):
         if not self.trusted_host() or self.headers.get('X-Pilot-Token') != TOKEN:
             return self.send_json(403, {'error': 'Local session required'})
+        if self.path == '/api/sync-sheets':
+            from sheet_sync_service import start
+            return self.send_json(202,start())
         if self.path != '/api/ask':
             return self.send_json(404, {'error': 'Not found'})
         try:
@@ -378,7 +415,9 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError('Request too large or empty')
             body = json.loads(self.rfile.read(size))
             self.send_json(200, answer(body.get('question'), bool(body.get('explain', True)),
-                                      verify=True if body.get('verify') is True else None))
+                                      verify=True if body.get('verify') is True else None,
+                                      hybrid=body.get('hybrid') is True,search_topic=body.get('search_topic'),
+                                      include_sheets=body.get('include_sheets') is True))
         except (ValueError, KeyError, sqlite3.Error) as exc:
             self.send_json(400, {'error': str(exc)})
         except (URLError, TimeoutError) as exc:

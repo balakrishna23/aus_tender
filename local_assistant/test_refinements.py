@@ -55,6 +55,11 @@ class RefinementTests(unittest.TestCase):
             rule_plan('Cyber contracts held by Acme ending within 60 days'))
         self.assertEqual(['Acme'],p['entities'])
 
+    def test_generic_company_question_cannot_be_misrouted_to_exemptions(self):
+        question='Tell me about Acme and our stored evidence.'
+        plan=validated_model_plan(question,lambda *a:(json.dumps({'tasks':['exemptions'],'entities':['Acme']}),{}),rule_plan(question))
+        self.assertEqual(['company'],plan['tasks'])
+
     def test_unknown_entity_facts_only_does_not_broaden(self):
         with patch.object(assistant,'read_rows',return_value=[{'built_at':'fixture-build'}]):
             r=assistant.answer('Show cyber contracts held by AnUnknownCompany ending within 30 days',False,verify=False)

@@ -10,6 +10,7 @@ with sync_playwright() as p:
     page.goto('http://127.0.0.1:8765')
     page.locator('[data-q="What data do we have?"]').click()
     page.locator('#explain').uncheck()
+    page.locator('#hybrid').uncheck()
     page.locator('#ask').click()
     page.locator('#status').filter(has_text='Finished.').wait_for(timeout=15000)
     assert page.locator('#results details').count() >= 1

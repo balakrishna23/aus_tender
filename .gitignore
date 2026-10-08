@@ -41,6 +41,8 @@ logs/
 tmp_*
 temp_*
 .tmp/
+tmp/
+output/
 
 # IDE files
 .vscode/

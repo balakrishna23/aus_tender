@@ -1,11 +1,14 @@
-# Illoura evidence assistant — local pilot 2.1
+# Illoura evidence assistant — local pilot 2.3
 
 The pilot reads `databases/` beside the repository's `local_assistant/` folder when
-that directory exists, otherwise the existing `C:\work\aus_tender\databases`.
+that directory contains `intelligence.db`, otherwise the existing `C:\work\aus_tender\databases`.
 Set `ILLOURA_PILOT_DB_DIR` to override the database directory.
 It combines bounded database queries with a local Qwen planning model. Facts,
 dates, counts, filters and arithmetic are formatted by application code. It has
 no paid model calls and sends no outreach. VPS work is deferred.
+
+Saved documentation: [user guide PDF](../docs/Illoura_AI_Assistant_User_Guide.pdf)
+and [complete architecture with component explanations](../docs/assistant_architecture.md).
 
 ## Run
 
@@ -18,7 +21,7 @@ working data store or an installed model.
 
 Use Python 3.11 and the repository's dependencies. On Windows, `tzdata` is needed
 for Canberra dates. Browser smoke checks additionally need Playwright and Edge.
-The 54 unit tests use fixtures and do not need real databases, Ollama or internet.
+The 83 unit tests use fixtures and do not need real databases, Ollama or internet.
 The question evaluations and audit scripts do need the local databases; model
 evaluations also need Ollama and the model profile.
 
@@ -52,6 +55,86 @@ $env:OLLAMA_HOST = '127.0.0.1:11434'
 The app uses `illoura-planner:latest`. The base model remains available for comparison.
 
 ## What was refined
+
+### Google Sheets import (2.3)
+
+**Sync Google Sheets** reads the ten project-registered spreadsheets using the
+existing service account with `spreadsheets.readonly` scope. Imported data goes to
+`databases/sheet_imports.db`; source scraper databases and Sheet cells are unchanged.
+First import: 26 tabs, 51,637 nonempty data rows, no failed reads. This is a snapshot,
+not continuous monitoring. CLI alternative: `python sync_sheet_data.py`, optionally
+`--only intelligence`. The UI runs one background import job at a time.
+
+Ask `What Google Sheets data do we have?`, `Show Google Sheets rows for DXC`,
+`Show Google Sheets notes from tab "Tracker" in workbook intelligence`, or
+`Show Google Sheets row 12 from tab "Tracker" in workbook intelligence`.
+Use `containing "CN4228169"` or `containing "a phrase"` for a literal row search.
+Workbook selectors use registered keys, not display titles. Unknown selectors
+produce no rows and never broaden to all sources. The **Include imported Google
+Sheets context** checkbox adds matching selected-contract/company Sheet rows to
+ordinary procurement answers. An explicit Sheets question works regardless of
+that context checkbox. Evidence includes workbook, tab, row link and last-read UTC.
+
+Raw formatted cells and historical snapshots are retained. Only complete tab reads
+become active; failed reads preserve the previous snapshot and are labelled. Empty
+rows retain numbering, repeated headers keep separate columns, and unchanged tabs
+reuse their stored snapshot. Queries use a consistent read-only SQLite transaction
+and bounded full-text search. Notes remain data, not instructions.
+
+Limitations: first row is treated as headers; values are formatted display values,
+not typed financial measures or formula expressions. Sheet-row lookups do not
+enforce generic monetary/date filters or calculate arbitrary totals. Procurement
+SQL still handles those filters. Sheet content is not independently verified;
+owner names do not establish edit history. Per-tab downloads are not an atomic
+snapshot across Google Sheets. Sync before relying on a recent edit; snapshots
+older than one hour are flagged. New spreadsheets must first be registered. No
+Sheet-row embedding index, Sheet editing, public sharing or scheduled sync is enabled.
+
+### Hybrid retrieval (2.2)
+
+The UI option **Include related meanings in search** combines existing exact role
+matches, BM25 keyword ranking and local `all-minilm:22m` embeddings. The 46 MB
+embedding model runs on CPU through Ollama. SQLite stores normalized 384-dimensional
+vectors; NumPy computes cosine similarity only over fresh SQL-eligible records.
+Reciprocal rank fusion combines lexical and semantic rankings. Similarity is not
+confidence, hiring proof or a suitability score. Generic short descriptions have a
+stricter relevance gate. Existing explicit role matches remain eligible when the
+topic comes from the role; an explicit topic narrows relevance instead and retains
+any separate positive role keyword constraint from the question.
+Staffing shortlists retain explicit staffing/role wording as their first priority,
+then hybrid relevance and end date; a semantically close general service should
+not outrank an explicit staffing role just because of its similarity score.
+
+Enable the option and put an optional short topic such as `cloud migration` in the
+topic field. Alternatively: `Show contracts about "breach investigation" ending
+within 90 days`, or `Contracts related to cloud migration ending within 90 days`.
+Without a supplied topic, supported roles provide the search topic.
+Dates, value bounds, supplier ABNs, organisations, statuses and exclusions stay in
+SQL; semantic search never relaxes those constraints. Other views keep structured
+retrieval. Disable the option for the previous query/ranking behaviour.
+
+Initial coverage is the renewal view (up to one year), relevant open/planned
+opportunity titles and reviewed research findings. Full historical contracts,
+full RAP PDF passages and CVs are not indexed. The private index is under
+`runtime/hybrid.db`, and its manifest is under `reports/hybrid-index.json`.
+
+With Ollama running, from this folder:
+
+```powershell
+$env:OLLAMA_HOST = '127.0.0.1:11434'
+.\runtime\ollama\ollama.exe pull all-minilm:22m
+python build_hybrid_index.py
+python evaluate_hybrid.py
+```
+
+Run the builder after each manual scraper/intelligence rebuild or research edit.
+Only new or changed text chunks are embedded; the query always gets dates and facts
+from the current source databases. If eligible chunks are missing, the index model
+differs, or Ollama is unavailable, the answer explicitly falls back to keyword
+retrieval. The index retains resumable batches; it never alters source databases.
+Set `ILLOURA_HYBRID_INDEX` to use another private cache path. Model changes require
+a new cache. The launcher permits Qwen plus the small CPU embedding model to stay
+loaded together, with one inference request at a time.
 
 - Multi-part questions can combine contracts, renewals, opportunities, panels,
   MMR evidence, exemption history, estimated rates, contact routes, comparisons,
@@ -90,7 +173,7 @@ PyTorch is CPU-only (`2.6.0+cpu`); no CUDA training stack is installed.
 Ollama v0.40.1 is portable under `runtime/ollama`. The official release archive
 was verified against its SHA-256 digest. Model files stay under `runtime/models`.
 The base is `qwen3:4b-instruct`, Q4_K_M, about 2.5 GB. Context is capped at 4096
-tokens, with one loaded model and one parallel inference request. Earlier placement
+tokens, with one Qwen model plus an optional CPU embedding model and one parallel inference request. Earlier placement
 was approximately 67% GPU / 33% CPU, using about 3.5 GB runtime model memory.
 Cold loading can take tens of seconds; common queries skip inference entirely.
 
