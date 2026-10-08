@@ -1,0 +1,23 @@
+"""Additional questions with unseen organisations, constraints and unsupported facets."""
+CASES=[
+    ('What contracts does Atos hold?', ['company'],[],['Atos'],90),
+    ('Tell me about NEC Australia.', ['company'],[],['NEC Australia'],90),
+    ('Show active panels for CGI.', ['panels'],[],['CGI'],90),
+    ('What contract evidence do we have about NTT DATA?', ['company'],[],['NTT DATA'],90),
+    ('Compare Accenture and Capgemini using contracts and panels.', ['comparison','company','panels'],[],['Accenture','Capgemini'],90),
+    ('Show cyber contracts held by Leidos running out over the next two weeks.', ['renewals'],['cyber'],['Leidos'],14),
+    ('Which business analyst contracts held by Datacom expire within thirty days?', ['renewals'],['analysis'],['Datacom'],30),
+    ('Who can we approach at Kinetic IT?', ['contacts','company'],[],['Kinetic IT'],90),
+    ('Show MMR evidence for Accenture.', ['mmr'],[],['Accenture'],90),
+    ('Show cyber renewals between 30 and 90 days.', ['renewals'],['cyber'],[],90),
+    ('Cyber renewals above $100k and below AUD $1 million.', ['renewals'],['cyber'],[],90),
+    ('What contracts does ABN 13 634 409 671 hold?', ['company'],[],[],90),
+    ('What is the current RAP for Fujitsu?', ['research'],[],['Fujitsu'],90),
+    ('Does EY have proof of a published cyber job advert?', ['company'],['cyber'],['ERNST & YOUNG'],90),
+    ('Show only open business analyst opportunities closing within the next 14 days.', ['opportunities'],['analysis'],[],14),
+    ('Show planned procurements for Defence.', ['opportunities'],[],['Department of Defence'],90),
+    ('Which current panels include DXC without expired memberships?', ['panels'],[],['DXC'],90),
+    ('Check CN4179479 and flag invalid dates.', ['fact_check'],[],[],90),
+    ('Which cyber contracts expire within 45 days for NV2 cleared people in Sydney?', ['renewals'],['cyber'],[],45),
+    ('Is our candidate bench verified and available?', [],[],[],90),
+]

@@ -1,0 +1,23 @@
+"""New paraphrases not present in the model's few-shot examples."""
+CASES=[
+    ('Which cyber contracts are finishing over the next six weeks?', ['renewals'], ['cyber'], [],42),
+    ('Which business analyst contracts are coming to an end in the next three months?', ['renewals'], ['analysis'],[],90),
+    ('Show cloud engineer renewals in the coming month.', ['renewals'], ['engineering'],[],30),
+    ('Any project manager contracts running out within a fortnight?', ['renewals'],['delivery'],[],14),
+    ('Cyber renewals within ninety days, without hardware, licences or SaaS.', ['renewals'],['cyber'],[],90),
+    ('Show cyber contracts held by Datacom ending within 60 days.', ['renewals'],['cyber'],['Datacom'],60),
+    ('What contracts does Leidos hold?', ['company'],[],['Leidos'],90),
+    ('Tell me about Accenture and our stored evidence.', ['company'],[],['Accenture'],90),
+    ('Which active panels include Capgemini?', ['panels'],[],['Capgemini'],90),
+    ('Show business analyst opportunities at Services Australia.', ['opportunities'],['analysis'],['Services Australia'],90),
+    ('What do we know about Kinetic IT?', ['company'],[],['Kinetic IT'],90),
+    ('Compare Datacom versus Leidos for ICT labour hire.', ['comparison','company','renewals','panels','mmr'],[],['Datacom','Leidos'],90),
+    ('How can we approach Accenture using real contracts?', ['contacts','company'],[],['Accenture'],90),
+    ('Which open cyber RFQs could our NV1 candidates fill?', ['opportunities'],['cyber'],[],90),
+    ('Find planned cyber procurements for Treasury.', ['opportunities'],['cyber'],['Department of the Treasury'],90),
+    ('Show the largest software engineer contracts expiring in the next two months.', ['renewals'],['engineering'],[],60),
+    ('Which current panels include Hays? Exclude expired deeds.', ['panels'],[],['HAYS'],90),
+    ('What are the data gaps before approaching Hudson?', ['quality','contacts','company'],[],['HUDSON'],90),
+    ('Check CN4281051. Do not infer that the supplier is hiring.', ['fact_check'],[],[],90),
+    ('Cyber contracts expiring within 45 days, not equipment or one-off assessments.', ['renewals'],['cyber'],[],45),
+]

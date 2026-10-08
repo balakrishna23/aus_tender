@@ -608,3 +608,12 @@ The batch runner now rejects ignored HTTP errors, exhausted retries, callback
 exceptions, and explicit extraction failures. Empty/unrecognized listing pages
 require manual verification, including a genuine zero-results page. BuyICT also
 checks reported listing coverage and treats failed detail extraction as an error.
+
+## Local Illoura assistant
+
+The optional [local assistant](local_assistant/README.md) adds evidence-backed
+questions over the existing SQLite data, a local Qwen planning profile, and optional
+official contract API checks. Source and tests are included; databases, private
+inputs, generated reports, Ollama binaries and model weights remain local.
+It sends no outreach and has not been deployed to a VPS. See its README for setup,
+supported queries and limits.

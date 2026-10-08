@@ -55,6 +55,7 @@ backups/
 
 # Debug dumps and packaged builds
 *.html
+!local_assistant/index.html
 *.png
 *.tar.gz
 databases_live/

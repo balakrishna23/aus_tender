@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Illoura | Evidence assistant</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#172b2b;background:#f4f5ef}body{margin:0}main{max-width:960px;margin:auto;padding:36px 20px}header{border-bottom:1px solid #cdd8d1;margin-bottom:24px;padding-bottom:20px}small,.muted{color:#526763}h1{font-size:32px;margin:8px 0}form,.card{background:white;border:1px solid #d6dfd8;border-radius:14px;padding:20px;margin-bottom:18px}textarea{box-sizing:border-box;width:100%;min-height:96px;padding:12px;border:1px solid #b8c9bf;border-radius:8px;font:inherit;resize:vertical}button{background:#174a3c;color:white;padding:11px 17px;border:0;border-radius:7px;font:inherit;cursor:pointer}button:disabled{opacity:.5}label{display:inline-block;margin:14px 14px 14px 0}.chips{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.chips button{background:#e5ece5;color:#174a3c;font-size:13px}.answer{white-space:pre-wrap;line-height:1.65}details{border-top:1px solid #ddd;padding:12px 0}summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:minmax(110px,1fr) 3fr;gap:8px}dt{color:#526763;overflow-wrap:anywhere}dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap}a{color:#146b51}.warning{background:#fff8e7;padding:12px;border-radius:8px;font-size:14px}.badge{font-size:12px;background:#e5ece5;border-radius:20px;padding:5px 10px}#status{margin:12px 0}footer{font-size:13px;color:#526763}.card{scroll-margin-top:20px}
+</style></head><body><main>
+<header><small>ILLOURA SERVICES</small><h1>Evidence assistant</h1><span class="badge">Local pilot 2.1</span><p class="muted">Ask about stored contracts, renewals, opportunities, panels and reviewed public sources.</p><div id="health" class="muted">Checking local model...</div></header>
+<form id="form"><label for="question">What would you like to know?</label><textarea id="question" maxlength="2000" required placeholder="Which cyber contracts end within 90 days? Choose 3 for ICT labour hire, excluding equipment and one-off assessments."></textarea>
+<div class="chips">
+<button type="button" data-q="What data do we have?">Database overview</button>
+<button type="button" data-q="What contracts does DXC hold?">DXC contracts</button>
+<button type="button" data-q="Which cyber contracts end in the next 90 days? Choose 3 for ICT labour hire, excluding equipment and one-off assessments.">Cyber shortlist</button>
+<button type="button" data-q="Compare DXC and EY using renewals, panels and RAP evidence.">Compare primes</button>
+<button type="button" data-q="Show our TODAY actions">TODAY actions</button>
+</div>
+<label><input type="checkbox" id="explain" checked> Use the local model for unfamiliar wording</label>
+<label><input type="checkbox" id="verify"> Check up to 3 contracts against the official API</label>
+<button id="ask">Ask assistant</button><div id="status" role="status"></div></form>
+<section id="results" aria-live="polite"></section>
+<footer>Database access is read-only. Official API checks verify selected contract fields. Reviewed public sources have their own dates and limits. The pilot does not send messages. Candidate matching and remote access are not connected.</footer>
+</main><script>
+const token='__TOKEN__';const $=id=>document.getElementById(id);
+function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n}
+function answerText(text){const n=el('p',undefined,'answer');for(const part of text.split(/(\[E\d+\])/g)){if(/^\[E\d+\]$/.test(part)){const a=el('a',part);a.href='#evidence-'+part.slice(1,-1);n.append(a)}else n.append(document.createTextNode(part))}return n}
+function show(result){
+  const root=$('results');root.replaceChildren();const card=el('div',undefined,'card');
+  card.append(el('h2','Answer'),answerText(result.explanation));
+  card.append(el('p',`Views: ${result.plan.intent} | Query date: ${result.as_of_date} (${result.timezone}) | Build timestamp (timezone unspecified): ${result.build_timestamp} | ${result.elapsed_seconds}s`,'muted'));
+  const p=result.plan;
+  const valueFilter=[p.min_value!==undefined?`${p.min_value_inclusive?'at least':'above'} AUD ${p.min_value}`:'',p.max_value!==undefined?`${p.max_value_inclusive?'at most':'below'} AUD ${p.max_value}`:''].filter(Boolean).join(', ')||'none';
+  card.append(el('p',`Filters: organisations ${(p.entities||[]).join(', ')||'all'}; supplier ABNs ${(p.abns||[]).join(', ')||'any'}; roles ${(p.roles||[]).join(', ')||'all'}; renewal window ${p.start_days||0}–${p.days} days; value ${valueFilter}; exclude ${(p.exclude||[]).join(', ')||'none'}.`,'muted'));
+  card.append(el('p',result.model_used?'The local model helped interpret the question. Facts and calculations come from the database.':'Facts and calculations come directly from the database.','muted'));
+  if(result.total_matching_records!==null)card.append(el('p',`${result.total_matching_records} matching records; showing ${result.facts.length}.`));
+  if(result.model_error)card.append(el('p',result.model_error,'warning'));
+  const warn=el('div',undefined,'warning');result.warnings.forEach(w=>warn.append(el('p',w)));card.append(warn);root.append(card);
+  for(const fact of result.facts){
+    const box=el('div',undefined,'card');box.id='evidence-'+fact.evidence_id;const detail=el('details');detail.open=true;
+    detail.append(el('summary',`${fact.evidence_id} · ${fact.cn_id||fact.source_id||fact.son_id||fact.organisation||fact.view||'Database facts'}`));
+    const dl=el('dl');
+    for(const [key,value] of Object.entries(fact)){
+      if(key==='evidence_id')continue;dl.append(el('dt',key.replaceAll('_',' ')));const dd=el('dd');
+      const txt=value===null?'Not recorded':typeof value==='object'?JSON.stringify(value,null,2):String(value);
+      if(/^https?:\/\//i.test(txt)&&!/[\s<>]/.test(txt)){
+        const label=txt.includes('api.tenders.gov.au/')?'Official contract data (JSON)':key==='page_url'?'Open contract notice':/\.pdf(?:\?|$)/i.test(txt)?'Open official document':'Open source';
+        const a=el('a',label);a.href=txt;a.target='_blank';a.rel='noopener noreferrer';dd.append(a);
+      }else dd.textContent=txt;dl.append(dd);
+    }
+    detail.append(dl);box.append(detail);root.append(box);
+  }
+}
+document.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{$('question').value=b.dataset.q;$('question').focus()});
+$('form').onsubmit=async e=>{
+  e.preventDefault();$('ask').disabled=true;$('status').textContent='Retrieving evidence. Model loading or official source checks may take longer.';
+  try{
+    const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json','X-Pilot-Token':token},body:JSON.stringify({question:$('question').value,explain:$('explain').checked,verify:$('verify').checked})});
+    const data=await r.json();if(!r.ok)throw Error(data.error);show(data);$('status').textContent='Finished.';
+  }catch(e){$('status').textContent=e.message}finally{$('ask').disabled=false}
+};
+fetch('/api/health').then(r=>r.json()).then(d=>{$('health').textContent=`${d.model} · ${d.model_installed?'model ready':'model not running or not downloaded'} · ${d.database_available?'database found':'database missing'}`}).catch(()=>{$('health').textContent='Cannot reach assistant'});
+</script></body></html>

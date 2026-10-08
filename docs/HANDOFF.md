@@ -1,5 +1,23 @@
 # Handoff: Illoura IT Revenue Intelligence (Tender Feed) — state at 7 Oct 2026, 20:50 (Sydney)
 
+## Local assistant update — 8 October 2026
+
+- Added `local_assistant/`: browser UI, read-only SQLite query coordinator, validated
+  rules/Qwen planning, deterministic evidence formatting and optional official API
+  checks for up to three selected contracts. No model-generated SQL or facts.
+- Base model: `qwen3:4b-instruct`, with `illoura-planner:latest` prompt/profile.
+  Weights were not trained. Ollama binaries and model files are not committed.
+- Manual refresh completed; the standing-offer batch had no pages due, followed by
+  a separate successful 457-page current/undated recheck and intelligence rebuild.
+- Validation: 54 assistant unit checks, 90 question regression checks, 195 upstream
+  tests, plus desktop/mobile and HTTP checks. Question cases were used in refinement;
+  these are not independent accuracy estimates.
+- Databases, private research/bench/relationship inputs, reports, logs and backups
+  remain excluded from GitHub. No outreach, Sheets publishing, VPS deployment or
+  scheduler enablement. Candidate matching, memory and general web search remain gaps.
+- See `local_assistant/README.md` for checkout setup and limitations. Run assistant
+  fixtures with `python -m unittest discover -s local_assistant -p "test_*.py"`.
+
 You are picking up a working Python project mid-build. Read this whole file before changing
 anything. It is written so you can continue exactly where the previous engineer (Claude) stopped,
 without re-deriving decisions. Where this file and the code disagree, trust the code and the tests,
