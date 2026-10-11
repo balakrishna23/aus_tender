@@ -52,6 +52,9 @@ class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
         new = sorted({url for url in linked if url and notice_guid(url) not in self.stored_urls})
         self.logger.info('Standing offers: %s new from contract notices; %s current ones due a re-check',
                          len(new), len(due))
+        if not new and not due:
+            # Nothing to fetch is a normal day, not a failed crawl: run_spiders reads this stat.
+            self.crawler.stats.set_value('crawl/nothing_due', 1)
         for url in new + due:
             yield scrapy.Request(url, callback=self.parse_son, meta={'refresh_existing': True})
 

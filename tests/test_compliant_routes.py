@@ -106,6 +106,14 @@ class StandingOfferTests(Base):
         self.assertEqual([r.url for r in requests], [son])
         self.assertAllowed(requests)
 
+    def test_nothing_new_or_due_is_recorded_for_the_runner(self):
+        self.db.initialize_database('standing_offer')
+        self.db.initialize_database('aus_contract')
+        spider = StandingOfferSpider()
+        spider.crawler = Mock()
+        self.assertEqual(list(spider.start_requests()), [])
+        spider.crawler.stats.set_value.assert_called_once_with('crawl/nothing_due', 1)
+
 
 PLAN = 'https://www.tenders.gov.au/App/Show/78970c4e-b2f1-cbf8-8b0f-e51af0df6fdc'
 PLAN_PAGE = '''<html><h1>Annual Procurement Plan View - Department of Defence</h1>

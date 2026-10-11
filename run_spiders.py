@@ -408,7 +408,9 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
             sync_status = standalone_sync_status
 
         response_match = re.search(r"'downloader/response_count':\s*(\d+)", log_text)
-        no_responses = spider not in STANDALONE_SCRIPTS and (
+        # A spider that found no work (e.g. standing_offer with no new or due panels) says so.
+        nothing_due = bool(re.search(r"'crawl/nothing_due':\s*1", log_text))
+        no_responses = spider not in STANDALONE_SCRIPTS and not nothing_due and (
             response_match is None or int(response_match.group(1)) == 0
         )
         item_match = re.search(r"'item_scraped_count':\s*(\d+)", log_text)
@@ -416,7 +418,7 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
         if spider in STANDALONE_SCRIPTS:
             saved_match = re.search(r"(\d+) total notices saved to", log_text)
         duplicate_match = re.search(r"Database duplicates \(persistent\):\s*(\d+)", log_text)
-        no_items = spider not in STANDALONE_SCRIPTS and (
+        no_items = spider not in STANDALONE_SCRIPTS and not nothing_due and (
             item_match is None or int(item_match.group(1)) == 0
         ) and (
             duplicate_match is None or int(duplicate_match.group(1)) == 0
