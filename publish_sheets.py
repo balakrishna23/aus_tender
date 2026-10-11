@@ -193,10 +193,48 @@ def _refresh_today():
         prime_briefs.export(briefs, PROJECT_DIR)
 
 
+def _sheet_table(book, sheet_id):
+    """The Sheets 'table' on this tab, if someone converted it (Format > Convert to table)."""
+    meta = book.fetch_sheet_metadata(params={'fields': 'sheets(properties(sheetId),tables)'})
+    for sheet in meta.get('sheets', []):
+        if sheet['properties']['sheetId'] == sheet_id:
+            return next(iter(sheet.get('tables', [])), None)
+    return None
+
+
+def _table_dropdowns(table, dropdowns):
+    """updateTable request giving these columns our dropdowns, or None if they already have them.
+
+    Google refuses setDataValidation inside a table's typed columns; a table's dropdowns live
+    in its column properties, and the whole list is replaced, so the other columns are resent as is.
+    """
+    columns = [dict(c) for c in table.get('columnProperties', [])]
+    changed = False
+    for column in columns:
+        values = dropdowns.get(column.get('columnName'))
+        if values is None:
+            continue
+        rule = {'condition': {'type': 'ONE_OF_LIST', 'values': [{'userEnteredValue': v} for v in values]}}
+        if column.get('columnType') != 'DROPDOWN' or column.get('dataValidationRule') != rule:
+            column.update(columnType='DROPDOWN', dataValidationRule=rule)
+            changed = True
+    if not changed:
+        return None
+    return {'updateTable': {'table': {'tableId': table['tableId'], 'columnProperties': columns},
+                            'fields': 'columnProperties'}}
+
+
 def _tracker_validation(book):
     ws = book.worksheet(TRACKER_TAB)
+    dropdowns = {'status': action_tracker.STATUSES, 'stage': action_tracker.STAGES}
+    table = _sheet_table(book, ws.id)
+    if table is not None:
+        request = _table_dropdowns(table, dropdowns)
+        if request:
+            book.batch_update({'requests': [request]})
+        return
     requests = []
-    for column, values in [('status', action_tracker.STATUSES), ('stage', action_tracker.STAGES)]:
+    for column, values in dropdowns.items():
         index = action_tracker.TRACKER_COLUMNS.index(column)
         requests.append({'setDataValidation': {
             'range': {'sheetId': ws.id, 'startRowIndex': 1,

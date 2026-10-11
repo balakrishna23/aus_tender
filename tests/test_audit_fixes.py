@@ -22,6 +22,12 @@ import run_spiders
 os.environ.setdefault('ACTIVITY_DB', os.path.join(tempfile.mkdtemp(), 'activity.db'))  # not the real audit log
 
 
+def sheet_book(sheets=()):
+    spreadsheet = Mock()
+    spreadsheet.fetch_sheet_metadata.return_value = {'sheets': list(sheets)}
+    return spreadsheet
+
+
 class ContractDataTests(unittest.TestCase):
     def test_currency_and_supplier_locations_survive_storage(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -94,7 +100,7 @@ class SheetsSafetyTests(unittest.TestCase):
         self.assertEqual([c.value for c in cells], ["'text", "'=1+1", "'0012"])
 
     def test_failed_second_chunk_leaves_live_sheet_untouched(self):
-        target, stage, spreadsheet = self.target(), self.target(2), Mock()
+        target, stage, spreadsheet = self.target(), self.target(2), sheet_book()
         spreadsheet.add_worksheet.return_value = stage
         with patch('sheets_writer.write_literal_dataframe', side_effect=[None, RuntimeError('upload failed')]):
             with self.assertRaisesRegex(RuntimeError, 'upload failed'):
@@ -105,7 +111,7 @@ class SheetsSafetyTests(unittest.TestCase):
         spreadsheet.del_worksheet.assert_called_once_with(stage)
 
     def test_all_sheets_staged_before_single_publish(self):
-        spreadsheet = Mock()
+        spreadsheet = sheet_book()
         targets = [self.target(1), self.target(2)]
         stages = [self.target(3), self.target(4)]
         spreadsheet.add_worksheet.side_effect = stages
@@ -124,7 +130,7 @@ class SheetsSafetyTests(unittest.TestCase):
             target.clear.assert_not_called()
 
     def test_failed_second_sheet_does_not_publish_first(self):
-        spreadsheet = Mock()
+        spreadsheet = sheet_book()
         spreadsheet.add_worksheet.side_effect = [self.target(3), self.target(4)]
         with patch('sheets_writer.write_literal_dataframe', side_effect=[None, RuntimeError('upload failed')]):
             with self.assertRaises(RuntimeError):
@@ -132,7 +138,7 @@ class SheetsSafetyTests(unittest.TestCase):
         spreadsheet.batch_update.assert_not_called()
 
     def test_publish_failure_is_propagated_and_staging_cleaned(self):
-        spreadsheet = Mock()
+        spreadsheet = sheet_book()
         stage = self.target(2)
         spreadsheet.add_worksheet.return_value = stage
         spreadsheet.batch_update.side_effect = RuntimeError('publish rejected')
@@ -142,7 +148,7 @@ class SheetsSafetyTests(unittest.TestCase):
         spreadsheet.del_worksheet.assert_called_once_with(stage)
 
     def test_empty_frame_publishes_header(self):
-        spreadsheet = Mock()
+        spreadsheet = sheet_book()
         stage = self.target(2)
         spreadsheet.add_worksheet.return_value = stage
         with patch('sheets_writer.write_literal_dataframe') as writer:
@@ -152,7 +158,7 @@ class SheetsSafetyTests(unittest.TestCase):
         spreadsheet.batch_update.assert_called_once()
 
     def test_tracking_conflict_prevents_swap_and_cleans_staging(self):
-        spreadsheet = Mock()
+        spreadsheet = sheet_book()
         stage = self.target(2)
         spreadsheet.add_worksheet.return_value = stage
         guard = Mock(side_effect=RuntimeError('Tracker changed'))
@@ -181,6 +187,12 @@ class CrawlFailureTests(unittest.TestCase):
             with self.subTest(stat=stat), tempfile.TemporaryDirectory() as logs, patch.object(run_spiders, 'LOG_DIR', Path(logs)), patch.object(sys, 'argv', ['run_spiders.py', '--spiders', 'aus_tender', '--no-sync', '--no-feed']), patch.object(run_spiders, 'load_dotenv'), patch.object(run_spiders, 'DatabaseManager'), patch.object(run_spiders, 'rotate_log'), patch.object(run_spiders, 'collect_db_count', return_value=1), patch.object(run_spiders, 'run_spider', return_value=0), patch.object(run_spiders, 'read_text', return_value=base + f", '{stat}': 1"), patch.dict(os.environ), redirect_stdout(io.StringIO()):
                 self.assertEqual(run_spiders.main(), 1)
 
+    def test_runner_accepts_nothing_due_but_not_silent_empty_crawl(self):
+        base = "'finish_reason': 'finished'"
+        for extra, expected in [(", 'crawl/nothing_due': 1", 0), ('', 1)]:
+            with self.subTest(extra=extra), tempfile.TemporaryDirectory() as logs, patch.object(run_spiders, 'LOG_DIR', Path(logs)), patch.object(sys, 'argv', ['run_spiders.py', '--spiders', 'standing_offer', '--no-sync', '--no-feed']), patch.object(run_spiders, 'load_dotenv'), patch.object(run_spiders, 'DatabaseManager'), patch.object(run_spiders, 'rotate_log'), patch.object(run_spiders, 'collect_db_count', return_value=1), patch.object(run_spiders, 'run_spider', return_value=0), patch.object(run_spiders, 'read_text', return_value=base + extra), patch.dict(os.environ), redirect_stdout(io.StringIO()):
+                self.assertEqual(run_spiders.main(), expected)
+
     def test_buyict_missing_details_are_failures(self):
         with patch('spiders.buy_ict.DatabaseManager'):
             spider = BuyIctApiSpider()
@@ -204,7 +216,7 @@ class CrawlFailureTests(unittest.TestCase):
 
 class SheetSizeTests(unittest.TestCase):
     def test_smaller_refresh_shrinks_grid_and_pastes_once(self):
-        spreadsheet = Mock()
+        spreadsheet = sheet_book()
         spreadsheet.add_worksheet.return_value = Mock(id=9, row_count=3, col_count=2)
         target = Mock(id=1, row_count=10549, col_count=21)  # sized for an older, bigger refresh
         with patch('sheets_writer.write_literal_dataframe'):
@@ -214,3 +226,33 @@ class SheetSizeTests(unittest.TestCase):
         self.assertEqual(grid['gridProperties'], {'rowCount': 3, 'columnCount': 2})
         dest = next(r for r in reqs if 'copyPaste' in r)['copyPaste']['destination']
         self.assertEqual((dest['endRowIndex'], dest['endColumnIndex']), (3, 2))  # never tiled
+        self.assertFalse(any('clearBasicFilter' in r or 'setBasicFilter' in r for r in reqs))
+
+
+class FilteredSheetTests(unittest.TestCase):
+    """A paste skips rows a filter hides (old rows survive there): lift the filter, then put it back."""
+    SPECS = [{'columnIndex': 4, 'filterCriteria': {'hiddenValues': ['ICT services']}}]
+
+    def publish(self, basic):
+        spreadsheet = sheet_book([{'properties': {'sheetId': 1}, 'basicFilter': basic},
+                                  {'properties': {'sheetId': 5}}])
+        spreadsheet.add_worksheet.return_value = Mock(id=9)
+        with patch('sheets_writer.write_literal_dataframe'):
+            replace_worksheets(spreadsheet, [(Mock(id=1), pd.DataFrame({'x': [1, 2], 'y': [3, 4]}))])
+        return spreadsheet.batch_update.call_args.args[0]['requests']
+
+    def test_table_filter_lifted_before_paste_and_restored_as_range_filter(self):
+        reqs = self.publish({'range': {'sheetId': 1, 'startRowIndex': 0, 'endRowIndex': 629,
+                                       'startColumnIndex': 0, 'endColumnIndex': 10},
+                             'tableId': 't6', 'filterSpecs': self.SPECS, 'criteria': {'4': {}}})
+        self.assertEqual([next(iter(r)) for r in reqs],
+                         ['clearBasicFilter', 'updateCells', 'updateSheetProperties', 'copyPaste', 'setBasicFilter'])
+        self.assertEqual(reqs[0]['clearBasicFilter'], {'sheetId': 1})
+        restored = reqs[-1]['setBasicFilter']['filter']
+        self.assertEqual(restored, {'range': {'sheetId': 1, 'startRowIndex': 0, 'endRowIndex': 3,
+                                              'startColumnIndex': 0, 'endColumnIndex': 2},
+                                    'filterSpecs': self.SPECS})  # no tableId: Google 500s on it
+
+    def test_filter_that_hides_nothing_is_left_alone(self):
+        reqs = self.publish({'range': {'sheetId': 1}, 'tableId': 't6'})
+        self.assertFalse(any('clearBasicFilter' in r or 'setBasicFilter' in r for r in reqs))

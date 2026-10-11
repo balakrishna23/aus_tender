@@ -54,6 +54,7 @@ class TrackerSheetTests(unittest.TestCase):
         book = Mock(url='https://sheet/intelligence')
         book.worksheet.return_value.id = 42
         book.worksheet.return_value.get_all_records.return_value = [{'action_id': 'A-test'}]
+        book.fetch_sheet_metadata.return_value = {'sheets': [{'properties': {'sheetId': 42}}]}
         def record(conn, rows):
             events.append('read')
             self.assertEqual(rows, [{'action_id': 'A-test'}])
@@ -76,6 +77,42 @@ class TrackerSheetTests(unittest.TestCase):
             self.assertEqual(data['range']['sheetId'], 42)
             self.assertEqual(data['range']['startColumnIndex'], action_tracker.TRACKER_COLUMNS.index(column))
             self.assertEqual([v['userEnteredValue'] for v in data['rule']['condition']['values']], values)
+
+    def tracker_table(self, status_values):
+        rule = lambda values: {'condition': {'type': 'ONE_OF_LIST',  # noqa: E731
+                                             'values': [{'userEnteredValue': v} for v in values]}}
+        return {'tableId': 't3', 'columnProperties': [
+            {'columnIndex': 0, 'columnName': 'action_id'},
+            {'columnIndex': 4, 'columnName': 'score', 'columnType': 'DOUBLE'},
+            {'columnIndex': 7, 'columnName': 'status', 'columnType': 'DROPDOWN',
+             'dataValidationRule': rule(status_values)},
+            {'columnIndex': 8, 'columnName': 'stage', 'columnType': 'DROPDOWN',
+             'dataValidationRule': rule(action_tracker.STAGES)}]}
+
+    def table_book(self, table):
+        book = Mock()
+        book.worksheet.return_value.id = 42
+        book.fetch_sheet_metadata.return_value = {'sheets': [
+            {'properties': {'sheetId': 7}, 'tables': [{'tableId': 'other'}]},
+            {'properties': {'sheetId': 42}, 'tables': [table]}]}
+        return book
+
+    def test_tracker_table_gets_dropdowns_through_the_table_not_set_data_validation(self):
+        book = self.table_book(self.tracker_table(['proposed', 'accepted']))
+        publish_sheets._tracker_validation(book)
+        request = book.batch_update.call_args.args[0]['requests'][0]['updateTable']
+        self.assertEqual(request['fields'], 'columnProperties')
+        self.assertEqual(request['table']['tableId'], 't3')
+        columns = {c['columnName']: c for c in request['table']['columnProperties']}
+        self.assertEqual(set(columns), {'action_id', 'score', 'status', 'stage'})  # others kept
+        self.assertEqual(columns['score']['columnType'], 'DOUBLE')
+        self.assertEqual([v['userEnteredValue'] for v in columns['status']['dataValidationRule']['condition']['values']],
+                         action_tracker.STATUSES)
+
+    def test_tracker_table_already_right_is_left_alone(self):
+        book = self.table_book(self.tracker_table(action_tracker.STATUSES))
+        publish_sheets._tracker_validation(book)
+        book.batch_update.assert_not_called()
 
     def test_missing_tracker_is_allowed_but_read_failure_prevents_overwrite(self):
         book = Mock()
