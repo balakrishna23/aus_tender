@@ -227,6 +227,8 @@ company's own website, and every route needs a person's approval. All of it live
 ```powershell
 python company_coverage.py                       # every supplier identity from contract history
 python buyict_sellers.py --profiles 200          # BuyICT catalogue + next 200 profiles (ABN -> website)
+python website_leads.py --wikidata --related    # websites for priority suppliers not on BuyICT
+python website_leads.py --search 200            # Brave Search, next 200 (BRAVE_API_KEY in ..\.env)
 python contact_discovery.py --crawl-known-sites --limit 500   # published contacts on those websites
 python route_review.py                           # exports/supplier_route_review_<date>.xlsx
 python route_review.py --import <reviewed .xlsx> # approved rows -> inputs/approachable_company_routes.json -> DB
@@ -236,6 +238,17 @@ python route_review.py --import <reviewed .xlsx> # approved rows -> inputs/appro
   its ABN) or from `inputs/supplier_websites.json` (hand-reviewed, which wins). Only
   company-level fields are taken from BuyICT. Its terms of use limit personal information
   seen there to procurement through BuyICT.
+- **Suppliers not on BuyICT:** `website_leads.py` adds websites from three sources, strongest first:
+  - Wikidata items that state both the ABN and an official website
+  - Brave Search results, but only after our own check finds the ABN on the site (otherwise
+    marked "name match only")
+  - a BuyICT seller with the same name and a different ABN (marked "related company")
+
+  The review sheet's Website source column shows which one applies.
+- **Brave Search setup:** the search step needs a key from https://brave.com/search/api/
+  ($5 of free credit a month, about 1,000 searches), saved as `BRAVE_API_KEY=...` in the
+  project `.env`. The key is never committed. Each supplier is searched once (logged in
+  `website_search_log`); only our own verified result is stored.
 - **What the crawl does:**
   - obeys robots.txt and waits at least 1 s between pages of a site
   - reads at most 5 pages, contact pages first

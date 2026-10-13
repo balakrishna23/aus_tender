@@ -239,6 +239,11 @@ def run(crawl=False,limit=20,workers=6):
         if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='buyict_sellers'").fetchone():
             for seller in connection.execute("SELECT abn,website,source_url FROM buyict_sellers WHERE abn!='' AND website!=''"):
                 by_abn.setdefault(seller['abn'],{'website_url':seller['website'],'identity_source_url':seller['source_url']})
+        # Then other leads (website_leads.py: Wikidata, related BuyICT seller, checked search results), strongest first.
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='website_leads'").fetchone():
+            for lead in connection.execute("""SELECT abn,website,COALESCE(NULLIF(evidence_url,''),source_url) proof
+                    FROM website_leads ORDER BY strength,website"""):
+                by_abn.setdefault(lead['abn'],{'website_url':lead['website'],'identity_source_url':lead['proof']})
         connection.execute("""UPDATE contact_research_queue
             SET status='route_established',detail='Reviewed approachable route stored separately.'
             WHERE supplier_key IN (SELECT supplier_key FROM approachable_routes)""")

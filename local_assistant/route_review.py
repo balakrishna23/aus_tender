@@ -13,11 +13,12 @@ from datetime import date,datetime,timezone
 from pathlib import Path
 from openpyxl import Workbook,load_workbook
 from openpyxl.styles import Alignment,Font,PatternFill
+from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 import assistant,contact_discovery,sync_approachable_routes
 
 EXPORTS=Path(__file__).resolve().parent.parent/'exports'
-COLUMNS=['Priority','Company','ABN','Why this supplier','Website','BuyICT profile','Proposed email','Email type',
+COLUMNS=['Priority','Company','ABN','Why this supplier','Website','Website source','Source link','Proposed email','Email type',
          'Email source page','Proposed phone','Phone source page','Other company channels','Named individuals found',
          'Decision','Note','supplier_key']
 # Order of preference for Illoura's pitch: partnering/supplier desks, then general enquiries, then offices, then recruitment.
@@ -60,7 +61,17 @@ def export(path=None):
     with closing(sqlite3.connect((assistant.DB_DIR/'company_contacts.db').resolve().as_uri(),uri=True)) as connection:
         connection.row_factory=sqlite3.Row
         mmr,active=priorities(connection)
-        sellers={r['abn']:r for r in connection.execute("SELECT abn,source_url,marketplaces_json,identifiers_json FROM buyict_sellers WHERE abn!=''")}
+        sellers={r['abn']:r for r in connection.execute("SELECT abn,website,source_url,marketplaces_json,identifiers_json FROM buyict_sellers WHERE abn!=''")}
+        leads={}
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='website_leads'").fetchone():
+            leads={(r['abn'],r['website']):(r['identity'],r['proof']) for r in connection.execute(
+                "SELECT abn,website,identity,COALESCE(NULLIF(evidence_url,''),source_url) proof FROM website_leads")}
+        reviewed={r['supplier_abn'] for r in (json.loads(contact_discovery.MAP.read_text(encoding='utf-8'))['records']
+                                               if contact_discovery.MAP.is_file() else []) if r.get('identity_status')=='reviewed'}
+        def website_source(abn,website,seller):
+            if abn in reviewed:return 'Reviewed source map',''
+            if seller and seller['website']==website:return 'BuyICT seller profile (website published against this ABN)',seller['source_url']
+            return leads.get((abn,website),('Unknown source: check before approving',''))
         queue=connection.execute("""SELECT q.supplier_key,q.website_url,s.name,s.abn FROM contact_research_queue q
             JOIN suppliers s ON s.supplier_key=q.supplier_key
             WHERE q.status='candidates_found' AND q.supplier_key NOT IN (SELECT supplier_key FROM approachable_routes)""").fetchall()
@@ -79,7 +90,9 @@ def export(path=None):
             if 'Indigenous business' in identifiers:why.append('Indigenous business (BuyICT)')
             priority=1 if entry['abn'] in mmr else 2 if active.get(entry['abn']) else 3
             company=[c for c in candidates if c['purpose'] in ('functional business mailbox','Australian business line')]
-            rows.append([(priority,-active.get(entry['abn'],0),entry['name'].casefold()),priority,entry['name'],entry['abn'],'; '.join(why),entry['website_url'],seller['source_url'] if seller else '',
+            source,link=website_source(entry['abn'],entry['website_url'],seller)
+            rows.append([(priority,-active.get(entry['abn'],0),entry['name'].casefold()),priority,entry['name'],entry['abn'],'; '.join(why),
+                entry['website_url'],source,link,
                 email['value'] if email else '',email['purpose'] if email else '',email['source_url'] if email else '',
                 phone['value'] if phone else '',phone['source_url'] if phone else '',
                 len({c['value'].lower() for c in company})-bool(email)-bool(phone),
@@ -90,19 +103,22 @@ def export(path=None):
     sheet.append(COLUMNS)
     for row in rows:sheet.append(row)
     for cell in sheet[1]:cell.font=Font(bold=True,color='FFFFFF');cell.fill=PatternFill('solid',fgColor='1F4E78')
-    widths=[8,34,13,40,32,22,32,24,40,16,40,10,10,11,30,18]
-    for index,width in enumerate(widths):sheet.column_dimensions[chr(65+index)].width=width
+    widths=[8,34,13,40,32,34,22,32,24,40,16,40,10,10,11,30,18]
+    for index,width in enumerate(widths):sheet.column_dimensions[get_column_letter(index+1)].width=width
     sheet.freeze_panes='C2';sheet.auto_filter.ref=sheet.dimensions
+    decision=get_column_letter(COLUMNS.index('Decision')+1)
     choice=DataValidation(type='list',formula1='"approve,reject"',allow_blank=True)
-    sheet.add_data_validation(choice);choice.add(f'N2:N{max(2,len(rows)+1)}')
+    sheet.add_data_validation(choice);choice.add(f'{decision}2:{decision}{max(2,len(rows)+1)}')
+    wrapped={COLUMNS.index(name)+1 for name in ('Why this supplier','Website source','Note')}
     for line in sheet.iter_rows(min_row=2):
-        for cell in line:cell.alignment=Alignment(vertical='top',wrap_text=cell.column in (4,15))
+        for cell in line:cell.alignment=Alignment(vertical='top',wrap_text=cell.column in wrapped)
     notes=book.create_sheet('How to review')
     for line in ['One row per supplier: the best company email and phone found on its own website.',
                  'Open the source page and check the address is published there for business enquiries.',
                  'Write approve or reject in Decision. You may correct the proposed email or phone first.',
                  'Approved rows are imported with: python local_assistant/route_review.py --import <this file>',
-                 'Websites come from the company\'s BuyICT seller profile (ABN-linked) or a reviewed source map.',
+                 'Website source says how the website was tied to the ABN. Strongest: reviewed map, BuyICT profile, '
+                 'Wikidata, "ABN shown on website". Check "Related company" and "name match only" rows with extra care.',
                  'Named individuals are counted but not proposed; add one by hand in Note only if their role fits.',
                  'An approved route is a published business channel. It does not imply a relationship or interest.']:
         notes.append([line])
@@ -136,8 +152,9 @@ def import_approved(path):
             'role':'Published company mailbox' if email else 'Published company phone line',
             'preferred_kind':preferred[0],'preferred_value':preferred[1],'secondary_kind':secondary[0],'secondary_value':secondary[1],
             'source_url':preferred[2],'checked_at_utc':checked.get((key,preferred[1].lower()),datetime.now(timezone.utc).isoformat()),
-            'proof':f"Company website page publishes {preferred[1]}; website linked to ABN {row[col['ABN']]} via "
-                    f"{row[col['BuyICT profile']] or 'reviewed source map'}. Approved by reviewer."+(' Note: '+note if note else ''),
+            'proof':f"Company website page publishes {preferred[1]}; website linked to ABN {row[col['ABN']]} by: "
+                    f"{row[col['Website source']] or 'unknown'}"+(f" ({row[col['Source link']]})" if row[col['Source link']] else '')+
+                    '. Approved by reviewer.'+(' Note: '+note if note else ''),
             'limit':'Functional business channel found by automated crawl and approved by a person. '
                     'No named contact, relationship or partner interest is implied.'})
         existing.add((key,preferred[1].lower()));added+=1
