@@ -124,7 +124,13 @@ class BuildTests(unittest.TestCase):
             dict(source='AusTender', buyer='Old Agency', contact_email='old@agency.gov.au', published='01-Jan-2023',
                  contact_safety='SAFE_GENERAL', url='atm3'),
             dict(source='BuyICT', buyer='DTA', contact_email='rfq@dta.gov.au', published='2026-09-01',
-                 contact_safety='FORMAL_CHANNEL_ONLY', url='rfq')]
+                 contact_safety='FORMAL_CHANNEL_ONLY', url='rfq'),
+            dict(source='AusTender', buyer='Department of Defence', contact_email='pm@engineering-adviser.com',
+                 published='01-Sep-2026', contact_safety='SAFE_GENERAL', url='atm4'),
+            dict(source='AusTender', buyer='Australian Broadcasting Corporation', contact_email='tenders@abc.net.au',
+                 published='01-Sep-2026', contact_safety='SAFE_GENERAL', url='atm5'),
+            dict(source='AusTender plan', buyer='Airservices Australia', contact_email='p@airservicesaustralia.com',
+                 retrieved_at='2026-10-05', contact_safety='SAFE_GENERAL', url='plan2')]
         with patch.object(bi, 'opted_out', return_value=set()):
             contacts = {c['email']: c for c in bi.build_agency_contacts(TODAY, opportunities)}
         apra = contacts['buyer@apra.gov.au']   # contract-notice row: placeholder phone replaced, still general
@@ -139,6 +145,11 @@ class BuildTests(unittest.TestCase):
                          ('AusTender procurement plan', '2026-10-05', 1))
         self.assertNotIn('old@agency.gov.au', contacts)   # older than the 36-month look-back
         self.assertNotIn('rfq@dta.gov.au', contacts)      # only AusTender notices are added
+        adviser = contacts['pm@engineering-adviser.com']  # not an agency domain: kept, labelled, not for outreach
+        self.assertEqual((adviser['confidence'], adviser['usable_for_outreach']), ('Low', 0))
+        self.assertIn('outside the agency', adviser['source'])
+        for own in ('tenders@abc.net.au', 'p@airservicesaustralia.com'):   # the domain names the agency
+            self.assertEqual(contacts[own]['confidence'], 'Medium', own)
 
     def test_company_groups_add_up_their_mmr_contracts(self):
         with closing(sqlite3.connect(self.dir / 'organisations.db')) as conn:

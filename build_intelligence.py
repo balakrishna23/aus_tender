@@ -291,6 +291,20 @@ def build_agency_contacts(today, opportunities=()):
             c['branch'] = branches[email][0]
             filled.append(f'branch from {branches[email][1]} ({branches[email][2]})')
         c['enriched'] = '; '.join(filled) or None
+    # Agencies' own mail domains: gov.au, or seen at least 3 times as the agency contact on contract notices.
+    # Tender notices sometimes name an outside adviser (an engineering or property firm) or a system address.
+    agency_domains = {r['domain'] for r in optional_rows(
+        'contract_api', "SELECT lower(substr(contact_email, instr(contact_email, '@') + 1)) AS domain FROM contracts "
+                        "WHERE contact_email LIKE '%@%' GROUP BY 1 HAVING COUNT(*) >= 3")}
+    def agency_own(email, organisation):
+        domain = email.strip().lower().rsplit('@', 1)[-1].rstrip('.')
+        if domain.endswith('gov.au') or domain in agency_domains:
+            return True
+        # Or the domain names the agency itself: airservicesaustralia.com, questacon.edu.au, abc.net.au (initials).
+        label = domain.split('.')[0]
+        words = re.findall(r'[a-z]+', (organisation or '').lower())
+        initials = ''.join(w[0] for w in words if w not in ('of', 'the', 'and', 'for'))
+        return len(label) >= 3 and (label in ''.join(words) or label == initials)
     # One row per address: agencies are named slightly differently across notice types.
     known = {(c['email'] or '').strip().lower() for c in out}
     for organisation, email, name, phone, branch, verified, safety, label, url in newest:
@@ -298,10 +312,13 @@ def build_agency_contacts(today, opportunities=()):
         if organisation is None or key in known or not verified or verified < since:
             continue
         known.add(key)
+        own = agency_own(key, organisation)
         out.append(dict(organisation=organisation, name=name, email=email.strip(),
                         phone=phone if usable_phone(phone) else (phones.get(key) or (None,))[0],
-                        branch=(branches.get(key) or (None,))[0], source=label, verified=verified,
-                        confidence='Medium', source_url=url, enriched=None, notice_safety=safety))
+                        branch=(branches.get(key) or (None,))[0],
+                        source=label if own else f'{label} (contact outside the agency: adviser or system address)',
+                        verified=verified, confidence='Medium' if own else 'Low', source_url=url, enriched=None,
+                        notice_safety=safety))
 
     for c in out:
         age = (today - date.fromisoformat(c['verified'])).days if c['verified'] else None
