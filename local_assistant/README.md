@@ -218,6 +218,37 @@ recorded in `reports/`. Passing these cases does not imply perfection.
 ignored. Keep the pilot private and do not push research, CVs or business evidence
 to the public scraper repository.
 
+## Supplier contact routes
+
+Contract notices carry agency contacts only, so supplier contacts come from each
+company's own website, and every route needs a person's approval. All of it lives in
+`databases/company_contacts.db`:
+
+```powershell
+python company_coverage.py                       # every supplier identity from contract history
+python buyict_sellers.py --profiles 200          # BuyICT catalogue + next 200 profiles (ABN -> website)
+python contact_discovery.py --crawl-known-sites --limit 500   # published contacts on those websites
+python route_review.py                           # exports/supplier_route_review_<date>.xlsx
+python route_review.py --import <reviewed .xlsx> # approved rows -> inputs/approachable_company_routes.json -> DB
+```
+
+- **Websites:** a company's website comes from its BuyICT seller profile (published against
+  its ABN) or from `inputs/supplier_websites.json` (hand-reviewed, which wins). Only
+  company-level fields are taken from BuyICT. Its terms of use limit personal information
+  seen there to procurement through BuyICT.
+- **What the crawl does:**
+  - obeys robots.txt and waits at least 1 s between pages of a site
+  - reads at most 5 pages, contact pages first
+  - follows a redirect only to the same brand's own domain (data3.com.au -> data3.com)
+- **What it extracts:**
+  - email and tel links on any page
+  - plain-text emails, Australian landlines and 1300/1800 numbers, from the home and contact/office pages only
+- **The review sheet:**
+  - proposes only functional mailboxes and Australian business lines
+  - counts named individuals but never proposes them
+- **Resuming:** the crawl skips suppliers already attempted, so runs with `--limit` continue
+  from where the last one stopped.
+
 ## Data refresh and remaining gaps
 
 The manual 8 October run refreshed the contract API, notice pages, tender notices,

@@ -1,5 +1,6 @@
 """Append reviewed, approachable supplier routes without replacing existing contacts."""
 from pathlib import Path
+from contextlib import closing
 from datetime import datetime, timezone
 import hashlib, json, sqlite3
 import assistant, company_coverage
@@ -13,7 +14,7 @@ SCHEMA='''CREATE TABLE IF NOT EXISTS approachable_routes(
 def sync():
     records=json.loads(SOURCE.read_text(encoding='utf-8'))['records']
     added=0
-    with sqlite3.connect(assistant.DB_DIR/'company_contacts.db') as connection:
+    with closing(sqlite3.connect(assistant.DB_DIR/'company_contacts.db')) as connection:
         connection.executescript(SCHEMA)
         for record in records:
             for supplier_key in record['supplier_keys']:
