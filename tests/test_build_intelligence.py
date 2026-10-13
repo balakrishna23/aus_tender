@@ -109,6 +109,37 @@ class BuildTests(unittest.TestCase):
         old = contacts['old@defence.gov.au']
         self.assertEqual((old['stale'], old['contact_safety'], old['usable_for_outreach']), (1, 'NO_CONTACT', 0))
 
+    def test_agency_contacts_filled_and_extended_from_other_notices(self):
+        with closing(sqlite3.connect(self.dir / 'contract_api.db')) as conn:
+            conn.execute("UPDATE contracts SET contact_email = 'buyer@apra.gov.au', contact_phone = '00', contact_branch = NULL, "
+                         "first_published = '2026-01-01' WHERE cn_id = 'CN4226826'")
+            conn.commit()
+        opportunities = [
+            dict(source='AusTender', buyer='APRA', contact_email='buyer@apra.gov.au', contact_name='A', contact_phone='02 6213 5000',
+                 published='01-Sep-2026', contact_safety='FORMAL_CHANNEL_ONLY', url='atm1'),
+            dict(source='AusTender', buyer='Department of Finance', contact_email='tenders@finance.gov.au', contact_name='T',
+                 contact_phone=None, published='01-Sep-2026', contact_safety='FORMAL_CHANNEL_ONLY', url='atm2'),
+            dict(source='AusTender plan', buyer='NEMA', contact_email='plans@nema.gov.au', contact_name='P',
+                 contact_phone='02 6111 1111', retrieved_at='2026-10-05T03:00:00', contact_safety='SAFE_GENERAL', url='plan1'),
+            dict(source='AusTender', buyer='Old Agency', contact_email='old@agency.gov.au', published='01-Jan-2023',
+                 contact_safety='SAFE_GENERAL', url='atm3'),
+            dict(source='BuyICT', buyer='DTA', contact_email='rfq@dta.gov.au', published='2026-09-01',
+                 contact_safety='FORMAL_CHANNEL_ONLY', url='rfq')]
+        with patch.object(bi, 'opted_out', return_value=set()):
+            contacts = {c['email']: c for c in bi.build_agency_contacts(TODAY, opportunities)}
+        apra = contacts['buyer@apra.gov.au']   # contract-notice row: placeholder phone replaced, still general
+        self.assertEqual((apra['phone'], apra['source'], apra['contact_safety']),
+                         ('02 6213 5000', 'AusTender contract notice', 'SAFE_GENERAL'))
+        self.assertIn('phone from AusTender tender notice', apra['enriched'])
+        tender = contacts['tenders@finance.gov.au']   # open tender: formal channel only, never outreach
+        self.assertEqual((tender['source'], tender['verified'], tender['contact_safety'], tender['usable_for_outreach']),
+                         ('AusTender tender notice', '2026-09-01', 'FORMAL_CHANNEL_ONLY', 0))
+        plan = contacts['plans@nema.gov.au']
+        self.assertEqual((plan['source'], plan['verified'], plan['usable_for_outreach']),
+                         ('AusTender procurement plan', '2026-10-05', 1))
+        self.assertNotIn('old@agency.gov.au', contacts)   # older than the 36-month look-back
+        self.assertNotIn('rfq@dta.gov.au', contacts)      # only AusTender notices are added
+
     def test_company_groups_add_up_their_mmr_contracts(self):
         with closing(sqlite3.connect(self.dir / 'organisations.db')) as conn:
             conn.execute("INSERT INTO mmr_list VALUES ('2026-10-07', 'DXC ENTERPRISE AUSTRALIA PTY LTD', 1)")

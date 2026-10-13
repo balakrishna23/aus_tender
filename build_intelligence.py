@@ -212,11 +212,29 @@ def opted_out():
     return emails
 
 
-def build_agency_contacts(today):
-    """Published procurement contacts per agency (spec section 5): seed contacts (High confidence) and
-    the latest contract-notice contact per agency and address (Medium). Every person has a source, a
-    verified date and a confidence; STALE after 18 months; opt-outs are NO_CONTACT everywhere."""
+def usable_phone(value):
+    return len(re.sub(r'\D', '', value or '')) >= 8  # '00' and similar placeholders are not phone numbers
+
+
+def optional_rows(name, sql, params=()):
+    """rows() for tables an older or partial database may not have yet."""
+    try:
+        return rows(name, sql, params)
+    except sqlite3.OperationalError as exc:
+        log.warning('%s: %s', name, exc)
+        return []
+
+
+def build_agency_contacts(today, opportunities=()):
+    """Published procurement contacts per agency (spec section 5): seed contacts (High confidence), the
+    latest contract-notice contact per agency and address (Medium), and contacts named on AusTender
+    tender notices, procurement plans and standing offer notices that contract notices lack (Medium).
+    Blank or placeholder phones and branches are filled from the same address in later contract
+    versions and those notices; 'enriched' says what was filled and from where.
+    Every person has a source, a verified date and a confidence; STALE after 18 months; opt-outs are
+    NO_CONTACT everywhere; an open tender's contact is FORMAL_CHANNEL_ONLY and not usable for outreach."""
     stale_after = classify.config('scoring')['stale_after_months'] * 30
+    since = (today - timedelta(days=stale_after * 2)).isoformat()
     blocked = opted_out()
     out = []
     for c in classify.config('seed_contacts')['contacts']:
@@ -234,13 +252,66 @@ def build_agency_contacts(today):
         out.append(dict(organisation=buyer, name=r['contact_name'], email=r['contact_email'].strip(),
                         phone=r['contact_phone'], branch=r['contact_branch'], source='AusTender contract notice',
                         verified=r['first_published'], confidence='Medium', source_url=r['page_url']))
+
+    # Contacts on other AusTender notices: (organisation, email, name, phone, branch, date, safety, source, url).
+    notices = []
+    for o in opportunities:
+        if o.get('source') not in ('AusTender', 'AusTender plan') or '@' not in (o.get('contact_email') or ''):
+            continue
+        when = o.get('published') if o['source'] == 'AusTender' else o.get('retrieved_at')
+        moment = classify.closing_time(when) if o['source'] == 'AusTender' else None
+        notices.append((o['buyer'], o['contact_email'], o.get('contact_name'), o.get('contact_phone'), None,
+                        moment.date().isoformat() if moment else str(when or '')[:10] or None, o['contact_safety'],
+                        'AusTender tender notice' if o['source'] == 'AusTender' else 'AusTender procurement plan', o.get('url')))
+    for r in optional_rows('standing_offer', "SELECT agency, email_address, contact_name, contact_phone, publish_date, url "
+                                             "FROM standing_offers WHERE email_address LIKE '%@%'"):
+        moment = classify.closing_time(r['publish_date'])
+        notices.append((r['agency'], r['email_address'], r['contact_name'], r['contact_phone'], None,
+                        moment.date().isoformat() if moment else None, 'SAFE_GENERAL', 'AusTender standing offer notice', r['url']))
+    # Later contract versions often carry the phone/branch the roll-up lacks.
+    versions = [(None, r['contact_email'], r['contact_name'], r['contact_phone'], r['contact_branch'] or r['contact_division'],
+                 (r['release_date'] or '')[:10], None, 'AusTender contract notice version', r['page_url'])
+                for r in optional_rows('contract_api', "SELECT contact_email, contact_name, contact_phone, contact_branch, "
+                                                       "contact_division, release_date, page_url FROM contract_versions "
+                                                       "WHERE contact_email LIKE '%@%' AND release_date >= ?", (since,))]
+    newest = sorted(notices + versions, key=lambda n: n[5] or '', reverse=True)
+    phones, branches = {}, {}
+    for n in newest:
+        email = n[1].strip().lower()
+        if usable_phone(n[3]):
+            phones.setdefault(email, (n[3].strip(), n[7], n[5]))
+        if (n[4] or '').strip():
+            branches.setdefault(email, (n[4].strip(), n[7], n[5]))
+    for c in out:
+        email, filled = (c['email'] or '').strip().lower(), []
+        if not usable_phone(c['phone']) and email in phones:
+            c['phone'] = phones[email][0]
+            filled.append(f'phone from {phones[email][1]} ({phones[email][2]})')
+        if not (c['branch'] or '').strip() and email in branches:
+            c['branch'] = branches[email][0]
+            filled.append(f'branch from {branches[email][1]} ({branches[email][2]})')
+        c['enriched'] = '; '.join(filled) or None
+    # One row per address: agencies are named slightly differently across notice types.
+    known = {(c['email'] or '').strip().lower() for c in out}
+    for organisation, email, name, phone, branch, verified, safety, label, url in newest:
+        key = email.strip().lower()
+        if organisation is None or key in known or not verified or verified < since:
+            continue
+        known.add(key)
+        out.append(dict(organisation=organisation, name=name, email=email.strip(),
+                        phone=phone if usable_phone(phone) else (phones.get(key) or (None,))[0],
+                        branch=(branches.get(key) or (None,))[0], source=label, verified=verified,
+                        confidence='Medium', source_url=url, enriched=None, notice_safety=safety))
+
     for c in out:
         age = (today - date.fromisoformat(c['verified'])).days if c['verified'] else None
         c['stale'] = int(age is not None and age > stale_after)
         c['opted_out'] = int((c['email'] or '').lower() in blocked)
         # A published procurement contact outside a live procurement: general introduction only.
-        c['contact_safety'] = 'NO_CONTACT' if c['opted_out'] else 'SAFE_GENERAL'
-        c['usable_for_outreach'] = int(not c['opted_out'] and not c['stale'] and c['confidence'] in ('High', 'Medium'))
+        c['contact_safety'] = 'NO_CONTACT' if c['opted_out'] else c.pop('notice_safety', None) or 'SAFE_GENERAL'
+        c.pop('notice_safety', None)
+        c['usable_for_outreach'] = int(not c['opted_out'] and not c['stale'] and c['confidence'] in ('High', 'Medium')
+                                       and c['contact_safety'] == 'SAFE_GENERAL')
     return out
 
 
@@ -505,7 +576,7 @@ def main(argv=None):
         write(conn, 'hot_list', hot, list(opportunities[0]) if opportunities else None)
         write(conn, 'renewals', renewals)
         write(conn, 'exemption_use', exemption_use)
-        write(conn, 'agency_contacts', build_agency_contacts(today))
+        write(conn, 'agency_contacts', build_agency_contacts(today, opportunities))
         write(conn, 'buyict_links', links)
         write(conn, 'panel_members', panels)
         write(conn, 'mmr_primes', primes)
