@@ -92,8 +92,10 @@ def wikidata(connection,session=None):
         added+=store(connection,abn,site,'wikidata','ABN stated on Wikidata item (community-edited)',item)
     return added
 
-def related_sellers(connection):
-    """A gap supplier whose name stem equals a BuyICT seller's: that seller's website, marked as a related company."""
+def related_sellers(connection,check=None):
+    """A gap supplier whose name stem equals a BuyICT seller's: that seller's website, marked as a related company,
+    or as 'ABN shown on website' when the site itself shows this supplier's ABN."""
+    check=check or verify_site
     sellers={}
     for name,legal,abn,site,url in connection.execute("SELECT name,legal_name,abn,website,source_url FROM buyict_sellers WHERE website!=''"):
         for value in (name,legal):
@@ -103,6 +105,11 @@ def related_sellers(connection):
     for abn,name,*_ in gap(connection):
         match=sellers.get(stem(name))
         if match and match[1]!=abn:
+            try:identity,evidence=check(clean_website(match[2]),abn,name)
+            except Exception:identity,evidence=None,''
+            if identity and identity.startswith('ABN shown'):
+                added+=store(connection,abn,match[2],'related_seller_site',identity,match[3],evidence)
+                continue
             added+=store(connection,abn,match[2],'related_seller',
                          f'Related company: BuyICT seller "{match[0]}" (ABN {match[1]}) has the same name; review the link',match[3])
     return added

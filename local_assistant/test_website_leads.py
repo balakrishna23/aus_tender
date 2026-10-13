@@ -85,10 +85,16 @@ class SourceTests(unittest.TestCase):
 
     def test_related_seller_links_same_name_other_abn(self):
         with self.connect() as db:
-            self.assertEqual(leads.related_sellers(db), 1)
+            self.assertEqual(leads.related_sellers(db, check=lambda site, abn, name: (None, '')), 1)
             abn, website, identity, strength = db.execute('SELECT abn, website, identity, strength FROM website_leads').fetchone()
         self.assertEqual((abn, website, strength), ('11111111111', 'https://telcogiant.com.au/', 3))
         self.assertIn('99999999999', identity)
+
+    def test_related_seller_site_showing_this_abn_is_a_strong_lead(self):
+        with self.connect() as db:
+            leads.related_sellers(db, check=lambda site, abn, name: ('ABN shown on website', site + 'legal'))
+            row = db.execute('SELECT source, identity, strength, evidence_url FROM website_leads').fetchone()
+        self.assertEqual(row, ('related_seller_site', 'ABN shown on website', 2, 'https://telcogiant.com.au/legal'))
 
     def test_search_keeps_only_checked_sites_and_logs_every_supplier(self):
         results = {'11111111111': [{'url': 'https://www.linkedin.com/company/x'}, {'url': 'https://telcogiant.com.au/'}],
