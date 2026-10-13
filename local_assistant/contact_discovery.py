@@ -93,9 +93,13 @@ def purpose(kind,value,site_host):
     return 'non-Australian or unrecognised number'
 
 class ContactHTML(HTMLParser):
-    def __init__(self):super().__init__();self.links=[];self.mail=[];self.phone=[];self.text=[];self.skip=0
+    def __init__(self):
+        super().__init__();self.links=[];self.mail=[];self.phone=[];self.text=[];self.skip=0
+        self.text_links={};self.anchor=None;self.anchor_text=[]
     def handle_data(self,data):
-        if not self.skip:self.text.append(data)
+        if not self.skip:
+            self.text.append(data)
+            if self.anchor is not None:self.anchor_text.append(data)
     def handle_starttag(self,tag,attrs):
         attrs=dict(attrs)
         if tag in ('script','style','template'):self.skip+=1
@@ -108,8 +112,14 @@ class ContactHTML(HTMLParser):
                 value=unquote(link[4:]).strip()
                 if re.fullmatch(r'\+?[\d ()-]{7,25}',value):self.phone.append(value)
             elif re.search(r'contact|enquir|get-in-touch|office|location|about|team|people|leadership',link,re.I):self.links.append(link)
+            elif link and not link.startswith(('#','javascript:')):self.anchor=link;self.anchor_text=[]
     def handle_endtag(self,tag):
         if tag in ('script','style','template') and self.skip:self.skip-=1
+        if tag=='a' and self.anchor is not None:
+            # A link whose visible text says "Contact us" counts even when its URL does not (/get-started).
+            rank=text_rank(' '.join(self.anchor_text))
+            if rank is not None:self.links.append(self.anchor);self.text_links[self.anchor]=rank
+            self.anchor=None
 
 def get_public(session,url,allowed_host,robot=None):
     for _ in range(4):
@@ -125,12 +135,36 @@ def get_public(session,url,allowed_host,robot=None):
         return url,response
     raise ValueError('Redirect limit exceeded')
 
+RANKS=[r'contact|get-in-touch',r'enquir|office|location',r'team|people|leadership']
+
 def link_rank(url):
     """Contact pages first, then enquiry/office pages, then people pages, then general 'about' pages."""
     path=urlsplit(url).path.lower()
-    for rank,pattern in enumerate([r'contact|get-in-touch',r'enquir|office|location',r'team|people|leadership']):
+    for rank,pattern in enumerate(RANKS):
         if re.search(pattern,path):return rank
     return 3
+
+def text_rank(text):
+    """Rank of a short link label such as 'Contact us' or 'Our offices'; None for other labels."""
+    label=' '.join(text.split()).lower().replace('get in touch','get-in-touch')
+    if not label or len(label)>40:return None
+    return next((rank for rank,pattern in enumerate(RANKS) if re.search(pattern,label)),None)
+
+def sitemap_pages(session,robot,origin,allowed,wait=1,limit=3):
+    """Contact/office pages listed in the site's own sitemap (declared in robots.txt, else /sitemap.xml)."""
+    queue=list(robot.site_maps() or [origin+'/sitemap.xml'])[:2];pages=[];read=0
+    while queue and read<4:
+        url=queue.pop(0);read+=1;time.sleep(wait)
+        try:
+            resolved,response=get_public(session,url,allowed,robot)
+            if 'html' in response.headers.get('Content-Type','').lower():continue
+            locations=re.findall(r'<loc>\s*([^<\s]+)\s*</loc>',response.text)
+        except (ValueError,OSError,requests.RequestException):continue
+        # A sitemap index lists further sitemaps; read the ones named for pages first.
+        nested=[l for l in locations if l.lower().endswith('.xml')]
+        queue+=sorted(nested,key=lambda l:('page' not in l.lower(),l))[:2]
+        pages+=[l for l in locations if l not in nested and host(l) in allowed and link_rank(l)<=1]
+    return sorted(set(pages),key=lambda l:(link_rank(l),len(l)))[:limit]
 
 def discover(website,session=None,limit=5):
     session=session or requests.Session();allowed={host(website)}
@@ -147,7 +181,7 @@ def discover(website,session=None,limit=5):
     else:raise ValueError('Cannot establish robots permission: HTTP '+str(r.status_code))
     wait=max(1,robot.crawl_delay(AGENT) or robot.crawl_delay('*') or 1)
     if wait>30:raise ValueError('Long crawl delay: manual source review required')
-    pending=[website];seen=set();found=[];events=[]
+    pending=[website];seen=set();found=[];events=[];ranks={}
     while pending and len(seen)<limit:
         url=pending.pop(0)
         if url in seen:continue
@@ -161,7 +195,7 @@ def discover(website,session=None,limit=5):
             parser=ContactHTML();parser.feed(response.text)
             digest=hashlib.sha256(response.content).hexdigest();checked=now()
             published=[('email',v,'published mailto anchor') for v in set(parser.mail)]+[('phone',v,'published tel anchor') for v in set(parser.phone)]
-            if url==website or link_rank(resolved)<=1:
+            if url==website or min(link_rank(resolved),ranks.get(url,3))<=1:
                 # Text is read only on the home page and contact/office pages, never on team or people pages.
                 mails,phones=text_contacts(' '.join(parser.text))
                 anchored={v.lower() for _,v,_ in published}|{re.sub(r'\D','',v)[-9:] for k,v,_ in published if k=='phone'}
@@ -174,7 +208,12 @@ def discover(website,session=None,limit=5):
                 candidate=urljoin(resolved,link).split('#',1)[0]
                 if host(candidate) in allowed and urlsplit(candidate).scheme=='https' and candidate not in seen:
                     pending.append(candidate)
-            pending.sort(key=link_rank)
+                    if link in parser.text_links:ranks[candidate]=min(ranks.get(candidate,3),parser.text_links[link])
+            if url==website and not any(min(link_rank(p),ranks.get(p,3))<=1 for p in pending):
+                for page in sitemap_pages(session,robot,origin,allowed,wait):
+                    if page not in seen:pending.append(page);ranks[page]=link_rank(page)
+                events.append({'url':origin,'status':'sitemap consulted: no contact link on home page'})
+            pending.sort(key=lambda p:min(link_rank(p),ranks.get(p,3)))
             events.append({'url':resolved,'status':'fetched','candidates':len(published),'sha256':digest})
         except (ValueError,OSError,requests.RequestException) as exc:events.append({'url':url,'status':'not fetched','reason':str(exc)})
         if pending:time.sleep(wait)

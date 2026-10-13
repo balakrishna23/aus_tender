@@ -88,6 +88,32 @@ class ContactDiscoveryTests(unittest.TestCase):
         self.assertEqual([e['url'] for e in events],
                          ['https://business.com.au/', 'https://business.com.au/contact', 'https://business.com.au/team'])
 
+    def test_contact_link_found_by_label_or_sitemap(self):
+        sitemap = ('<sitemapindex><sitemap><loc>https://shop.com.au/page-sitemap.xml</loc></sitemap></sitemapindex>')
+        pages = {
+            'https://label.com.au/robots.txt': (200, {}, 'User-agent: *\nAllow: /'),
+            'https://label.com.au/': (200, {'Content-Type': 'text/html'}, '<a href="/get-started">Contact us</a><a href="/blog">Blog</a>'),
+            'https://label.com.au/get-started': (200, {'Content-Type': 'text/html'}, '<p>Call 1300 123 456</p>'),
+            'https://shop.com.au/robots.txt': (200, {}, 'User-agent: *\nAllow: /\nSitemap: https://shop.com.au/sitemap.xml'),
+            'https://shop.com.au/': (200, {'Content-Type': 'text/html'}, '<p>Welcome</p>'),
+            'https://shop.com.au/sitemap.xml': (200, {'Content-Type': 'application/xml'}, sitemap),
+            'https://shop.com.au/page-sitemap.xml': (200, {'Content-Type': 'application/xml'},
+                '<urlset><url><loc>https://shop.com.au/reach-us/contact</loc></url><url><loc>https://shop.com.au/blog</loc></url></urlset>'),
+            'https://shop.com.au/reach-us/contact': (200, {'Content-Type': 'text/html'}, '<p>(02) 6230 0233</p>'),
+        }
+        class Response:
+            def __init__(self, status, headers, text):
+                self.status_code, self.headers, self.text, self.content = status, headers, text, text.encode()
+        class Session:
+            def get(self, url, **kwargs):
+                return Response(*pages[url])
+        with patch.object(contacts, 'safe_url', side_effect=lambda url, allowed: url), patch.object(contacts.time, 'sleep'):
+            label, _ = contacts.discover('https://label.com.au/', Session())
+            shop, events = contacts.discover('https://shop.com.au/', Session())
+        self.assertEqual([(f['value'], f['source_url']) for f in label], [('1300 123 456', 'https://label.com.au/get-started')])
+        self.assertEqual([(f['value'], f['source_url']) for f in shop], [('(02) 6230 0233', 'https://shop.com.au/reach-us/contact')])
+        self.assertNotIn('https://shop.com.au/blog', [e['url'] for e in events])
+
     def test_rejects_other_hosts_and_private_network_destinations(self):
         with self.assertRaises(ValueError):
             contacts.safe_url('https://other-business.com/contact', 'business.com')

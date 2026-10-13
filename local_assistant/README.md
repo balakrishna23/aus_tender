@@ -239,6 +239,8 @@ python route_review.py --import <reviewed .xlsx> # approved rows -> inputs/appro
 - **What the crawl does:**
   - obeys robots.txt and waits at least 1 s between pages of a site
   - reads at most 5 pages, contact pages first
+  - finds a contact page by its link URL or its label ("Contact us"); when the home page has
+    no such link, it checks the sitemap listed in robots.txt
   - follows a redirect only to the same brand's own domain (data3.com.au -> data3.com)
 - **What it extracts:**
   - email and tel links on any page
