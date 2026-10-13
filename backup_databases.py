@@ -4,6 +4,8 @@
 Uses SQLite's online backup API, so it is safe while a spider is writing.
 The contract API database (2.6 GB, and re-downloadable from the public API) is copied once a
 week instead, and only the last two weekly copies are kept.
+The reviewed input folders (MMR review, supplier contact registers) are git-ignored and hand-made,
+so each daily backup carries a copy of them too.
 
 Usage:
   python backup_databases.py              # backups/daily-YYYYMMDD/ and backups/weekly-YYYY-Www/
@@ -20,6 +22,7 @@ from project_paths import PROJECT_DIR, database_directory
 
 WEEKLY = {'contract_api.db'}
 WEEKLY_KEEP = 2
+INPUTS = ('inputs', 'local_assistant/inputs')
 
 
 def copy(source, destination):
@@ -46,6 +49,11 @@ def main(argv=None) -> int:
         target.mkdir(parents=True, exist_ok=True)
         copy(source, target / source.name)
         print(f'Backed up {source.name} to {target.name}')
+    for folder in INPUTS:
+        source = PROJECT_DIR / folder
+        if source.is_dir():
+            shutil.copytree(source, daily / 'inputs' / folder.replace('/', '_'), dirs_exist_ok=True)
+            print(f'Backed up {folder}/ to {daily.name}')
 
     cutoff = time.time() - args.keep * 86400
     for old in root.glob('daily-*'):

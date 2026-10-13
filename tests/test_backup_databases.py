@@ -43,6 +43,15 @@ class BackupTests(unittest.TestCase):
         self.assertEqual(weekly.stat().st_mtime_ns, stamp)  # not copied again the same week
         self.assertEqual(list((self.root / 'backups').rglob('*.partial')), [])
 
+    def test_reviewed_input_folders_are_copied_daily(self):
+        register = self.root / 'local_assistant' / 'inputs' / 'approachable_company_routes.json'
+        register.parent.mkdir(parents=True)
+        register.write_text('{"records": []}', encoding='utf-8')
+        backup_databases.main([])
+        copies = list((self.root / 'backups').glob('daily-*/inputs/local_assistant_inputs/approachable_company_routes.json'))
+        self.assertEqual(len(copies), 1)
+        self.assertEqual(copies[0].read_text(encoding='utf-8'), '{"records": []}')
+
     def test_only_the_last_two_weekly_copies_are_kept(self):
         for name in ('weekly-2026-W30', 'weekly-2026-W31', 'weekly-2026-W32'):
             (self.root / 'backups' / name).mkdir(parents=True)
