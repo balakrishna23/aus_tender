@@ -1,5 +1,8 @@
 # 🇦🇺 Australian Government Procurement Scraper
 
+**New to the project?** Start with [docs/SETUP_AND_OPERATIONS.md](docs/SETUP_AND_OPERATIONS.md): set up a PC,
+restore the data snapshot from GitHub Releases, run and manage it.
+
 A high-performance Scrapy project that automatically scrapes Australian Government procurement data and stores it in optimized SQLite databases.
 
 Works on Windows, macOS, and Linux.

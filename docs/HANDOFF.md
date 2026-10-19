@@ -1,5 +1,8 @@
 # Handoff: Illoura IT Revenue Intelligence (Tender Feed) — state at 7 Oct 2026, 20:50 (Sydney)
 
+> Setting up a new PC or running the project day to day? See [SETUP_AND_OPERATIONS.md](SETUP_AND_OPERATIONS.md).
+> This file is the engineering history and decision log; parts of it (paths, test counts) date from 7 Oct.
+
 ## Local assistant update — 8 October 2026
 
 Sheets follow-up: pilot 2.3 adds a read-only import of the 10 registered project
