@@ -270,6 +270,25 @@ One-off loads, resumable (a finished month is skipped when rerun):
 four minutes per month) and `--active` (contracts still running, whenever published).
 `--ids CN1,CN2` fetches named contracts (e.g. old contracts amended after they ended).
 
+#### State contract awards (`state_contracts.py`)
+
+`databases/state_contracts.db`: state government contract awards from open-data portals (no API key),
+one row per award in `contracts` (agency, supplier, ABN where given, value, award/start/end dates, UNSPSC,
+`is_ict` from the same rules as the engine views, and the whole source row in `raw_json`); `sources`
+records each file, its licence and when it was loaded.
+
+- **WA** (`python state_contracts.py`): Tenders WA "Contract Award Details" yearly CSVs from
+  catalogue.data.wa.gov.au, CC BY 4.0 (credit Department of Treasury and Finance WA). FY2021-22 to
+  FY2023-24 on 2026-10-19. An unchanged file is skipped, so rerunning only picks up new years.
+  Panel (CUA) awards list each supplier with the panel's full value, so don't add values up.
+- **QLD** (`python state_contracts.py --import`): agency contract disclosure reports (over $10,000) on
+  data.qld.gov.au, CC BY 4.0. Not fetched by script: its robots.txt disallows `/api/` and file
+  downloads sit behind a bot challenge. Save the CSV/XLSX files from a browser into
+  `inputs/state_contracts/qld/`, then import. Columns differ by agency; they are matched by header
+  words, and the import prints any file where supplier, value or award date wasn't found.
+- No usable feed (checked 2026-10-19): NSW (the eTendering API closed in 2025), VIC, SA, TAS, NT;
+  the ACT contracts register on data.act.gov.au stops in 2017.
+
 #### Which AusTender pages are read (robots.txt)
 
 tenders.gov.au's robots.txt disallows `/Search/`, `/Reports/`, `/Cn/List` and `/Son/List`.
