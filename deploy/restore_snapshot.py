@@ -5,8 +5,8 @@ Copies databases/, inputs/, local_assistant/inputs/, exports/, dashboard/, the a
 the capability statements and business_docs/ out of the zip. Code files in the zip are ignored: the
 checkout's code (git) is what runs. Existing databases are kept unless --force is given.
 
-  gh release download <tag> -R balakrishna23/aus_tender
-  python deploy/restore_snapshot.py aus_tender_snapshot_YYYYMMDD.zip
+  python deploy/restore_snapshot.py ../aus_tender_public_data_YYYYMMDD.zip   # public, from GitHub Releases
+  python deploy/restore_snapshot.py ../aus_tender_snapshot_YYYYMMDD.zip --force   # full, shared privately
 """
 import argparse
 import shutil

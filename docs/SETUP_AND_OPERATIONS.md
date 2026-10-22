@@ -4,8 +4,9 @@ How to set up, run and manage this project on a new Windows PC, the same way it 
 For background, decisions and history, read [HANDOFF.md](HANDOFF.md). For every command and option,
 see the [README](../README.md).
 
-> **In short:** clone the repo → install Python 3.11 and the requirements → download the data snapshot
-> from GitHub Releases and restore it → add `.env` and the Google key → run `python run_spiders.py`.
+> **In short:** clone the repo → install Python 3.11 and the requirements → restore a data snapshot
+> (the public one from GitHub Releases, or the full one Sirish shares privately) → add `.env` and the
+> Google key → run `python run_spiders.py`.
 
 ---
 
@@ -15,24 +16,23 @@ see the [README](../README.md).
 |---|---|
 | Project folder | `C:\work\aus_tender`. Keep it **outside OneDrive**, because syncing live SQLite files corrupts them and would upload the secrets. |
 | Python | 3.11 for Windows, system-wide install, no virtualenv. A virtualenv (below) is recommended for a new PC. |
-| Code | GitHub `balakrishna23/aus_tender` (private), branch `main`, remote name **`github`**. Ignore any remote called `origin` and the branch `main-old-history`. |
-| Data | SQLite files in `databases/`, about 3.5 GB. They're not in git; they come from a release snapshot (section 3). |
+| Code | GitHub `balakrishna23/aus_tender` (public), branch `main`, remote name **`github`**. Ignore any remote called `origin` and the branch `main-old-history`. |
+| Data | SQLite files in `databases/`, about 3.5 GB. They're not in git; they come from a data snapshot (section 3). |
 | Secrets | `.env` and the Google service-account key file in the project root. They're not in git and not in the snapshot. Get them from Sirish privately (section 4). |
-| Google Sheets | 10 spreadsheets in the "Tender Feed" Drive folder owned by balakrishna200408@gmail.com, written by the service account |
+| Google Sheets | 10 spreadsheets in the "Tender Feed" Drive folder owned by Sirish's Google account, written by the service account |
 | Scheduling | 3 Windows Task Scheduler tasks are registered but **disabled**. Runs are started by hand (section 6). |
 | Local AI assistant | Optional. Ollama with `qwen3:4b-instruct` and `all-minilm:22m` (section 8). |
 | CI | GitHub Actions runs all tests on Ubuntu and Windows on every push (`.github/workflows/tests.yml`). |
 
 ## 2. Install (once per PC)
 
-Prerequisites: [Python 3.11](https://www.python.org/downloads/) (tick "Add Python to PATH"),
-[Git](https://git-scm.com/download/win) and the [GitHub CLI](https://cli.github.com/) (`gh`).
-You need a GitHub account with access to the private repo; ask Sirish to add you as a collaborator.
+Prerequisites: [Python 3.11](https://www.python.org/downloads/) (tick "Add Python to PATH") and
+[Git](https://git-scm.com/download/win). The repo is public, so cloning needs no account. To push changes
+you need write access (ask Sirish to add your GitHub account as a collaborator).
 
 ```powershell
-gh auth login                                     # once; choose GitHub.com, HTTPS
 mkdir C:\work; cd C:\work
-gh repo clone balakrishna23/aus_tender
+git clone https://github.com/balakrishna23/aus_tender.git
 cd aus_tender
 git remote rename origin github                   # the team's remote is called "github"
 
@@ -48,19 +48,31 @@ python -m unittest discover -s local_assistant -p "test_*.py"
 
 Activate the virtualenv (`.\.venv\Scripts\Activate.ps1`) in every new terminal before running anything.
 
-## 3. Get the data (snapshot from GitHub Releases)
+## 3. Get the data (a snapshot zip)
 
-Each snapshot is a zip attached to a GitHub release (tag `data-YYYY-MM-DD`). Releases on a private repo are
-visible only to collaborators. The zip holds every database (except `sheet_imports.db`), the Sheets
-registry, hand-reviewed inputs, exports, the assistant's search index, Illoura's business documents
-(under `business_docs/`) and a `HANDOFF.md` describing that snapshot.
+There are two kinds of snapshot. Both restore the same way.
+
+| Snapshot | Where | What's in it |
+|---|---|---|
+| **Public** (`aus_tender_public_data_YYYYMMDD.zip`) | GitHub Releases, tag `public-data-YYYY-MM-DD`; anyone can download it | Public-source databases only (AusTender contracts, notices, tenders, panels, plans, BuyICT, WA contracts, the NIAA MMR list) with all personal contact details removed. No engine views (rebuilt locally), supplier contacts, review decisions, NSW or ACT data. See `DATA_README.md` inside. |
+| **Full** (`aus_tender_snapshot_YYYYMMDD.zip`) | From Sirish privately (e.g. a shared Drive file). **Never put it on GitHub.** | Every database (except `sheet_imports.db`), including agency and supplier contacts and Illoura's internal plans, plus the Sheets registry, reviewed inputs, exports, the assistant's search index, business documents and a `HANDOFF.md` |
+
+Public snapshot (download the newest `public-data-*` zip from
+https://github.com/balakrishna23/aus_tender/releases):
 
 ```powershell
-gh release list -R balakrishna23/aus_tender                      # newest data-YYYY-MM-DD first
-gh release download data-2026-10-19 -R balakrishna23/aus_tender --dir ..
-python deploy/restore_snapshot.py ..\aus_tender_snapshot_20261019.zip
-python db_query_tool.py --list                                    # the databases are now there
+$tag = (Invoke-RestMethod https://api.github.com/repos/balakrishna23/aus_tender/releases |
+        Where-Object tag_name -like 'public-data-*' | Select-Object -First 1)
+$asset = $tag.assets | Select-Object -First 1
+Invoke-WebRequest $asset.browser_download_url -OutFile "..\$($asset.name)"
+python deploy/restore_snapshot.py "..\$($asset.name)"
+python build_intelligence.py                 # rebuild the engine views from the restored data
+python db_query_tool.py --list
 ```
+
+Full snapshot (team members): save the zip Sirish shares into `C:\work`, then
+`python deploy/restore_snapshot.py ..\aus_tender_snapshot_YYYYMMDD.zip --force`
+(`--force` replaces any public-snapshot databases already restored).
 
 `restore_snapshot.py` copies only data. The code comes from git, so pull to get newer code. It never overwrites
 a database you already have unless you add `--force`.
@@ -149,15 +161,20 @@ Only **one PC** should run the scheduled scrape and publish to the Sheets at a t
 of `contract_api.db`. It also copies the hand-reviewed `inputs/`. It's safe to run while a spider is writing.
 Take one before any big change.
 
-**Sharing a data snapshot** (how the release in section 3 was made):
+**Sharing data snapshots** (how the snapshots in section 3 are made):
 
 ```powershell
+# Public: personal details removed, safe for GitHub Releases (needs `gh auth login` with write access)
+python deploy/package_snapshot.py --public
+gh release create public-data-YYYY-MM-DD ..\aus_tender_public_data_YYYYMMDD.zip -R balakrishna23/aus_tender `
+  --title "Public data YYYY-MM-DD" --notes-file ..\notes.md
+
+# Full, for team members only: share the file privately (Drive), never on GitHub
 python deploy/package_snapshot.py --note <handoff note>.md --docs "<folder of business documents>"
-gh release create data-YYYY-MM-DD ..\aus_tender_snapshot_YYYYMMDD.zip -R balakrishna23/aus_tender `
-  --title "Data snapshot YYYY-MM-DD" --notes "Restore with deploy/restore_snapshot.py"
 ```
 
-Each release file must be under 2 GiB; the October 2026 snapshot is about 400 MB. The packer refuses to include `.env` or key files.
+Each release file must be under 2 GiB (the October 2026 public zip is about 300–400 MB). The packer refuses
+to include `.env` or key files. Before publishing a public snapshot, spot-check it for names, emails and phone numbers.
 
 **Code changes.** Run the tests before pushing: `python -m unittest discover -s tests`. Then `git push github main`. CI runs the same tests.
 
@@ -173,7 +190,8 @@ Each release file must be under 2 GiB; the October 2026 snapshot is about 400 MB
 - Contacts: no guessed emails and no LinkedIn scraping. Agency contacts are never supplier contacts.
   Contacts on open tenders are `FORMAL_CHANNEL_ONLY`.
 - No email is sent without Sirish's approval.
-- The databases hold personal contact details and Illoura's internal plans. Keep the snapshot private.
+- The full databases hold personal contact details and Illoura's internal plans. Keep the full snapshot,
+  `databases/`, `inputs/` and `exports/` off GitHub and anywhere public; this repo is public.
 
 ## 8. Local AI assistant (optional)
 

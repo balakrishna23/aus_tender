@@ -326,7 +326,7 @@ Overall ≈ 60–65% of the spec. Week 0 ~90%, Sprint 1 ~90%, Sprint 2 ~60%, Spr
 
 ## 6. Google Sheets
 
-- Folder: env `GSHEETS_FOLDER_ID` (Sirish's Drive folder; account balakrishna200408@gmail.com owns the sheets).
+- Folder: env `GSHEETS_FOLDER_ID` (Sirish's Drive folder; Sirish's Google account owns the sheets).
 - Datasets and titles are in `publish_sheets.DATASETS`. "Illoura - Engine Views" (key `intelligence`) has tabs
   TODAY, renewals_180_days, mmr_primes, mmr_candidates_it, exemption_16, hot_list, open_ict, buyict_rates,
   agency_contacts. Published manually on 7 Oct 20:34; refreshed by every batch run with sync.
@@ -347,7 +347,7 @@ Overall ≈ 60–65% of the spec. Week 0 ~90%, Sprint 1 ~90%, Sprint 2 ~60%, Spr
   `python publish_sheets.py --only intelligence` (panel contract counts improve).
 - Git: everything up to commit `a39adcd` ("Action tracker ...") is pushed to `github/main`.
   GitHub had a major git-operations outage on 7 Oct ~20:40; if a push returns HTTP 500, check githubstatus.com and retry.
-- Repo visibility: **private** again since 8 Oct 2026 (it was public 7–8 Oct by Sirish's choice). Still never commit `inputs/`, `exports/`, `databases/`, `.env`, keys, contact exports or anything from Illoura's own data (bench, relationships, RAP research, scores). The sender address now comes only from `.env` (`OUTREACH_FROM_EMAIL`); an older personal address remains in commits from 6–7 Oct by Sirish's choice.
+- Repo visibility: **public** since 22 Oct 2026 (also public 7–8 Oct, private 8–22 Oct). Before going public the history was rewritten to drop old CSV/log exports holding agency contact details; the pre-rewrite history is kept only in Sirish's local backups. Full data is shared privately, never through GitHub; the public `public-data-*` releases have personal details removed (`deploy/package_snapshot.py --public`). Still never commit `inputs/`, `exports/`, `databases/`, `.env`, keys, contact exports or anything from Illoura's own data (bench, relationships, RAP research, scores). The sender address now comes only from `.env` (`OUTREACH_FROM_EMAIL`); an older personal address remains in commits from 6–7 Oct by Sirish's choice.
 
 ---
 
