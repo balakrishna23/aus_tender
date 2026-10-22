@@ -1,4 +1,5 @@
 """Data snapshots: secrets never packed; a restore brings back the data, not the code, and keeps local databases."""
+import json
 import sqlite3
 import subprocess
 import sys
@@ -61,6 +62,43 @@ class SnapshotTests(unittest.TestCase):
         restore.restore(out, project=clone, force=True)
         with closing(sqlite3.connect(clone / 'databases' / 'intelligence.db')) as conn:
             self.assertEqual(conn.execute('SELECT x FROM t').fetchone(), (1,))
+
+    def test_public_snapshot_removes_personal_and_internal_data_but_keeps_the_layout(self):
+        dbs = self.project / 'databases'
+        with closing(sqlite3.connect(dbs / 'aus_tender.db')) as conn:
+            conn.execute('CREATE TABLE tenders (atm_id TEXT, description TEXT, contact_name TEXT, '
+                         'contact_email TEXT, contact_phone TEXT, all_details TEXT, value REAL)')
+            conn.execute('INSERT INTO tenders VALUES (?,?,?,?,?,?,?)', (
+                'ATM1', 'Questions to jane.citizen@agency.gov.au or (02) 6289 1134; ABN 51 824 753 556',
+                'Jane Citizen', 'jane.citizen@agency.gov.au', '0412 345 678',
+                '{"Agency": "Finance", "Contact Name": "Jane Citizen", "Contact Branch": "Procurement",'
+                ' "Notes": {"Contact Phone": "0412345678", "Text": "mobile 0412 345 678, closes 02/08/2026"}}', 5.0))
+            conn.commit()
+        with closing(sqlite3.connect(dbs / 'organisations.db')) as conn:
+            conn.execute('CREATE TABLE mmr_matches (organisation TEXT, supplier_abn TEXT, review TEXT, '
+                         'reviewed_at TEXT, note TEXT)')
+            conn.execute("INSERT INTO mmr_matches VALUES ('DXC', '1', 'confirmed', '2026-10-07', 'internal')")
+            conn.commit()
+        out = self.root / 'public.zip'
+        names = pack.build(out, project=self.project, databases=dbs, public=True)
+        self.assertIn('DATA_README.md', names)
+        self.assertIn('databases/aus_tender.db', names)
+        self.assertNotIn('databases/intelligence.db', names)  # engine views are rebuilt locally
+        self.assertNotIn('inputs/mmr/review.csv', names)
+        self.assertNotIn('databases/sheets_registry.json', names)
+        clone = self.root / 'clone'
+        restore.restore(out, project=clone)
+        with closing(sqlite3.connect(clone / 'databases' / 'aus_tender.db')) as conn:
+            row = conn.execute('SELECT * FROM tenders').fetchone()
+        atm, description, name, email, phone, details, value = row
+        self.assertEqual((atm, name, email, phone, value), ('ATM1', None, None, None, 5.0))
+        self.assertEqual(description, 'Questions to [email removed] or [phone removed]; ABN 51 824 753 556')
+        self.assertEqual(json.loads(details), {'Agency': 'Finance', 'Contact Branch': 'Procurement',
+                                               'Notes': {'Text': 'mobile [phone removed], closes 02/08/2026'}})
+        with closing(sqlite3.connect(clone / 'databases' / 'organisations.db')) as conn:
+            self.assertEqual(conn.execute('SELECT * FROM mmr_matches').fetchone(), ('DXC', '1', None, None, None))
+        with self.assertRaises(SystemExit):
+            pack.build(self.root / 'x.zip', docs=str(self.root), project=self.project, databases=dbs, public=True)
 
     def test_a_secret_is_refused(self):
         self.assertTrue(pack.is_secret('dazzling-tiger-470805.json'))
