@@ -1,4 +1,4 @@
-import hashlib,json,os,sqlite3,tempfile,unittest
+import hashlib,json,os,sqlite3,tempfile,time,unittest
 from pathlib import Path
 from fastapi.testclient import TestClient
 import app as api
@@ -19,6 +19,7 @@ class SecurityTests(unittest.TestCase):
         cls.headers={'Authorization':'Bearer test-key'}
     @classmethod
     def tearDownClass(cls):cls.context.__exit__(None,None,None);cls.temp.cleanup()
+    def setUp(self):api.failures.clear()
     def query(self,sql):return self.client.post('/v1/query',headers=self.headers,json={'dataset':'contract_api','sql':sql})
     def test_authentication_and_catalog(self):
         self.assertEqual(self.client.get('/v1/catalog').status_code,401)
@@ -87,5 +88,38 @@ class SecurityTests(unittest.TestCase):
         r=self.client.post('/mcp',headers=h,json={'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'query_dataset','arguments':{'dataset':'contract_api','sql':'SELECT sum(current_value) AS total FROM contracts'}}})
         self.assertEqual(r.status_code,200,r.text)
         self.assertFalse(r.json()['result'].get('isError'),r.text)
+
+    def test_failed_keys_are_throttled_per_client_and_spoofed_header_ignored(self):
+        self.addCleanup(api.failures.clear)
+        for i in range(api.FAILED_LIMIT):
+            # The test client is not loopback, so X-Forwarded-For must not create new buckets.
+            r=self.client.get('/v1/catalog',headers={'X-API-Key':'wrong','X-Forwarded-For':'203.0.113.%d'%i})
+            self.assertEqual(r.status_code,401)
+        r=self.client.get('/v1/catalog',headers=self.headers)
+        self.assertEqual(r.status_code,429)
+        self.assertEqual(r.headers['Retry-After'],str(api.FAILED_WINDOW_SECONDS))
+        api.failures.clear()
+        self.assertEqual(self.client.get('/v1/catalog',headers=self.headers).status_code,200)
+
+    def test_client_address_trusts_forwarded_header_only_from_loopback(self):
+        class Request:
+            def __init__(self,peer,forwarded):
+                self.client=type('C',(),{'host':peer})();self.headers={'x-forwarded-for':forwarded}
+        self.assertEqual(api.client_address(Request('127.0.0.1','203.0.113.5')),'203.0.113.5')
+        self.assertEqual(api.client_address(Request('198.51.100.1','203.0.113.5')),'198.51.100.1')
+        self.assertEqual(api.client_address(Request('127.0.0.1','203.0.113.5, 10.0.0.1')),'127.0.0.1')
+        self.assertEqual(api.client_address(Request('::1','not-an-ip')),'::1')
+
+    def test_failure_tracking_is_bounded(self):
+        self.addCleanup(api.failures.clear)
+        with patch.object(api,'MAX_TRACKED_CLIENTS',5):
+            for i in range(12):api.record_failure('198.51.100.%d'%i,1000.0)
+        self.assertEqual(len(api.failures),5)
+        self.assertEqual(list(api.failures)[-1],'198.51.100.11')
+
+    def test_revoked_key_rate_state_is_evicted(self):
+        api.rates['f'*64].append(time.monotonic())
+        self.assertEqual(self.client.get('/v1/catalog',headers=self.headers).status_code,200)
+        self.assertNotIn('f'*64,api.rates)
 
 if __name__=='__main__':unittest.main()

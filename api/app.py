@@ -1,5 +1,6 @@
 """Illoura procurement API and MCP server; immutable snapshots, read-only SQL."""
 import hashlib
+import ipaddress
 import json
 import logging
 import os
@@ -7,7 +8,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections import defaultdict,deque
+from collections import OrderedDict,defaultdict,deque
 from contextlib import asynccontextmanager
 from datetime import datetime,timezone
 from pathlib import Path
@@ -153,6 +154,59 @@ async def lifespan(app):
 
 app=FastAPI(title='Illoura read-only procurement API',version='1.0.0',lifespan=lifespan)
 rates=defaultdict(deque);rate_lock=threading.Lock()
+# Failed-key throttling per client address, bounded so a flood cannot grow memory.
+FAILED_LIMIT = 20
+FAILED_WINDOW_SECONDS = 600
+MAX_TRACKED_CLIENTS = 10_000
+failures = OrderedDict()
+LOOPBACK = {'127.0.0.1', '::1'}
+
+
+def client_address(request):
+    """Nginx overwrites X-Forwarded-For with $remote_addr; trust it only from loopback."""
+    peer = request.client.host if request.client else ''
+    if peer in LOOPBACK:
+        try:
+            return str(ipaddress.ip_address(request.headers.get('x-forwarded-for', '').strip()))
+        except ValueError:
+            return peer
+    return peer or 'unknown'
+
+
+def _drop_older(queue, now, window):
+    while queue and queue[0] < now - window:
+        queue.popleft()
+
+
+def too_many_failures(address, now):
+    with rate_lock:
+        queue = failures.get(address)
+        if queue is None:
+            return False
+        _drop_older(queue, now, FAILED_WINDOW_SECONDS)
+        if not queue:
+            del failures[address]
+            return False
+        return len(queue) >= FAILED_LIMIT
+
+
+def record_failure(address, now):
+    with rate_lock:
+        queue = failures.pop(address, None) or deque()
+        _drop_older(queue, now, FAILED_WINDOW_SECONDS)
+        queue.append(now)
+        failures[address] = queue  # most recently seen last
+        while len(failures) > MAX_TRACKED_CLIENTS:
+            failures.popitem(last=False)
+
+
+def forget_unknown_keys(enabled_digests):
+    """Revoked or removed keys must not keep rate-limit state forever."""
+    with rate_lock:
+        for digest in [d for d in rates if d not in enabled_digests]:
+            del rates[digest]
+
+
 @app.middleware('http')
 async def authenticate(request:Request,call_next):
     started=time.monotonic();keyname='anonymous'
@@ -166,14 +220,22 @@ async def authenticate(request:Request,call_next):
         return JSONResponse({'status':'ok' if ok else 'attention'},status_code=200 if ok else 503,headers={'Cache-Control':'no-store'})
     if request.headers.get('content-length','').isdigit() and int(request.headers['content-length'])>32768:return JSONResponse({'detail':'Request too large'},status_code=413)
     if request.url.query:return JSONResponse({'detail':'Use headers for authentication and JSON bodies for queries'},status_code=400)
+    address=client_address(request);attempt_at=time.monotonic()
+    if too_many_failures(address,attempt_at):
+        return JSONResponse({'detail':'Too many failed authentication attempts'},status_code=429,headers={'Retry-After':str(FAILED_WINDOW_SECONDS)})
     authorization=request.headers.get('authorization','')
     token=authorization[7:] if authorization.lower().startswith('bearer ') else request.headers.get('x-api-key','')
-    if not token or len(token)>256:return JSONResponse({'detail':'Valid API key required'},status_code=401,headers={'WWW-Authenticate':'Bearer'})
+    if not token or len(token)>256:
+        record_failure(address,attempt_at)
+        return JSONResponse({'detail':'Valid API key required'},status_code=401,headers={'WWW-Authenticate':'Bearer'})
     digest=hashlib.sha256(token.encode()).hexdigest()
     try:records=json.loads(KEYS.read_text(encoding='utf-8'))
     except (OSError,ValueError):return JSONResponse({'detail':'Authentication unavailable'},status_code=503)
+    forget_unknown_keys({x.get('sha256') for x in records if x.get('enabled')})
     key=next((x for x in records if x.get('sha256')==digest and x.get('enabled')),None)
-    if not key:return JSONResponse({'detail':'Invalid or revoked API key'},status_code=401)
+    if not key:
+        record_failure(address,attempt_at)
+        return JSONResponse({'detail':'Invalid or revoked API key'},status_code=401)
     keyname=key['name']
     with rate_lock:
         queue=rates[digest];now=time.monotonic()
