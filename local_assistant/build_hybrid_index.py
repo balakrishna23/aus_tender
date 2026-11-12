@@ -52,6 +52,9 @@ def build(index=INDEX, batch_size=32):
 
 
 if __name__=='__main__':
+    if (Path(__file__).parent/'LOCAL_AI_DISABLED').exists():
+        print(json.dumps({'status':'skipped','reason':'Local AI disabled by user'}))
+        raise SystemExit(0)
     parser=argparse.ArgumentParser();parser.add_argument('--batch-size',type=int,default=32)
     args=parser.parse_args()
     if not 1<=args.batch_size<=128:parser.error('batch size must be between 1 and 128')

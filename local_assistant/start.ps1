@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $pilotRoot = $PSScriptRoot
+if (Test-Path -LiteralPath (Join-Path $pilotRoot 'LOCAL_AI_DISABLED')) { throw 'Local AI was disabled at your request. The procurement routine remains available.' }
 $pilotOllama = Join-Path $pilotRoot 'runtime\ollama\ollama.exe'
 if (-not (Test-Path -LiteralPath $pilotOllama)) { throw 'Portable Ollama is not installed in runtime\ollama.' }
 try { Invoke-RestMethod 'http://127.0.0.1:11434/api/version' -TimeoutSec 2 | Out-Null }
