@@ -227,6 +227,62 @@ class VerifyOnlyTests(unittest.TestCase):
         self.assertFalse(any("restart" in c for c in remote.calls))
 
 
+class DailyBriefAdminTests(unittest.TestCase):
+    def test_health_sender_is_uploaded_never_put_in_a_command(self):
+        with self.assertRaises(cli.OperationError):
+            cli.set_health_sender(FakeRemote(), "alerts@example.com")
+        with self.assertRaises(ValueError):
+            cli.set_health_sender(FakeRemote(), "not an address; rm -rf /", yes=True)
+        remote = FakeRemote()
+        cli.set_health_sender(remote, "Alerts@Example.com", yes=True)
+        self.assertNotIn("alerts@example.com", json.dumps(remote.calls).lower())
+        uploaded = next(v for k, v in remote.files.items() if k.endswith("/health.env"))
+        self.assertEqual(uploaded, b"ILLOURA_GMAIL_SENDER=alerts@example.com\n")
+        install = remote.installs()[-1]
+        self.assertEqual(install[-1], cli.HEALTH_ENV)
+        self.assertIn("0600", install)
+
+    def test_schedule_needs_yes_and_touches_only_the_brief_timer(self):
+        with self.assertRaises(cli.OperationError):
+            cli.schedule(FakeRemote(), "enable")
+        with self.assertRaises(ValueError):
+            cli.schedule(FakeRemote(), "restart", yes=True)
+        remote = FakeRemote()
+        cli.schedule(remote, "enable", yes=True)
+        changes = [c for c in remote.calls if c[:2] == ["sudo", "systemctl"]]
+        self.assertEqual(changes, [["sudo", "systemctl", "enable", "--now", cli.BRIEF_TIMER]])
+
+    def test_newly_installed_timer_is_not_a_state_change_but_enabling_is(self):
+        remote = FakeRemote()
+        remote.timers[cli.BRIEF_TIMER] = "not-found"
+        original = remote.run
+
+        def run(argv, timeout=900):
+            if argv[-1:] == ["daemon-reload"]:
+                remote.timers[cli.BRIEF_TIMER] = "disabled"
+            return original(argv, timeout)
+
+        remote.run = run
+        cli.deploy_ops(remote, yes=True)
+        remote = FakeRemote()
+        remote.timers[cli.BRIEF_TIMER] = "not-found"
+        original_enabled = remote.run
+
+        def run_enabled(argv, timeout=900):
+            if argv[-1:] == ["daemon-reload"]:
+                remote.timers[cli.BRIEF_TIMER] = "enabled"
+            return original_enabled(argv, timeout)
+
+        remote.run = run_enabled
+        with self.assertRaises(cli.OperationError):
+            cli.deploy_ops(remote, yes=True)
+
+    def test_deploy_ops_ships_the_daily_brief(self):
+        result = cli.deploy_ops(FakeRemote(), yes=True)
+        self.assertIn("illoura_daily_brief.py", result["installed"])
+        self.assertIn("illoura-daily-brief.timer", result["installed"])
+
+
 class ApiKeyTests(unittest.TestCase):
     def test_key_stays_private_and_server_gets_only_its_hash(self):
         with tempfile.TemporaryDirectory() as folder:

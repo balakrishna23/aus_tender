@@ -49,24 +49,36 @@ HEALTH_STATUS = "/var/lib/illoura-health/status.json"
 PUBLICATION = "/opt/illoura-routine/publication.json"
 BACKUP_ROOT = "/var/backups/illoura"
 KEYS_FILE = "/etc/illoura-api/keys.json"
+BRIEF_TIMER = "illoura-daily-brief.timer"
 TIMERS = (
     "illoura-cloud-collect.timer",
     "illoura-cloud-health.timer",
     "illoura-cert-renew.timer",
+    BRIEF_TIMER,
 )
 
 OPS_FILES = (
     "illoura_cloud_ops.py",
     "illoura_cloud_health.py",
     "illoura_cloud_collect.py",
+    "illoura_daily_brief.py",
 )
 OPS_UNITS = (
     "illoura-cloud-collect.service",
     "illoura-cloud-collect.timer",
     "illoura-cloud-health.service",
     "illoura-cloud-health.timer",
+    "illoura-daily-brief.service",
+    "illoura-daily-brief.timer",
 )
-OPS_TESTS = ("test_cloud_ops.py", "test_cloud_retention.py", "test_cloud_health.py")
+OPS_TESTS = (
+    "test_cloud_ops.py",
+    "test_cloud_retention.py",
+    "test_cloud_health.py",
+    "test_cloud_daily_brief.py",
+)
+EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
+DRY_RUN_DIR = re.compile(r"^/var/tmp/illoura-brief-dryrun-[0-9TZ]+$")
 
 # Plain tokens only. '*' and '^' are allowed because every argument is shell-quoted
 # (no globbing or expansion happens); spaces, quotes, ;, |, &, $ and ` are refused.
@@ -505,8 +517,12 @@ def deploy_ops(
     finally:
         remove_stage(remote, stage)
     after = timer_states(remote)
-    if after != before:
-        raise OperationError(f"Timer states changed unexpectedly: {before} -> {after}")
+    # A newly installed unit appears as "disabled"; anything else must be unchanged.
+    changed = {t: (before.get(t), after.get(t)) for t in TIMERS
+               if before.get(t) != after.get(t)
+               and not (before.get(t) == "not-found" and after.get(t) == "disabled")}
+    if changed:
+        raise OperationError(f"Timer states changed unexpectedly: {changed}")
     remote.run(
         ["sudo", "systemctl", "start", "illoura-cloud-health.service"], timeout=180
     )
@@ -700,6 +716,60 @@ def api_key(remote, settings, action, name, *, host=None):
     return result
 
 
+def set_health_sender(remote, email, *, yes=False):
+    """Write the private expected-mailbox setting; the address is uploaded, never put in a command."""
+    if not yes:
+        raise OperationError("set-health-sender changes server configuration; rerun with --yes")
+    if not EMAIL.match(email or ""):
+        raise ValueError("Use one plain email address")
+    stage = new_stage()
+    try:
+        must(remote, ["install", "-d", "-m", "0700", stage], "create staging")
+        remote.put_bytes(
+            f"ILLOURA_GMAIL_SENDER={email.strip().lower()}\n".encode(), stage + "/health.env", mode=0o600
+        )
+        must(remote, ["sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0755", "/etc/illoura-ops"],
+             "create /etc/illoura-ops")
+        must(remote, ["sudo", "install", "-o", "root", "-g", "root", "-m", "0600", stage + "/health.env",
+                      HEALTH_ENV], "install health.env")
+    finally:
+        remove_stage(remote, stage)
+    return {"configured": HEALTH_ENV, "value_printed": False}
+
+
+def daily_brief_dry_run(remote):
+    """Compose a copy of the latest run on the server (live listing checks, layout checks); never sends."""
+    code, out, err = remote.run(["sudo", OPS_PYTHON, OPS_DIR + "/illoura_daily_brief.py", "dry-run"], timeout=3600)
+    if code:
+        raise OperationError("Daily brief dry run failed: " + (err or out).strip()[-800:])
+    summaries = []
+    for line in out.splitlines():
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                summaries.append(json.loads(line))
+            except ValueError:
+                pass
+    folder = next((s["dry_run_dir"] for s in summaries if "dry_run_dir" in s), "")
+    result = {"summaries": summaries, "sent": False}
+    if DRY_RUN_DIR.match(folder):
+        code, text, _ = remote.run(["sudo", "cat", folder + "/newsletter_preview.txt"])
+        if code == 0:
+            result["preview_text"] = text[:6000]
+    return result
+
+
+def schedule(remote, action, *, yes=False):
+    """Turn the 08:15 daily brief on or off. The only action that changes a timer's enable state."""
+    if not yes:
+        raise OperationError("schedule changes the daily email; rerun with --yes")
+    if action not in ("enable", "disable"):
+        raise ValueError("Use enable or disable")
+    must(remote, ["sudo", "systemctl", action, "--now", BRIEF_TIMER], f"{action} {BRIEF_TIMER}")
+    _, listing, _ = remote.run(["systemctl", "list-timers", BRIEF_TIMER, "--no-pager"])
+    return {"timer": BRIEF_TIMER, "enabled": timer_states(remote)[BRIEF_TIMER], "list_timers": listing.strip()}
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -733,6 +803,13 @@ def build_parser():
     key = sub.add_parser("api-key")
     key.add_argument("key_action", choices=["create", "revoke"])
     key.add_argument("--name", required=True)
+    sender = sub.add_parser("set-health-sender", help="Write /etc/illoura-ops/health.env (private)")
+    sender.add_argument("--email", required=True)
+    sender.add_argument("--yes", action="store_true")
+    sub.add_parser("daily-brief-dry-run", help="Compose a copy of the latest run on the server; never sends")
+    timer = sub.add_parser("schedule", help="Enable or disable the 08:15 Sydney daily brief")
+    timer.add_argument("timer_action", choices=["enable", "disable"])
+    timer.add_argument("--yes", action="store_true")
     return p
 
 
@@ -764,6 +841,12 @@ def main(argv=None, remote_factory=SshRemote):
             result = deploy_ops(remote, test_only=True)
         elif args.action == "verify-api":
             result = deploy_api(remote, test_only=True)
+        elif args.action == "set-health-sender":
+            result = set_health_sender(remote, args.email, yes=args.yes)
+        elif args.action == "daily-brief-dry-run":
+            result = daily_brief_dry_run(remote)
+        elif args.action == "schedule":
+            result = schedule(remote, args.timer_action, yes=args.yes)
         else:
             result = api_key(remote, settings, args.key_action, args.name)
     finally:
