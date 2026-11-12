@@ -320,64 +320,87 @@ def publish(data,served,run,policy,api_group=None,*,backups=None):
                    'Independent consistent SQLite backups taken while source run locks are held.',
                    'Source dates may predate this snapshot; inspect retrieval fields and current deadlines.',
                    'Private workflow data is not part of the authorised procurement API.']}
-    try:
-        for dataset,tables in policy.items():
-            if not dataset.replace('_','').isalnum():raise ValueError('Unsafe dataset name')
-            target=staging/(dataset+'.db')
-            copy_database(data/target.name,target)
-            with closing(sqlite3.connect(target)) as db:
-                available={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                if not set(tables)<=available:raise ValueError('Required tables missing: '+dataset)
-                counts={t:db.execute('SELECT count(*) FROM "'+t.replace('"','""')+'"').fetchone()[0] for t in tables}
-                if dataset=='intelligence' and evidence['intelligence_build_info']:
-                    actual=db.execute('SELECT built_at FROM build_info').fetchone()[0]
-                    if actual!=evidence['intelligence_build_info'][0]['built_at']:
-                        raise ValueError('Intelligence no longer matches reviewed run')
-            meta['datasets'][dataset]={'file':target.name,'bytes':target.stat().st_size,
-                'sha256':sha(target),'tables':counts,'backup_finished_utc':utc()}
-        meta['snapshot_finished_utc']=utc()
-        atomic_json(staging/'manifest.json',meta)
-        # Files are closed and durable before the generation becomes reachable.
-        for file in staging.iterdir():
-            with file.open('r+b') as f:os.fsync(f.fileno())
-            if api_group:shutil.chown(file,group=api_group)
-            file.chmod(0o440)
-        if api_group:shutil.chown(staging,group=api_group)
-        staging.chmod(0o550)
-        if os.name!='nt':
-            fd=os.open(staging,os.O_RDONLY)
-            try:os.fsync(fd)
-            finally:os.close(fd)
-        staging.rename(generation)
-        if old:
-            prior=served/('.previous-'+uuid.uuid4().hex)
-            prior.symlink_to(old.name,target_is_directory=True)
-            os.replace(prior,served/'previous')
-        link=served/('.current-'+uuid.uuid4().hex)
-        link.symlink_to(generation.name,target_is_directory=True)
-        os.replace(link,current)
-        if os.name!='nt':
-            fd=os.open(served,os.O_RDONLY)
-            try:os.fsync(fd)
-            finally:os.close(fd)
-        meta['published'] = True
-        meta['retention'] = _prune_after_publish(served, backups)
-        meta['retention_attention'] = meta['retention']['status'] != 'ok'
-        return meta
-    except BaseException:
-        # Deliberately retain failed staging as evidence; no active generation changed.
-        raise
+    # Any failure before the pointer switch below leaves the staging directory as
+    # evidence (retention expires it after two days); no active generation changes.
+    for dataset,tables in policy.items():
+        if not dataset.replace('_','').isalnum():raise ValueError('Unsafe dataset name')
+        target=staging/(dataset+'.db')
+        copy_database(data/target.name,target)
+        with closing(sqlite3.connect(target)) as db:
+            available={r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not set(tables)<=available:raise ValueError('Required tables missing: '+dataset)
+            counts={t:db.execute('SELECT count(*) FROM "'+t.replace('"','""')+'"').fetchone()[0] for t in tables}
+            if dataset=='intelligence' and evidence['intelligence_build_info']:
+                actual=db.execute('SELECT built_at FROM build_info').fetchone()[0]
+                if actual!=evidence['intelligence_build_info'][0]['built_at']:
+                    raise ValueError('Intelligence no longer matches reviewed run')
+        meta['datasets'][dataset]={'file':target.name,'bytes':target.stat().st_size,
+            'sha256':sha(target),'tables':counts,'backup_finished_utc':utc()}
+    meta['snapshot_finished_utc']=utc()
+    atomic_json(staging/'manifest.json',meta)
+    # Files are closed and durable before the generation becomes reachable.
+    for file in staging.iterdir():
+        with file.open('r+b') as f:os.fsync(f.fileno())
+        if api_group:shutil.chown(file,group=api_group)
+        file.chmod(0o440)
+    if api_group:shutil.chown(staging,group=api_group)
+    staging.chmod(0o550)
+    if os.name!='nt':
+        fd=os.open(staging,os.O_RDONLY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+    staging.rename(generation)
+    if old:
+        prior=served/('.previous-'+uuid.uuid4().hex)
+        prior.symlink_to(old.name,target_is_directory=True)
+        os.replace(prior,served/'previous')
+    link=served/('.current-'+uuid.uuid4().hex)
+    link.symlink_to(generation.name,target_is_directory=True)
+    os.replace(link,current)
+    _fsync_directory(served)
+    meta['published'] = True
+    meta['retention'] = _prune_after_publish(served, backups)
+    meta['retention_attention'] = meta['retention']['status'] != 'ok'
+    return meta
+
+
+def _fsync_directory(path):
+    if os.name != 'nt':
+        fd = os.open(path, os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _managed_generation(pointer, served):
+    target = pointer.resolve(strict=True)
+    if target.parent != served.resolve() or not target.name.startswith(('generation-', 'snapshot-')):
+        raise ValueError('Rollback pointer outside managed generation root')
+    return target
 
 def rollback(served):
-    served=Path(served)
-    target=(served/'previous').resolve(strict=True)
-    if target.parent!=served.resolve() or not target.name.startswith(('generation-','snapshot-')):
-        raise ValueError('Rollback target outside managed generation root')
-    meta=verify_generation(target)
-    temporary=served/('.rollback-'+uuid.uuid4().hex)
-    temporary.symlink_to(target.name,target_is_directory=True)
-    os.replace(temporary,served/'current')
-    return {'status':'rolled_back','generation_id':meta.get('generation_id',target.name)}
+    """Swap current and previous, so a second rollback returns to the newer generation.
+
+    Both targets stay protected throughout: if the second pointer update fails, both
+    pointers name the restored generation and the newer one is still among the three
+    newest older generations that retention keeps.
+    """
+    served = Path(served)
+    newer = _managed_generation(served / 'current', served)
+    target = _managed_generation(served / 'previous', served)
+    if target == newer:
+        raise ValueError('Nothing to roll back: current and previous are the same generation')
+    meta = verify_generation(target)
+    new_current = served / ('.rollback-' + uuid.uuid4().hex)
+    new_previous = served / ('.previous-' + uuid.uuid4().hex)
+    new_current.symlink_to(target.name, target_is_directory=True)
+    new_previous.symlink_to(newer.name, target_is_directory=True)
+    os.replace(new_current, served / 'current')
+    os.replace(new_previous, served / 'previous')
+    _fsync_directory(served)
+    return {'status': 'rolled_back', 'generation_id': meta.get('generation_id', target.name),
+            'previous_generation': newer.name}
 
 def backup_operations(project,work,backups):
     project,work,backups=Path(project),Path(work),Path(backups)
@@ -431,9 +454,11 @@ def restore_drill(backup):
             if dest.name=='send_attempt.json':
                 attempts+=1;attempt_runs.add(relative.parent.as_posix())
         # Recovery never starts a collector or transport; mail needs Sent reconciliation.
-    return {'status':'passed','restored_files':len(meta['files']),'databases':databases,
+    unresolved = sorted(attempt_runs - receipt_runs)
+    # An attempt without a receipt may already have been delivered: never "passed".
+    return {'status':'attention' if unresolved else 'passed','restored_files':len(meta['files']),'databases':databases,
             'send_receipts':receipts,'send_attempts':attempts,'mail_replay_performed':False,
-            'unresolved_send_runs':sorted(attempt_runs-receipt_runs),
+            'unresolved_send_runs':unresolved,
             'requires_mail_sent_reconciliation_before_resume':True,'checked_at_utc':utc()}
 
 def main():
@@ -453,7 +478,9 @@ def main():
         if not a.backup:p.error('--backup required')
         with exclusive(a.work/'operations.lock'),exclusive(a.work/'routine.lock'),exclusive(a.project/'logs/.run.lock'):
             result=restore_drill(a.backup)
-        print(json.dumps(result));return
+        print(json.dumps(result))
+        if result['status']!='passed':raise SystemExit(1)
+        return
     with exclusive(a.work/'operations.lock'),exclusive(a.work/'routine.lock'),exclusive(a.project/'logs/.run.lock'):
         if a.action=='backup':
             result={'backup':str(backup_operations(a.project,a.work,a.backups))}
