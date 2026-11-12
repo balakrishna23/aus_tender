@@ -639,3 +639,36 @@ official contract API checks. Source and tests are included; databases, private
 inputs, generated reports, Ollama binaries and model weights remain local.
 It sends no outreach and has not been deployed to a VPS. See its README for setup,
 supported queries and limits.
+
+### Data quality and identity review
+
+The engine exposes `data_quality_findings`, `contract_quality`,
+`abn_identity_review`, `mmr_match_review` and `registry_identity_checks` when the
+optional local `data_quality.db` evidence store is present. Excel exports include
+these review queues. They distinguish source defects, source recovery checks and
+unapproved identity proposals; they do not rewrite raw procurement releases.
+Missing overseas ABNs are informational. Placeholder dates such as `1900-01-01`
+must not be treated as meaningful contract terms. Exact-name ABN suggestions and
+checksum checks alone do not verify a legal identity.
+
+Unreviewed loose-name or superseded MMR suggestions are excluded from MMR
+recommendations. A known ABN Lookup entity-name conflict also excludes an
+unconfirmed match. Existing manual decisions remain intact; a registry check does
+not confirm MMR eligibility. Review the proposed organisation/ABN pair against its
+sources before confirming it.
+
+Agency contact freshness uses actual notice publication dates, including amendments,
+rather than retrieval dates. A contact shared with a live tender is restricted to
+its formal channel; opt-outs remain excluded. Supplier contact discoveries remain
+unapproved candidates until reviewed. Panel history is retained with explicit
+`membership_status` and `status_as_of` fields so expired membership is visible.
+
+
+### Internal BuyICT alert pilot
+
+`python bdm_monitor.py poll --refresh` creates a silent first-run baseline and
+exports a combined BDM results ledger. Subsequent polls queue new/material changes;
+Gmail delivery and scheduling remain opt-in. Owner/stage/notes edits can be imported
+from CSV or the Results XLSX. Setup and independent-operation instructions:
+[docs/bdm_monitor.md](docs/bdm_monitor.md). This is internal alerting to Sirish,
+not the legacy buyer-outreach agent.
