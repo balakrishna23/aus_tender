@@ -248,6 +248,16 @@ def build_agency_contacts(today, opportunities=()):
         key = (r['buyer'], r['contact_email'].strip().lower())
         if key not in latest or (r['first_published'] or '') > latest[key]['first_published']:
             latest[key] = r
+    # An old original can have a recent, published amendment carrying the same
+    # agency contact. Use that publication as evidence; a download alone never
+    # freshens a contact, and another agency's copy of an address is not proof.
+    for r in optional_rows('contract_api', "SELECT buyer, contact_name, contact_email, contact_phone, contact_branch, "
+                           "published_on AS first_published, page_url FROM contract_versions "
+                           "WHERE contact_email LIKE '%@%' AND published_on BETWEEN ? AND ? ORDER BY release_date",
+                           (since, today.isoformat())):
+        key = (r['buyer'], r['contact_email'].strip().lower())
+        if key not in latest or (r['first_published'] or '') >= (latest[key]['first_published'] or ''):
+            latest[key] = r
     for (buyer, email), r in latest.items():
         out.append(dict(organisation=buyer, name=r['contact_name'], email=r['contact_email'].strip(),
                         phone=r['contact_phone'], branch=r['contact_branch'], source='AusTender contract notice',
@@ -282,6 +292,8 @@ def build_agency_contacts(today, opportunities=()):
             phones.setdefault(email, (n[3].strip(), n[7], n[5]))
         if (n[4] or '').strip():
             branches.setdefault(email, (n[4].strip(), n[7], n[5]))
+    live_emails = {(o.get('contact_email') or '').strip().lower() for o in opportunities
+                   if o.get('contact_safety') == 'FORMAL_CHANNEL_ONLY' and o.get('contact_email')}
     for c in out:
         email, filled = (c['email'] or '').strip().lower(), []
         if not usable_phone(c['phone']) and email in phones:
@@ -325,7 +337,9 @@ def build_agency_contacts(today, opportunities=()):
         c['stale'] = int(age is not None and age > stale_after)
         c['opted_out'] = int((c['email'] or '').lower() in blocked)
         # A published procurement contact outside a live procurement: general introduction only.
-        c['contact_safety'] = 'NO_CONTACT' if c['opted_out'] else c.pop('notice_safety', None) or 'SAFE_GENERAL'
+        notice_safety = c.pop('notice_safety', None)
+        c['contact_safety'] = ('NO_CONTACT' if c['opted_out'] else 'FORMAL_CHANNEL_ONLY'
+                               if (c['email'] or '').strip().lower() in live_emails else notice_safety or 'SAFE_GENERAL')
         c.pop('notice_safety', None)
         c['usable_for_outreach'] = int(not c['opted_out'] and not c['stale'] and c['confidence'] in ('High', 'Medium')
                                        and c['contact_safety'] == 'SAFE_GENERAL')
@@ -403,7 +417,8 @@ def contract_counts(today):
     return counts
 
 
-def build_panel_members(counts):
+def build_panel_members(counts, today=None):
+    today = today or date.today()
     watched = {p['son_id']: p['name'] for p in classify.config('panels')['panels']}
     if not watched:
         return []
@@ -417,21 +432,48 @@ def build_panel_members(counts):
         for member in json.loads(r['current_suppliers'] or '[]'):
             number = abn(member.get('ABN'))
             c = counts.get(number, Counter())
+            start = classify.closing_time(member.get('Deed Start Date'))
+            end = classify.closing_time(member.get('Deed End Date'))
+            status = ('expired' if end and end.date() < today else
+                      'not_started' if start and start.date() > today else
+                      'current' if start and end else 'dates_unverified')
             out.append(dict(son_id=r['son_id'], panel=watched[r['son_id']], member=member.get('Supplier Name'),
                             abn=number, state=member.get('State'), deed_start=member.get('Deed Start Date'),
                             deed_end=member.get('Deed End Date'), contracts=c['contracts'],
                             active_contracts=c['active'], it_contracts=c['it_contracts'],
-                            panel_contracts=panel_contracts.get(number, 0), panel_url=r['url']))
+                            panel_contracts=panel_contracts.get(number, 0), panel_url=r['url'],
+                            membership_status=status, status_as_of=today.isoformat()))
     return out
 
 
-def build_mmr(today, counts):
-    """Spec engine 3 steps 1-3: NIAA list -> organisation (ABN) -> active contracts of $7.5m or more,
-    labelled candidates (public data never says which contracts carry an MMR)."""
+def registry_entity_names():
+    return {r['abn']: r['entity_name'] for r in optional_rows('data_quality',
+        'SELECT abn,entity_name FROM registry_identity_checks WHERE entity_name IS NOT NULL')}
+
+
+def eligible_mmr_matches():
+    from mmr_list import name_keys
     listed = rows('organisations', '''
         SELECT l.organisation, l.contract_count AS mmr_contracts, l.list_date, m.supplier_abn, m.match_method,
                m.review FROM mmr_list l JOIN mmr_matches m ON m.organisation = l.organisation
-        WHERE l.list_date = (SELECT MAX(list_date) FROM mmr_list) AND COALESCE(m.review, '') != 'rejected' ''')
+        WHERE l.list_date = (SELECT MAX(list_date) FROM mmr_list) AND COALESCE(m.review, '') != 'rejected'
+          AND (m.match_method = 'name' OR m.review = 'confirmed') ''')
+    registry = registry_entity_names()
+    eligible = []
+    for row in listed:
+        current = registry.get(row['supplier_abn'])
+        agrees = current and name_keys(current)[0] == name_keys(row['organisation'])[0]
+        if current and not agrees and row['review'] != 'confirmed':
+            continue
+        row['registry_identity_check'] = ('official entity name matches' if agrees else
+            'manual confirmation retained; registry name differs' if current else 'not checked against registry')
+        eligible.append(row)
+    return eligible
+
+
+def build_mmr(today, counts):
+    """NIAA company candidates, with weak and conflicting identity suggestions excluded."""
+    listed = eligible_mmr_matches()
     primes, candidates = [], []
     # Company groups (config): legal entities counted together, e.g. DXC's two listed entities.
     group_of = {name: group for group, names in (classify.config('organisation_aliases').get('groups') or {}).items()
@@ -449,7 +491,8 @@ def build_mmr(today, counts):
             primes.append(dict(organisation=e['organisation'], group_name=group, abn=number,
                                mmr_contracts=e['mmr_contracts'], group_mmr_contracts=group_mmr[group],
                                list_date=e['list_date'], match=e['match_method'],
-                               match_review=e['review'] or 'unreviewed', contracts=c['contracts'],
+                               match_review=e['review'] or 'unreviewed', registry_identity_check=e['registry_identity_check'],
+                               contracts=c['contracts'],
                                active_contracts=c['active'], active_it_contracts=c['active_it'],
                                active_over_7_5m=c['active_over_7_5m']))
     marks = ','.join('?' * len(by_abn)) or "''"
@@ -566,8 +609,7 @@ def main(argv=None):
                                   logging.FileHandler(PROJECT_DIR / 'logs' / 'build_intelligence.log', mode='a',
                                                       encoding='utf-8')])
     started, today = time.time(), date.today()
-    mmr_abns = {r['supplier_abn'] for r in rows('organisations', 'SELECT supplier_abn FROM mmr_matches '
-                                                                  "WHERE COALESCE(review, '') != 'rejected'")}
+    mmr_abns = {r['supplier_abn'] for r in eligible_mmr_matches()}
     opportunities = build_opportunities()
     links, link_stats = build_buyict_links()
     organisations, names, review = build_organisations()
@@ -607,6 +649,38 @@ def main(argv=None):
         write(conn, 'actions', actions, ACTION_COLUMNS)
         write(conn, 'today', today_rows, ['rank'] + ACTION_COLUMNS)
         write(conn, 'prime_briefs', briefs, prime_briefs.COLUMNS)
+        write(conn, 'contract_quality', optional_rows('data_quality', '''
+            SELECT c.cn_id,c.checked_at_utc,c.source_url,c.status,
+                   json_extract(c.result_json,'$.has_original') AS has_original,
+                   json_extract(c.result_json,'$.date_quality') AS date_quality,
+                   json_extract(c.result_json,'$.source_status') AS source_status,
+                   json_extract(c.result_json,'$.response_sha256') AS evidence_sha256
+            FROM contract_checks c WHERE c.checked_at_utc=(
+                SELECT MAX(n.checked_at_utc) FROM contract_checks n WHERE n.cn_id=c.cn_id)'''),
+              ['cn_id','checked_at_utc','source_url','status','has_original','date_quality','source_status','evidence_sha256'])
+        write(conn, 'abn_identity_review', optional_rows('data_quality', 'SELECT * FROM abn_candidates'),
+              ['cn_id','proposed_abn','identity_basis','evidence_url','review_status','checked_at_utc'])
+        write(conn, 'data_quality_findings', optional_rows('data_quality', "SELECT * FROM quality_findings WHERE status='present'"),
+              ['cn_id','issue_type','observed_value','source_url','severity','first_detected_at_utc','last_detected_at_utc','status'])
+        registry = registry_entity_names()
+        from mmr_list import name_keys
+        mmr_reviews = optional_rows('organisations', '''
+            SELECT l.organisation,l.list_date,m.supplier_abn,m.supplier_names,m.match_method,m.review,
+                   CASE WHEN m.review='rejected' THEN 'rejected'
+                        WHEN m.review='confirmed' THEN 'confirmed identity; contract MMR remains unverified'
+                        WHEN m.match_method='name' THEN 'exact-name suggestion; review required'
+                        WHEN m.supplier_abn IS NULL THEN 'unmatched'
+                        ELSE 'excluded pending identity review' END AS identity_status
+            FROM mmr_list l LEFT JOIN mmr_matches m ON m.organisation=l.organisation
+            WHERE l.list_date=(SELECT MAX(list_date) FROM mmr_list)''')
+        for row in mmr_reviews:
+            current = registry.get(row['supplier_abn'])
+            if current and name_keys(current)[0] != name_keys(row['organisation'])[0] and row['review'] != 'confirmed':
+                row['identity_status'] = 'excluded: registry entity differs; identity review required'
+        write(conn, 'mmr_match_review', mmr_reviews,
+              ['organisation','list_date','supplier_abn','supplier_names','match_method','review','identity_status'])
+        write(conn, 'registry_identity_checks', optional_rows('data_quality', 'SELECT * FROM registry_identity_checks'),
+              ['abn','expected_entity','entity_name','source_url','status','checked_at_utc','evidence_sha256','scope'])
         write(conn, 'build_info', [dict(built_at=datetime.now().isoformat(timespec='seconds'),
                                         buyict_link_stats=json.dumps(link_stats))])
         conn.commit()

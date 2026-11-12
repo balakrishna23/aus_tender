@@ -1,6 +1,10 @@
 import sqlite3
+import json
+import tempfile
 import unittest
 from contextlib import closing
+from pathlib import Path
+from unittest.mock import patch
 import company_coverage as coverage
 import sync_approachable_routes as routes
 
@@ -9,6 +13,25 @@ REVIEWED = 'reviewed public business route available'
 
 
 class ContactStatusTests(unittest.TestCase):
+    def test_panel_only_supplier_with_actual_source_field_names_is_included(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with closing(sqlite3.connect(root/'contract_api.db')) as db:
+                db.execute('''CREATE TABLE contract_versions(supplier,supplier_abn,cn_id,release_id,release_date,
+                    supplier_street,supplier_locality,supplier_region,supplier_postcode,supplier_country,source_url,retrieved_at)''')
+                db.execute('CREATE TABLE contracts(supplier,supplier_abn,cn_id,first_published)')
+            with closing(sqlite3.connect(root/'standing_offer.db')) as db:
+                db.execute('CREATE TABLE standing_offers(current_suppliers,previous_suppliers,url)')
+                db.execute('INSERT INTO standing_offers VALUES (?,?,?)',
+                    (json.dumps([{'Supplier Name':'Panel-only Pty Ltd','ABN':'18008476944'}]),'[]','https://example.gov.au/panel'))
+                db.commit()
+            with patch.object(coverage.assistant,'DB_DIR',root),patch.object(coverage,'CONTACTS',root/'missing.json'):
+                result=coverage.build(report_dir=root/'reports')
+            with closing(sqlite3.connect(root/'company_contacts.db')) as db:
+                row=db.execute('SELECT name,abn,inventory_source_url FROM suppliers').fetchone()
+            self.assertEqual(row,('Panel-only Pty Ltd','18008476944','https://example.gov.au/panel'))
+            self.assertEqual(result['supplier_identities'],1)
+
     def test_status_and_counts_include_approachable_routes(self):
         with closing(sqlite3.connect(':memory:')) as db:
             db.executescript(coverage.SCHEMA + routes.SCHEMA)

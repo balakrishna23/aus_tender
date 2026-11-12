@@ -449,14 +449,26 @@ class BuyIctApiSpider(scrapy.Spider):
             "url": detail_url,
             "sys_id": summary.get("sys_id")
             or (re.search(r"sys_id=([0-9a-f]{32})", detail_url) or [None, None])[1],
-            "status": summary.get("_status"),
+            # Explicit detail status overrides the listing summary (which can lag).
+            "status": self._public_status(opp_widget_data, summary),
             # Everything else BuyICT shows, so nothing on the page is lost.
             "description": html_to_text(opp_widget_data.get("description")),
             "key_duties": html_to_text(opp_widget_data.get("key_duties")),
             "response_requirements": opp_widget_data.get("response_requirements"),
             "main_details": main_details_map,
-            "all_details": self._other_details(opp_widget_data),
+            "all_details": dict(self._other_details(opp_widget_data),
+                                public_requirements=opp_widget_data.get('requirements') or []),
         }
+
+    @staticmethod
+    def _public_status(data, summary):
+        if data.get('is_cancelled') is True:
+            return 'cancelled'
+        if data.get('rfqOpen') is False:
+            return 'closed'
+        if data.get('rfqOpen') is True:
+            return 'open'
+        return summary.get('_status')
 
     # Page-state flags, labels and the visitor's session: not part of the opportunity.
     UI_KEYS = {"seller", "user", "page", "accordian", "access_message", "recTypeForDetailFilter",

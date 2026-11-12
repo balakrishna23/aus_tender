@@ -129,6 +129,8 @@ def get_public(session,url,allowed_host,robot=None):
         response=session.get(url,headers={'User-Agent':AGENT},timeout=18,allow_redirects=False)
         if response.status_code in (301,302,303,307,308):
             target=urljoin(url,response.headers.get('Location',''))
+            if robot is not None and host(target)!=host(url) and host(target)!=host(robot.url):
+                raise ValueError('New website host requires its own robots review: '+host(target))
             url=follow(url,target,allowed_host) if isinstance(allowed_host,set) else target;continue
         if response.status_code!=200:raise ValueError('HTTP '+str(response.status_code))
         if len(response.content)>2_000_000:raise ValueError('Page exceeds 2 MB')
@@ -179,6 +181,7 @@ def discover(website,session=None,limit=5):
     if r.status_code==200 and 'html' not in r.headers.get('Content-Type','').lower():robot.parse(r.text.splitlines())
     elif r.status_code in (200,404,410):robot.parse([])  # an HTML page in place of robots.txt means there is none
     else:raise ValueError('Cannot establish robots permission: HTTP '+str(r.status_code))
+    robot.set_url(robot_url)
     wait=max(1,robot.crawl_delay(AGENT) or robot.crawl_delay('*') or 1)
     if wait>30:raise ValueError('Long crawl delay: manual source review required')
     pending=[website];seen=set();found=[];events=[];ranks={}
@@ -228,7 +231,24 @@ def relabel(connection):
     connection.executemany('UPDATE contact_candidates SET purpose=? WHERE rowid=?',changes)
     return len(changes)
 
-def run(crawl=False,limit=20,workers=6):
+def priority_supplier_keys(directory,today=None):
+    """Focus limited research on active IT services, labour hire and relevant MMR primes."""
+    from zoneinfo import ZoneInfo
+    today=today or datetime.now(ZoneInfo('Australia/Canberra')).date().isoformat()
+    keys=set()
+    for name,sql,args in [
+        ('contract_api',"SELECT DISTINCT supplier_abn FROM contracts WHERE current_end_date>=? "
+                        "AND category_family IN ('ICT services','labour hire and recruitment')",(today,)),
+        ('intelligence','SELECT DISTINCT abn FROM mmr_primes WHERE active_it_contracts>0',()),
+    ]:
+        path=Path(directory)/(name+'.db')
+        if path.is_file():
+            with closing(sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)) as db:
+                keys.update('ABN:'+str(row[0]) for row in db.execute(sql,args) if row[0])
+    return keys
+
+
+def run(crawl=False,limit=20,workers=6,priority_only=False):
     mapping=json.loads(MAP.read_text(encoding='utf-8'))['records'] if MAP.is_file() else []
     by_abn={r['supplier_abn']:r for r in mapping if r.get('identity_status')=='reviewed'}
     summaries=[]
@@ -264,11 +284,14 @@ def run(crawl=False,limit=20,workers=6):
                     WHERE supplier_key=?''',(known['website_url'],known['identity_source_url'],row['supplier_key']))
         relabel(connection);connection.commit()
         if crawl:
+            keys=priority_supplier_keys(assistant.DB_DIR) if priority_only else set()
+            restrict=(' AND q.supplier_key IN ('+','.join('?' for _ in keys)+')') if keys else (' AND 0' if priority_only else '')
             queue=connection.execute("""SELECT q.* FROM contact_research_queue q
                 JOIN suppliers s ON s.supplier_key=q.supplier_key
                 WHERE q.website_url!='' AND q.status='website_established'
+                """+restrict+"""
                 ORDER BY s.latest_publication DESC,s.notice_count DESC,s.name COLLATE NOCASE
-                LIMIT ?""",(limit,)).fetchall()
+                LIMIT ?""",(*sorted(keys),limit)).fetchall()
             # Several companies at once, but one host is only ever crawled by one worker, one page at a time.
             # Group ABNs that share a website are crawled once.
             sites={}
@@ -297,7 +320,7 @@ def run(crawl=False,limit=20,workers=6):
                         connection.commit()
         counts={row[0]:row[1] for row in connection.execute('SELECT status,count(*) FROM contact_research_queue GROUP BY status')}
         candidates=connection.execute('SELECT count(*) FROM contact_candidates').fetchone()[0]
-    result={'checked_at_utc':now(),'queue_counts':counts,'candidate_routes':candidates,'attempts_this_run':summaries,
+    result={'checked_at_utc':now(),'queue_counts':counts,'candidate_routes':candidates,'attempts_this_run':summaries,'priority_only':priority_only,
             'limit':'Search links are a research queue, not source proof. Candidates need identity/purpose review. No guessed emails, login bypass, bought lists, LinkedIn scraping or sending.'}
     reports=ROOT/'reports';reports.mkdir(exist_ok=True)
     (reports/'contact-discovery.json').write_text(json.dumps(result,indent=2),encoding='utf-8')
@@ -306,4 +329,5 @@ def run(crawl=False,limit=20,workers=6):
 if __name__=='__main__':
     parser=argparse.ArgumentParser();parser.add_argument('--crawl-known-sites',action='store_true');parser.add_argument('--limit',type=int,default=20)
     parser.add_argument('--workers',type=int,default=6,help='Different company sites crawled at once')
-    args=parser.parse_args();run(args.crawl_known_sites,args.limit,args.workers)
+    parser.add_argument('--priority-only',action='store_true',help='Research active ICT-services/labour-hire suppliers and ICT-active MMR primes first')
+    args=parser.parse_args();run(args.crawl_known_sites,args.limit,args.workers,args.priority_only)

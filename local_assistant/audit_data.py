@@ -17,14 +17,19 @@ def audit():
        SUM(CASE WHEN supplier IS NULL OR trim(supplier)='' THEN 1 ELSE 0 END) AS missing_supplier,
        SUM(CASE WHEN buyer IS NULL OR trim(buyer)='' THEN 1 ELSE 0 END) AS missing_buyer,
        SUM(CASE WHEN supplier_abn IS NULL OR trim(supplier_abn)='' THEN 1 ELSE 0 END) AS missing_supplier_abn,
+       SUM(CASE WHEN COALESCE(supplier_abn,'')='' AND supplier_state='Outside Australia' THEN 1 ELSE 0 END) AS missing_abn_outside_australia,
+       SUM(CASE WHEN COALESCE(supplier_abn,'')='' AND COALESCE(supplier_state,'')!='Outside Australia' THEN 1 ELSE 0 END) AS missing_abn_other_locations,
        SUM(CASE WHEN current_end_date IS NULL OR trim(current_end_date)='' THEN 1 ELSE 0 END) AS missing_end_date,
        SUM(CASE WHEN current_end_date IS NOT NULL AND date(current_end_date) IS NULL THEN 1 ELSE 0 END) AS unparseable_end_date,
        SUM(CASE WHEN date(current_end_date)<date(start_date) THEN 1 ELSE 0 END) AS end_before_start,
+       SUM(CASE WHEN current_end_date='1900-01-01' THEN 1 ELSE 0 END) AS source_placeholder_end_dates,
        SUM(CASE WHEN current_value IS NULL THEN 1 ELSE 0 END) AS missing_value,
        SUM(CASE WHEN current_value<=0 THEN 1 ELSE 0 END) AS nonpositive_value,
        SUM(CASE WHEN page_url IS NULL OR trim(page_url)='' THEN 1 ELSE 0 END) AS missing_readable_source,
        MAX(retrieved_at) AS latest_retrieval,MAX(first_published) AS latest_publication
        FROM contracts""")[0]
+    result['contracts']['missing_original_notices']=q('contract_api.db',
+        'SELECT COUNT(*) AS n FROM (SELECT cn_id FROM contract_versions GROUP BY cn_id HAVING MIN(amendment_no)>0)')[0]['n']
     result['opportunities']=q('intelligence.db',"""SELECT source,COUNT(*) AS total,
         MAX(retrieved_at) AS latest_retrieval,
         SUM(CASE WHEN lower(status_effective)='open' THEN 1 ELSE 0 END) AS stored_open,
@@ -40,6 +45,14 @@ def audit():
     result['panels']['expired_member_records']=sum(bool(date_value(r['deed_end']) and date_value(r['deed_end'])<today) for r in rows)
     result['panels']['incomplete_member_dates']=sum(not date_value(r['deed_start']) or not date_value(r['deed_end']) for r in rows)
     result['mmr']=q('intelligence.db',"SELECT COUNT(*) AS matched_rows,COUNT(DISTINCT organisation) AS organisations,MIN(list_date) AS oldest_list,MAX(list_date) AS latest_list, SUM(CASE WHEN COALESCE(match_review,'')!='confirmed' THEN 1 ELSE 0 END) AS unconfirmed_match_rows FROM mmr_primes")[0]
+    result['mmr']['source_match_review']=q('organisations.db',
+        "SELECT match_method,COALESCE(review,'unreviewed') AS review,COUNT(*) AS rows FROM mmr_matches GROUP BY 1,2")
+    result['mmr']['registry_name_conflicts_excluded']=q('intelligence.db',
+        "SELECT COUNT(*) AS n FROM mmr_match_review WHERE identity_status LIKE 'excluded: registry%'")[0]['n']
+    result['review_queues']={
+        'abn_identity_proposals':q('intelligence.db','SELECT COUNT(*) AS n FROM abn_identity_review')[0]['n'],
+        'targeted_contract_source_checks':q('intelligence.db','SELECT COUNT(*) AS n FROM contract_quality')[0]['n'],
+        'registry_checks':q('intelligence.db','SELECT COUNT(*) AS n FROM registry_identity_checks')[0]['n']}
     result['contacts']=q('intelligence.db',"SELECT COUNT(*) AS records,SUM(CASE WHEN usable_for_outreach=1 AND stale=0 AND opted_out=0 THEN 1 ELSE 0 END) AS stored_usable,SUM(CASE WHEN stale=1 THEN 1 ELSE 0 END) AS flagged_stale,SUM(CASE WHEN opted_out=1 THEN 1 ELSE 0 END) AS opted_out FROM agency_contacts")[0]
     from public_research import findings
     public=findings([])
