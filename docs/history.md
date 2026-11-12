@@ -5,7 +5,7 @@ contact details, sent-newsletter records and private operational notes are kept 
 team's private workspace, not here. For the original 7 October design record see
 [HANDOFF.md](HANDOFF.md); for current operations see [cloud_operations.md](cloud_operations.md).
 
-## 12-13 November 2026: cloud stabilisation (branch `fix/cloud-stabilization-20261112`)
+## 12 November 2026: cloud stabilisation (branch `fix/cloud-stabilization-20261112`)
 
 Six agreed workstreams, each with a record in [workstreams/](workstreams/):
 

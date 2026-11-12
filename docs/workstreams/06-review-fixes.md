@@ -1,7 +1,7 @@
 # Workstream 6: review fixes
 
 Status: implemented, tested on Windows and on the server (staged, nothing installed);
-committed locally. Not deployed, not pushed. Carried out by Claude, 12-13 November 2026.
+committed locally. Not deployed, not pushed. Carried out by Claude, 12 November 2026.
 Order follows the approved plan: review fixes before the format-only commit.
 
 ## Fixes
