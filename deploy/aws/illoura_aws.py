@@ -246,7 +246,7 @@ def status(remote, settings=None):
         report['firewall'] = [f"{p['fromPort']}/{p['protocol']} {','.join(p.get('cidrs', []))}"
                               for p in ports.get('portStates', [])]
     _, out, _ = remote.run(['systemctl', 'is-active', 'illoura-api', 'nginx'])
-    report['services'] = dict(zip(['illoura-api', 'nginx'], out.split()))
+    report['services'] = dict(zip(['illoura-api', 'nginx'], out.split(), strict=False))
     report['timers'] = timer_states(remote)
     code, out, _ = remote.run(['sudo', 'cat', HEALTH_STATUS])
     if code == 0:

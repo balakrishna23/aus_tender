@@ -1,5 +1,6 @@
 """Local Claude Desktop/Code MCP bridge. API credentials remain in a private file."""
-import argparse,json
+import argparse
+import json
 from pathlib import Path
 import httpx
 from mcp.server.mcpserver import MCPServer

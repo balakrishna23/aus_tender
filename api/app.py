@@ -19,7 +19,6 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel,Field
-from starlette.concurrency import run_in_threadpool
 
 DATA=Path(os.environ.get('ILLOURA_DATA_DIR','/srv/illoura-data/current'))
 KEYS=Path(os.environ.get('ILLOURA_KEYS_FILE','/etc/illoura-api/keys.json'))
@@ -38,11 +37,11 @@ log=logging.getLogger('illoura.audit')
 
 def generation():
     try:return DATA.resolve(strict=True)
-    except OSError:raise HTTPException(503,'Data snapshot unavailable')
+    except OSError:raise HTTPException(503,'Data snapshot unavailable') from None
 
 def manifest(root=None):
     try:return json.loads(((root or generation())/'manifest.json').read_text(encoding='utf-8'))
-    except (OSError,ValueError):raise HTTPException(503,'Data snapshot unavailable')
+    except (OSError,ValueError):raise HTTPException(503,'Data snapshot unavailable') from None
 
 def connect(dataset,root=None):
     if dataset not in ALLOWED:raise HTTPException(404,'Unknown dataset')
@@ -263,7 +262,7 @@ def get_catalog():return catalog()
 @app.get('/v1/operations')
 def get_operations():
     try:return json.loads(HEALTH.read_text())
-    except (OSError,ValueError):raise HTTPException(503,'Operational health unavailable')
+    except (OSError,ValueError):raise HTTPException(503,'Operational health unavailable') from None
 @app.get('/v1/schema/{dataset}')
 def get_schema(dataset:str):return schema(dataset)
 @app.post('/v1/query')

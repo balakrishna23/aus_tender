@@ -2,7 +2,6 @@
 import json
 from pathlib import Path
 import subprocess
-import sys
 from illoura_cloud_ops import atomic_json,exclusive,utc,backup_operations,publish,restore_drill
 
 WORK=Path('/opt/illoura-routine');OPS=Path('/opt/illoura-ops')
