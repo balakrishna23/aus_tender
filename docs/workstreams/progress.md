@@ -43,3 +43,10 @@ Only one agent edits the branch at a time.
 - Next: Sirish's decisions: push approval; server deploy (create health.env first); daily
   collection cadence. Then roadmap packages B and C.
 - Half-finished: none. Nothing pushed or deployed.
+
+## 12 Nov ~23:45 IST, Claude: push, deploy, daily brief (Sirish: push, deploy, 08:15 email)
+- Done: repo confirmed private; branch pushed, PR #1 labelled, workstream tags pushed.
+  Server: health setting, deploy-api, deploy-ops, all checks ok; daily brief built (workstream
+  7), dry run passed, schedule enabled: first run Fri 13 Nov 06:15 AEDT, email 08:15 AEDT.
+- Next: watch the first unattended run and its receipt; then roadmap packages B and C.
+- Half-finished: none.

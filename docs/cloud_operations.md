@@ -29,8 +29,8 @@ ILLOURA_GMAIL_SENDER=<the authorised sending mailbox>
 
 then `sudo systemctl daemon-reload`. Without it the mail check reports
 `unconfigured`, overall health becomes `attention` and `/readyz` returns 503, which
-the external watch will report. The version deployed on 12 November still carries
-its own value and is unaffected until this version is installed.
+the external watch will report. Done on 12 November 2026 (`set-health-sender`) before
+this version was deployed; health reports `mail_authorization: ok`.
 
 ## Operating the server: `deploy/aws/illoura_aws.py`
 
@@ -51,6 +51,9 @@ uv run --no-project --python 3.11 --with-requirements requirements-deploy.txt py
 | `deploy-ops --yes` | Ship `deploy/` operations code, units, ops tests and the API table policy to a staging folder, verify SHA-256 on the server, run the tests there, then install. Refuses if `/etc/illoura-ops/health.env` lacks `ILLOURA_GMAIL_SENDER`. Records timer enable states before/after and fails if they change; never enables a timer. |
 | `deploy-api --yes` | Ship `api/app.py`, run `api/test_security.py` on the server as `illoura-api`, back up the live app to `/var/backups/illoura/api-app-<time>.py`, install, restart, and restore the backup automatically if `/healthz` does not recover. Refuses dependency changes (those need a reviewed manual install). Never touches keys, snapshot pointers or the environment file. |
 | `verify-ops` / `verify-api` | Stage the code and run its tests on the server (operations tests unprivileged with real symlinks; API tests as `illoura-api`), then remove the staging folder. Installs nothing; no `--yes` needed. Run before any deploy. |
+| `set-health-sender --email ADDRESS --yes` | Writes `/etc/illoura-ops/health.env` (root, 0600). The address is uploaded as file content, never placed in a command line or printed. |
+| `daily-brief-dry-run` | Composes a copy of the latest run under `/var/tmp` with live listing checks and layout checks, returns the text preview. Never sends. |
+| `schedule enable --yes` / `schedule disable --yes` | Turns the 08:15 daily brief on or off. The only action that changes a timer's enable state. |
 | `api-key create --name NAME` / `api-key revoke --name NAME` | Named team credentials. The key is written only to the private directory; the server stores its hash. |
 
 Settings come from environment variables (`ILLOURA_AWS_PROFILE`, `ILLOURA_AWS_REGION`,
@@ -63,6 +66,31 @@ The API service source and its security tests are in `api/`. `api/install-api.sh
 `install-api.sh` would repoint `current` at the original snapshot, so use `deploy-api`
 for updates. `deploy/aws/cloud-init.sh` is the POSIX first-boot script (checked with
 `sh -n`). The daily newsletter routine helpers remain in the private workspace.
+
+## Daily brief at 08:15 Sydney
+
+Requested by Sirish on 12 November 2026 and enabled the same night
+(`illoura-daily-brief.timer`, first run Friday 13 November). It replaces the separate
+collection timer, which stays disabled so collection never runs twice.
+
+1. 06:15 Australia/Sydney: `illoura_daily_brief.py run` (root) runs the existing collection
+   coordinator: eight sources, research, evidence, backup, restore drill, publication with
+   retention. Any failure stops the day; the health service records it.
+2. As `scraper`: selects up to eight open, relevant BuyICT ICT labour-hire requests closing
+   soonest (18 hours to 21 days away; professional services fill in if fewer than three),
+   rechecks each public listing live, drops any that fail, adds "New on BuyICT since the last
+   run", writes templated editorial notes, composes, and runs desktop/mobile layout checks.
+3. Records an automated review (content hashes, layout result, selection) and waits for 08:15.
+4. Sends once through the existing helper, which refuses source gaps, stale edition dates,
+   changed content, identity mismatch and duplicates (Gmail Sent is checked by subject).
+   If the brief is not ready by 12:00 Sydney the day is skipped, not sent late. The timer
+   has no catch-up after downtime.
+
+The email says plainly that selection was automatic and that invitation access, secure
+attachments and candidate fit are unverified. It goes only to the internal recipient fixed
+in the server's private send helper; it never contacts buyers or partners.
+Outputs: `/opt/illoura-routine/reports/daily_sweep_<IST time>/` (preview, screenshots,
+review, receipt). Rehearse with `daily-brief-dry-run`; stop with `schedule disable --yes`.
 
 ## Collection and publication
 
