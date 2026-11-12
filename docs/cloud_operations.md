@@ -32,6 +32,37 @@ then `sudo systemctl daemon-reload`. Without it the mail check reports
 the external watch will report. The version deployed on 12 November still carries
 its own value and is unaffected until this version is installed.
 
+## Operating the server: `deploy/aws/illoura_aws.py`
+
+One administrator CLI replaces the one-off helpers formerly kept beside the trial
+report. It runs only fixed actions over SSH with a pinned host key; there is no
+"run any command" option. Run from the repository root on the administrator machine:
+
+```text
+uv run --no-project --python 3.11 --with-requirements requirements-deploy.txt python deploy/aws/illoura_aws.py <action>
+```
+
+| Action | Effect |
+|---|---|
+| `status` | Read-only: instance, firewall, services, timer states, health, publication, disk. |
+| `prune --dry-run` | Preview retention; deletes nothing. |
+| `backup`, `restore-drill --backup PATH` | Operations backup; restore check into a temporary folder. |
+| `publish --yes`, `rollback --yes`, `prune --yes` | Change production data; refuse without `--yes`. |
+| `deploy-ops --yes` | Ship `deploy/` operations code, units, ops tests and the API table policy to a staging folder, verify SHA-256 on the server, run the tests there, then install. Refuses if `/etc/illoura-ops/health.env` lacks `ILLOURA_GMAIL_SENDER`. Records timer enable states before/after and fails if they change; never enables a timer. |
+| `deploy-api --yes` | Ship `api/app.py`, run `api/test_security.py` on the server as `illoura-api`, back up the live app to `/var/backups/illoura/api-app-<time>.py`, install, restart, and restore the backup automatically if `/healthz` does not recover. Refuses dependency changes (those need a reviewed manual install). Never touches keys, snapshot pointers or the environment file. |
+| `api-key create --name NAME` / `api-key revoke --name NAME` | Named team credentials. The key is written only to the private directory; the server stores its hash. |
+
+Settings come from environment variables (`ILLOURA_AWS_PROFILE`, `ILLOURA_AWS_REGION`,
+`ILLOURA_AWS_INSTANCE`, optional `ILLOURA_AWS_ACCOUNT` check, `ILLOURA_PRIVATE_DIR`);
+no account ID is stored in the repository. `publish`/`prune` may exit 1 with
+"published, retention needs attention"; read the printed JSON.
+
+The API service source and its security tests are in `api/`. `api/install-api.sh` and
+`api/enable-https.sh` are first-install provisioning records only: rerunning
+`install-api.sh` would repoint `current` at the original snapshot, so use `deploy-api`
+for updates. `deploy/aws/cloud-init.sh` is the POSIX first-boot script (checked with
+`sh -n`). The daily newsletter routine helpers remain in the private workspace.
+
 ## Collection and publication
 
 Use the coordinator as the supported cloud write entry point:
