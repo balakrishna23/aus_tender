@@ -169,6 +169,23 @@ class DeployApiTests(unittest.TestCase):
         self.assertEqual(len(restarts), 2)
 
 
+class VerifyOnlyTests(unittest.TestCase):
+    def test_verify_ops_runs_staged_tests_and_installs_nothing(self):
+        remote = FakeRemote(health_configured=False)  # verification does not need the health setting
+        result = cli.deploy_ops(remote, test_only=True)
+        self.assertTrue(result['tested'])
+        self.assertEqual(remote.installs(), [])
+        self.assertTrue(any('unittest' in c for c in remote.calls))
+        self.assertTrue(any(c[:2] == ['rm', '-rf'] for c in remote.calls))
+        self.assertNotIn(['sudo', 'systemctl', 'daemon-reload'], remote.calls)
+
+    def test_verify_api_installs_nothing_and_never_restarts(self):
+        remote = FakeRemote()
+        self.assertTrue(cli.deploy_api(remote, test_only=True)['tested'])
+        self.assertEqual(remote.installs(), [])
+        self.assertFalse(any('restart' in c for c in remote.calls))
+
+
 class ApiKeyTests(unittest.TestCase):
     def test_key_stays_private_and_server_gets_only_its_hash(self):
         with tempfile.TemporaryDirectory() as folder:

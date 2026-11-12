@@ -182,6 +182,15 @@ def must(remote, argv, what, timeout=900):
     return out
 
 
+def run_tests(remote, argv, what):
+    """unittest reports on stderr; return its 'Ran N tests ... OK' summary as evidence."""
+    code, out, err = remote.run(argv, timeout=1800)
+    text = (out + '\n' + err).strip()
+    if code:
+        raise OperationError(f'{what} failed (exit {code}): {text[-600:]}')
+    return ' '.join(line for line in text.splitlines()[-4:] if line.strip() and set(line) != {'-'})
+
+
 # --------------------------------------------------------------------------- staging
 
 def new_stage():
@@ -284,11 +293,12 @@ def health_sender_configured(remote):
     return code == 0 and out.strip() not in ('', '0')
 
 
-def deploy_ops(remote, *, yes=False, allow_unconfigured_health=False, repo=REPO):
-    if not yes:
+def deploy_ops(remote, *, yes=False, allow_unconfigured_health=False, repo=REPO, test_only=False):
+    """Stage, verify and test operations code; install unless test_only."""
+    if not yes and not test_only:
         raise OperationError('deploy-ops changes the server; rerun with --yes')
     health_source = (repo / 'deploy/illoura_cloud_health.py').read_text(encoding='utf-8')
-    if ('ILLOURA_GMAIL_SENDER' in health_source and not allow_unconfigured_health
+    if (not test_only and 'ILLOURA_GMAIL_SENDER' in health_source and not allow_unconfigured_health
             and not health_sender_configured(remote)):
         raise OperationError(f'{HEALTH_ENV} lacks ILLOURA_GMAIL_SENDER; create it first '
                              '(see docs/cloud_operations.md). Nothing was changed.')
@@ -300,8 +310,11 @@ def deploy_ops(remote, *, yes=False, allow_unconfigured_health=False, repo=REPO)
     stage = new_stage()
     try:
         stage_files(remote, stage, files)
-        must(remote, [OPS_PYTHON, '-m', 'unittest', 'discover', '-s', stage + '/tests', '-p', 'test_cloud_*.py',
-                      '-t', stage], 'staged operations tests (nothing installed)')
+        # The tests locate ../deploy themselves; tests/ is not a package, so no -t here.
+        tests = run_tests(remote, [OPS_PYTHON, '-m', 'unittest', 'discover', '-s', stage + '/tests',
+                                   '-p', 'test_cloud_*.py'], 'staged operations tests (nothing installed)')
+        if test_only:
+            return {'tested': True, 'installed': [], 'tests': tests}
         for name in OPS_FILES + ('policy.json',):
             must(remote, ['sudo', 'install', '-o', 'root', '-g', 'root', '-m', '0644',
                           f'{stage}/deploy/{name}', f'{OPS_DIR}/{name}'], 'install ' + name)
@@ -322,8 +335,9 @@ def deploy_ops(remote, *, yes=False, allow_unconfigured_health=False, repo=REPO)
             'hashes': {k: sha256(v) for k, v in files.items() if k.startswith('deploy/')}}
 
 
-def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30):
-    if not yes:
+def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False):
+    """Stage and test api/app.py as the API user; install with rollback unless test_only."""
+    if not yes and not test_only:
         raise OperationError('deploy-api restarts the live API; rerun with --yes')
     files = {n: lf_bytes(repo / 'api' / n) for n in ('app.py', 'test_security.py', 'requirements.txt')}
     code, out, _ = remote.run(['sudo', 'cat', API_DIR + '/requirements.txt'])
@@ -337,8 +351,10 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30):
     backup = f'{BACKUP_ROOT}/api-app-{stamp}.py'
     try:
         stage_files(remote, stage, files)
-        must(remote, ['sudo', '-u', 'illoura-api', API_PYTHON, '-m', 'unittest', 'discover', '-s', stage,
-                      '-p', 'test_security.py', '-t', stage], 'staged API tests (nothing installed)')
+        tests = run_tests(remote, ['sudo', '-u', 'illoura-api', API_PYTHON, '-m', 'unittest', 'discover', '-s',
+                                   stage, '-p', 'test_security.py', '-t', stage], 'staged API tests (nothing installed)')
+        if test_only:
+            return {'tested': True, 'installed': [], 'tests': tests}
         must(remote, ['sudo', 'install', '-o', 'root', '-g', 'root', '-m', '0600',
                       API_DIR + '/app.py', backup], 'back up live API')
         must(remote, ['sudo', 'install', '-o', 'root', '-g', 'illoura-api', '-m', '0640',
@@ -413,6 +429,8 @@ def build_parser():
     ops.add_argument('--allow-unconfigured-health', action='store_true')
     sub.add_parser('deploy-api', help='Ship, test and install api/app.py with automatic rollback'
                    ).add_argument('--yes', action='store_true')
+    sub.add_parser('verify-ops', help='Stage and run the operations tests on the server; installs nothing')
+    sub.add_parser('verify-api', help='Stage and run the API tests on the server; installs nothing')
     key = sub.add_parser('api-key')
     key.add_argument('key_action', choices=['create', 'revoke'])
     key.add_argument('--name', required=True)
@@ -434,6 +452,10 @@ def main(argv=None, remote_factory=SshRemote):
             result = deploy_ops(remote, yes=args.yes, allow_unconfigured_health=args.allow_unconfigured_health)
         elif args.action == 'deploy-api':
             result = deploy_api(remote, yes=args.yes)
+        elif args.action == 'verify-ops':
+            result = deploy_ops(remote, test_only=True)
+        elif args.action == 'verify-api':
+            result = deploy_api(remote, test_only=True)
         else:
             result = api_key(remote, settings, args.key_action, args.name)
     finally:
