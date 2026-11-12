@@ -50,6 +50,7 @@ uv run --no-project --python 3.11 --with-requirements requirements-deploy.txt py
 | `publish --yes`, `rollback --yes`, `prune --yes` | Change production data; refuse without `--yes`. |
 | `deploy-ops --yes` | Ship `deploy/` operations code, units, ops tests and the API table policy to a staging folder, verify SHA-256 on the server, run the tests there, then install. Refuses if `/etc/illoura-ops/health.env` lacks `ILLOURA_GMAIL_SENDER`. Records timer enable states before/after and fails if they change; never enables a timer. |
 | `deploy-api --yes` | Ship `api/app.py`, run `api/test_security.py` on the server as `illoura-api`, back up the live app to `/var/backups/illoura/api-app-<time>.py`, install, restart, and restore the backup automatically if `/healthz` does not recover. Refuses dependency changes (those need a reviewed manual install). Never touches keys, snapshot pointers or the environment file. |
+| `verify-ops` / `verify-api` | Stage the code and run its tests on the server (operations tests unprivileged with real symlinks; API tests as `illoura-api`), then remove the staging folder. Installs nothing; no `--yes` needed. Run before any deploy. |
 | `api-key create --name NAME` / `api-key revoke --name NAME` | Named team credentials. The key is written only to the private directory; the server stores its hash. |
 
 Settings come from environment variables (`ILLOURA_AWS_PROFILE`, `ILLOURA_AWS_REGION`,

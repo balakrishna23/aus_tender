@@ -20,3 +20,10 @@ Only one agent edits the branch at a time.
   tests, POSIX cloud-init, docs; 39 superseded report helpers archived; live `status` verified.
 - Next: workstream 6 (review fixes), then 4 (format-only), then 5 (HANDOFF/history).
 - Half-finished: none. Nothing deployed.
+
+## 13 Nov ~00:15 IST, Claude: workstream 6 (review fixes)
+- Done: restore attention + exit 1, rollback swap, no-op except removed, per-client failed-key
+  throttling (loopback-trusted XFF), bounded/evicting rate maps, CLI verify-ops/verify-api.
+  Windows 316/114/20/13 OK; server staged: ops 37 OK, API 13 OK.
+- Next: workstream 4 (format-only commit), then 5 (HANDOFF/history).
+- Half-finished: none. Not deployed (see 06-review-fixes.md).
