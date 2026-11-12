@@ -1,0 +1,11 @@
+[Unit]
+Description=Check public BuyICT every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+AccuracySec=30s
+Unit=illoura-buyict.service
+
+[Install]
+WantedBy=timers.target

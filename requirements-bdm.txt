@@ -1,0 +1,2 @@
+# Existing project requirements are also needed for collection.
+google-auth-oauthlib

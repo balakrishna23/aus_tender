@@ -1,0 +1,16 @@
+[Unit]
+Description=Illoura private BuyICT change alerts
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=scraper
+WorkingDirectory=/opt/aus_tender
+Environment=PYTHONUNBUFFERED=1
+Environment=AUSTENDER_DB_DIR=/var/lib/illoura/databases
+UMask=0077
+ExecStart=/opt/aus_tender/.venv/bin/python bdm_monitor.py --config /etc/illoura/bdm_monitor.yaml --state /var/lib/illoura/bdm_monitor.db --out /var/lib/illoura/exports poll --refresh --send
+TimeoutStartSec=25min
+NoNewPrivileges=true
+PrivateTmp=true
