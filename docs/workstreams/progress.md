@@ -27,3 +27,19 @@ Only one agent edits the branch at a time.
   Windows 316/114/20/13 OK; server staged: ops 37 OK, API 13 OK.
 - Next: workstream 4 (format-only commit), then 5 (HANDOFF/history).
 - Half-finished: none. Not deployed (see 06-review-fixes.md).
+
+## 13 Nov ~00:35 IST, Claude: workstream 4 (lint + format-only)
+- Done: lint cleanup commit (unused imports, split imports, `from None`, explicit zip), then
+  ruff 0.14 format-only commit on 12 newer files; every file's AST identical before/after;
+  tests 318 (17 Linux-only skips) / 114 / API 13 OK.
+- Next: workstream 5.
+- Half-finished: none.
+
+## 13 Nov ~00:50 IST, Claude: workstream 5 (handoff and history)
+- Done: private workspace HANDOFF.md rewritten as a current-state page (<120 lines); dated
+  history moved newest-first to a private history file; personal machine notes and the 7 Oct
+  reference guide split out; lossless (all 1,333 section lines preserved; original kept).
+  Public `docs/history.md` added (sanitized); `docs/HANDOFF.md` marked historical.
+- Next: Sirish's decisions: push approval; server deploy (create health.env first); daily
+  collection cadence. Then roadmap packages B and C.
+- Half-finished: none. Nothing pushed or deployed.
