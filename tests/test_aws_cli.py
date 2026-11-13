@@ -451,7 +451,15 @@ class DeployCollectorsTests(unittest.TestCase):
         names = cli.collector_files()
         self.assertEqual(names[0], "run_spiders.py")
         self.assertIn("spiders/aus_contract.py", names)
-        self.assertTrue(all(n == "run_spiders.py" or n.startswith("spiders/") for n in names))
+        allowed = {"run_spiders.py", *cli.STANDALONE_COLLECTORS}
+        self.assertTrue(all(n in allowed or n.startswith("spiders/") for n in names))
+
+    def test_standalone_collectors_match_the_runner(self):
+        # Every standalone script run_spiders.py starts must be shippable, and nothing else.
+        runner = (Path(cli.REPO) / "run_spiders.py").read_text(encoding="utf-8")
+        for script in cli.STANDALONE_COLLECTORS:
+            self.assertIn(f'("{script}"', runner)
+            self.assertTrue((Path(cli.REPO) / script).exists())
 
     def test_every_collector_test_file_is_staged(self):
         # 13 Nov: a fixed list left a new collector test file out of the server run.

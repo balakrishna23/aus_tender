@@ -543,10 +543,15 @@ def deploy_ops(
     }
 
 
+# The two sources run_spiders.py starts as standalone scripts (see its STANDALONE_SCRIPTS).
+STANDALONE_COLLECTORS = ("austender_api.py", "nsw_tender_fetch.py")
+
+
 def collector_files(repo=REPO):
-    """The collector code this tool may ship: run_spiders.py and spiders/*.py, nothing else."""
+    """The collector code this tool may ship: run_spiders.py, its standalone source scripts
+    and spiders/*.py, nothing else."""
     spiders = sorted("spiders/" + p.name for p in (Path(repo) / "spiders").glob("*.py"))
-    return ["run_spiders.py", *spiders]
+    return ["run_spiders.py", *STANDALONE_COLLECTORS, *spiders]
 
 
 def collector_tests(repo=REPO):
