@@ -423,6 +423,13 @@ class WatchAndSnapshotTests(unittest.TestCase):
         self.assertNotRegex(text, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")  # no address
         self.assertIn("TreatMissingData: breaching", text)
 
+    def test_alarm_fires_on_mostly_failing_checks(self):
+        # 13 Nov audit: Maximum < 1 let one good check per 15 minutes hide repeated failures.
+        text = cli.WATCH_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("Statistic: Average", text)
+        self.assertIn("Threshold: 0.5", text)
+        self.assertNotIn("Statistic: Maximum", text)
+
 
 class DeployCollectorsTests(unittest.TestCase):
     def server_with_current_code(self, **options):

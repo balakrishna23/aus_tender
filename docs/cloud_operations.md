@@ -262,8 +262,8 @@ detects server status problems; it does not verify application/Gmail correctness
 Since 13 November the CloudFormation stack `illoura-watch` (template
 `deploy/aws/illoura-watch.yaml`, deployed with `watch deploy --yes`) polls `/readyz`
 from AWS Lambda every 5 minutes and records `Illoura/Watch ReadyzOk`. Alarm
-`illoura-watch-needs-attention` emails through SNS when every check fails for two
-15-minute periods, or when checks stop arriving, and again on recovery. It covers
+`illoura-watch-needs-attention` emails through SNS when most checks (at least 2 of every 3)
+fail for two 15-minute periods, or when checks stop arriving, and again on recovery. It covers
 the server being down, a failed or hung collection, a failed publication, lost Gmail
 authorisation, low disk, retention attention and a missed 08:15 brief. It does not
 depend on the server or on its Gmail token. The SNS subscription was confirmed on
