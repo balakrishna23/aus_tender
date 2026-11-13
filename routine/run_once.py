@@ -1,0 +1,41 @@
+"""Run the source and evidence phases on AWS; requires reviewed editorial before mail."""
+import fcntl,json,os,sqlite3,subprocess,sys
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime,timezone
+from pathlib import Path
+from zoneinfo import ZoneInfo
+PROJECT=Path('/opt/aus_tender');WORK=Path('/opt/illoura-routine');PY=PROJECT/'.venv/bin/python'
+os.environ.update(GSHEETS_AUTO_SYNC='False',AUSTENDER_DB_DIR=str(PROJECT/'databases'),PLAYWRIGHT_BROWSERS_PATH=str(PROJECT/'.browsers'),PYTHONDONTWRITEBYTECODE='1')
+lock=(WORK/'routine.lock').open('a+')
+fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+now=datetime.now(timezone.utc)
+out=WORK/'reports'/('daily_sweep_'+now.astimezone(ZoneInfo('Asia/Kolkata')).strftime('%Y%m%d_%H%M%S'))
+out.mkdir(parents=True)
+baseline={}
+with sqlite3.connect((PROJECT/'databases/contract_api.db').as_uri()+'?mode=ro',uri=True) as db:
+    for table in ['contracts','contract_versions']:baseline[table]=db.execute('SELECT count(*) FROM '+table).fetchone()[0]
+(out/'baseline.json').write_text(json.dumps(baseline,indent=2))
+with sqlite3.connect((PROJECT/'databases/buy_ict.db').as_uri()+'?mode=ro',uri=True) as db:ids=[r[0] for r in db.execute('SELECT rfq_id FROM buy_ict_tenders')]
+(out/'baseline_buyict_ids.json').write_text(json.dumps(ids))
+state={'run_dir':str(out),'execution_host':'AWS Sydney Lightsail','started_at_utc':now.isoformat(),'authorization':'Source/evidence collection only; newsletter requires a separately reviewed send','status':'running_sources','sent':False}
+def save():
+    (out/'cloud_run.json').write_text(json.dumps(state,indent=2));(WORK/'latest_run.json').write_text(json.dumps(state,indent=2))
+save();print(json.dumps(state),flush=True)
+def run(name,args,cwd):
+    with (out/(name+'.console.log')).open('w') as log:
+        result=subprocess.run([str(PY),'-u',*args],cwd=cwd,stdout=log,stderr=subprocess.STDOUT)
+    return result.returncode
+with ThreadPoolExecutor(max_workers=2) as pool:
+    source=pool.submit(run,'source',['run_spiders.py','--timeout','14400','--retries','1','--no-sync','--report',str(out/'source_refresh.json')],PROJECT)
+    research=pool.submit(run,'research',[str(WORK/'scripts/newsletter_research_sweep.py'),'--out',str(out)],WORK)
+    state['source_exit_code']=source.result();state['research_exit_code']=research.result()
+report=json.loads((out/'source_refresh.json').read_text())
+if state['source_exit_code'] or not report.get('success') or len(report.get('results',[]))!=8 or 'feed' not in report:
+    state['status']='source_failure';save();raise SystemExit(1)
+state['status']='building_evidence';save()
+state['finalization_exit_code']=run('finalization',[str(WORK/'scripts/finalize_daily_sweep.py'),'--out',str(out)],WORK)
+final=json.loads((out/'finalization.json').read_text())
+ok={x['step'] for x in final['steps'] if x.get('exit_code')==0}
+state['status']='ready_for_editorial_review' if state['finalization_exit_code']==0 and {'intelligence','data_quality','newsletter_evidence'}<=ok else 'evidence_failure'
+save();print(json.dumps(state),flush=True)
+raise SystemExit(0 if state['status']=='ready_for_editorial_review' else 1)
