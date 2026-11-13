@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Illoura external watch. A small scheduled function in the project Region checks the
+  server's public /readyz endpoint every 5 minutes and records ReadyzOk (1 or 0). An
+  alarm emails the team when every check fails for 30 minutes or when checks stop
+  arriving: server down, collection or publication failed, Gmail authorisation lost,
+  disk low, or the 08:15 Sydney daily brief not sent by 09:00. Independent of the
+  server and of its Gmail token. Deployed only by deploy/aws/illoura_aws.py watch.
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
+Parameters:
+  ReadyzUrl:
+    Type: String
+    Description: Full https URL of the server's /readyz endpoint (private; supplied at deploy time).
+    AllowedPattern: "^https://[A-Za-z0-9.-]+(:[0-9]+)?/readyz$"
+  AlertEmail:
+    Type: String
+    NoEcho: true
+    Description: Address that receives alarm and recovery emails (private; must confirm the SNS subscription).
+
+Resources:
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Delivers alarm and recovery notices by email.
+        must: >-
+          Not encrypted with the AWS-managed SNS key: CloudWatch alarms cannot publish to a
+          topic using alias/aws/sns. Messages carry only alarm state, no data or secrets.
+    Properties:
+      DisplayName: Illoura watch
+
+  AlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  CheckLogGroup:
+    Type: AWS::Logs::LogGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Created explicitly so logs expire instead of growing forever.
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${AWS::StackName}-readyz"
+      RetentionInDays: 14
+
+  CheckRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Least privilege for the check function.
+        must: Only writes its own logs and metrics in the Illoura/Watch namespace.
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: readyz-check
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "${CheckLogGroup.Arn}:*"
+              - Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: "*"
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: Illoura/Watch
+
+  CheckFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: CheckLogGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Polls /readyz from outside the server. Any non-200, non-"ok", timeout or network
+          error records 0. Prints only the error type, never response bodies.
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-readyz"
+      Description: Checks the Illoura server's /readyz and records ReadyzOk.
+      Runtime: python3.12
+      Architectures: [arm64]
+      Handler: index.handler
+      MemorySize: 128
+      Timeout: 30
+      Role: !GetAtt CheckRole.Arn
+      Environment:
+        Variables:
+          READYZ_URL: !Ref ReadyzUrl
+      Code:
+        ZipFile: |
+          import json
+          import os
+          import urllib.request
+
+          import boto3
+
+          cloudwatch = boto3.client("cloudwatch")
+
+
+          def handler(event, context):
+              ok = 0
+              try:
+                  request = urllib.request.Request(
+                      os.environ["READYZ_URL"], headers={"User-Agent": "illoura-watch"}
+                  )
+                  with urllib.request.urlopen(request, timeout=15) as response:
+                      body = json.loads(response.read() or b"{}")
+                      ok = int(response.status == 200 and body.get("status") == "ok")
+              except Exception as error:  # 503 arrives here as HTTPError
+                  print(json.dumps({"readyz": "failed", "error": type(error).__name__}))
+              cloudwatch.put_metric_data(
+                  Namespace="Illoura/Watch",
+                  MetricData=[{"MetricName": "ReadyzOk", "Value": ok, "Unit": "Count"}],
+              )
+              return {"ok": ok}
+
+  CheckSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Run the Illoura /readyz check every 5 minutes.
+      ScheduleExpression: rate(5 minutes)
+      State: ENABLED
+      Targets:
+        - Id: readyz-check
+          Arn: !GetAtt CheckFunction.Arn
+
+  CheckSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CheckFunction
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt CheckSchedule.Arn
+      SourceAccount: !Ref AWS::AccountId
+
+  NeedsAttentionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: >-
+          Maximum < 1 over two 15-minute periods means every check failed for 30 minutes,
+          so a single slow health refresh does not page anyone. Missing data counts as
+          failing, so a stopped checker also alarms.
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-needs-attention"
+      AlarmDescription: >-
+        The Illoura server reports a problem (or cannot be reached) for 30 minutes:
+        server down, collection or publication failed, Gmail authorisation lost, disk
+        low, or the 08:15 Sydney daily brief was not sent by 09:00. Check with:
+        illoura_aws.py status. A recovery email follows when it is healthy again.
+      Namespace: Illoura/Watch
+      MetricName: ReadyzOk
+      Statistic: Maximum
+      Period: 900
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 1
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+Outputs:
+  AlarmName:
+    Value: !Ref NeedsAttentionAlarm
+  TopicArn:
+    Value: !Ref AlertTopic

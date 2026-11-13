@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 spec = importlib.util.spec_from_file_location(
     "illoura_aws", Path(__file__).resolve().parents[1] / "deploy/aws/illoura_aws.py"
@@ -330,6 +331,85 @@ class SettingsAndMainTests(unittest.TestCase):
             remote.calls[-1],
             ["sudo", cli.OPS_PYTHON, cli.OPS_SCRIPT, "prune", "--dry-run"],
         )
+
+
+class FakeAws:
+    """Stands in for the AWS CLI wrapper; records argument lists."""
+
+    def __init__(self, stack_exists=True, contacts=("ops@example.com",)):
+        self.calls, self.stack_exists, self.contacts = [], stack_exists, contacts
+
+    def __call__(self, settings, *args, parse=True):
+        self.calls.append(list(args))
+        if args[:2] == ("lightsail", "get-contact-methods"):
+            return {"contactMethods": [{"contactEndpoint": c, "status": "Valid"} for c in self.contacts]}
+        if args[:2] == ("cloudformation", "describe-stacks"):
+            if not self.stack_exists:
+                raise cli.OperationError("AWS CLI failed: Stack with id illoura-watch does not exist")
+            return {"Stacks": [{"StackStatus": "CREATE_COMPLETE", "Outputs": [
+                {"OutputKey": "AlarmName", "OutputValue": "illoura-watch-needs-attention"},
+                {"OutputKey": "TopicArn", "OutputValue": "arn:aws:sns:ap-southeast-2:000000000000:t"}]}]}
+        if args[:2] == ("cloudwatch", "describe-alarms"):
+            return {"MetricAlarms": [{"StateValue": "INSUFFICIENT_DATA", "StateReason": "new"}]}
+        if args[:2] == ("sns", "list-subscriptions-by-topic"):
+            return {"Subscriptions": [{"SubscriptionArn": "PendingConfirmation", "Endpoint": "ops@example.com"}]}
+        if args[:2] == ("lightsail", "get-instance"):
+            return {"instance": {"addOns": [{"name": "AutoSnapshot", "status": "Enabled",
+                                             "snapshotTimeOfDay": cli.SNAPSHOT_TIME_UTC}]}}
+        if args[:2] == ("lightsail", "get-auto-snapshots"):
+            return {"autoSnapshots": [{"date": "2026-11-14", "status": "Success"}]}
+        return {} if parse else ""
+
+
+class WatchAndSnapshotTests(unittest.TestCase):
+    def settings(self, folder, base="https://api.example.test"):
+        Path(folder, "api-access.json").write_text(json.dumps({"api_base_url": base}))
+        return cli.Settings(private_dir=Path(folder))
+
+    def test_watch_deploy_needs_yes_and_uses_private_url_and_contact(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings, fake = self.settings(folder), FakeAws()
+            with unittest.mock.patch.object(cli, "aws", fake):
+                with self.assertRaises(cli.OperationError):
+                    cli.watch(settings, "deploy")
+                result = cli.watch(settings, "deploy", yes=True)
+        deploy = next(c for c in fake.calls if c[:2] == ["cloudformation", "deploy"])
+        self.assertIn("CAPABILITY_IAM", deploy)
+        self.assertIn("ReadyzUrl=https://api.example.test/readyz", deploy)
+        self.assertIn("AlertEmail=ops@example.com", deploy)
+        self.assertNotIn("ops@example.com", json.dumps(result))  # status never shows the address
+        self.assertEqual(result["email_subscriptions"][0][:7], "pending")
+
+    def test_watch_refuses_non_https_url_and_bad_email(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with unittest.mock.patch.object(cli, "aws", FakeAws()):
+                with self.assertRaises(cli.OperationError):
+                    cli.watch(self.settings(folder, "http://api.example.test"), "deploy", yes=True)
+                with self.assertRaises(ValueError):
+                    cli.watch(self.settings(folder), "deploy", yes=True, email="x; rm -rf /")
+
+    def test_watch_status_before_deploy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with unittest.mock.patch.object(cli, "aws", FakeAws(stack_exists=False)):
+                self.assertEqual(cli.watch(self.settings(folder), "status"), {"stack": "not deployed"})
+
+    def test_snapshots_enable_needs_yes_and_runs_after_the_brief(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings, fake = self.settings(folder), FakeAws()
+            with unittest.mock.patch.object(cli, "aws", fake):
+                with self.assertRaises(cli.OperationError):
+                    cli.snapshots(settings, "enable")
+                result = cli.snapshots(settings, "enable", yes=True)
+        request = next(c for c in fake.calls if c[:2] == ["lightsail", "enable-add-on"])
+        self.assertEqual(json.loads(request[-1])["autoSnapshotAddOnRequest"]["snapshotTimeOfDay"], "23:00")
+        self.assertEqual(result["snapshots"][0]["status"], "Success")
+
+    def test_template_holds_no_private_values(self):
+        text = cli.WATCH_TEMPLATE.read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"\b\d{1,3}(\.\d{1,3}){3}\b")  # no IP address
+        self.assertNotRegex(text, r"\b\d{12}\b")  # no account ID
+        self.assertNotRegex(text, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")  # no address
+        self.assertIn("TreatMissingData: breaching", text)
 
 
 class DeployCollectorsTests(unittest.TestCase):
