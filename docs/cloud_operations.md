@@ -1,6 +1,6 @@
 # Illoura AWS operations
 
-Status: 12 November 2026. Source/evidence collection runs in Sydney. The procurement
+Status: 13 November 2026. Source/evidence collection runs in Sydney. The procurement
 API now serves the validated cloud source generation. Private human workflow state
 on the laptop has not yet been migrated into a shared cloud workbench.
 
@@ -14,7 +14,12 @@ on the laptop has not yet been migrated into a shared cloud workbench.
 - Authenticated `/v1/operations` shows collection/publication freshness, run phase,
   disk space and Gmail authorization health. A healthy snapshot can still contain
   source records retrieved earlier; inspect source retrieval dates.
-- `illoura-cloud-health.timer` checks every 15 minutes without sending email.
+- `illoura-cloud-health.timer` checks every 15 minutes without sending email. A
+  morning run still within 5 hours counts as `in_progress` (healthy), so `/readyz`
+  stays green during normal collection. The `daily_brief` check turns `missed` when the
+  brief timer is enabled and no send receipt dated that Sydney day exists by 09:00.
+- The external watch (`watch deploy`) polls `/readyz` from AWS every 5 minutes and
+  emails when it fails for 30 minutes; see "Independent failure detection".
 - The existing Gmail send-once/reconciliation flow remains a separate reviewed step.
 
 ### Required before deploying this health version
@@ -55,6 +60,9 @@ uv run --no-project --python 3.11 --with-requirements requirements-deploy.txt py
 | `daily-brief-dry-run` | Composes a copy of the latest run under `/var/tmp` with live listing checks and layout checks, returns the text preview. Never sends. |
 | `schedule enable --yes` / `schedule disable --yes` | Turns the 08:15 daily brief on or off. The only action that changes a timer's enable state. |
 | `api-key create --name NAME` / `api-key revoke --name NAME` | Named team credentials. The key is written only to the private directory; the server stores its hash. |
+| `verify-collectors` / `deploy-collectors --yes` | Collector code (`run_spiders.py`, `spiders/*.py` only): stage, hash-check, run `tests/test_collectors_*.py` on the server against the staged code, then install only changed files as `scraper`, keeping the originals in `/var/backups/illoura/collectors-<time>/`. Refuses while the brief or collection runs. |
+| `watch deploy --yes` / `watch status` | External `/readyz` watch: CloudFormation stack `illoura-watch` (Lambda every 5 minutes, CloudWatch alarm, SNS email). The address defaults to the verified Lightsail alarm contact and is never printed; the new subscription must be confirmed from the email AWS sends. |
+| `snapshots enable --yes` / `snapshots status` | Daily Lightsail automatic snapshots of the whole server at 23:00 UTC (after the brief); Lightsail keeps the newest 7. About USD 0.05 per GB-month of used, changed data. |
 
 Settings come from environment variables (`ILLOURA_AWS_PROFILE`, `ILLOURA_AWS_REGION`,
 `ILLOURA_AWS_INSTANCE`, optional `ILLOURA_AWS_ACCOUNT` check, `ILLOURA_PRIVATE_DIR`);
@@ -112,22 +120,22 @@ steps, plus an intelligence build timestamp matching the evidence. Missing table
 failed checks, inadequate free disk space and invalid evidence prevent switching
 the served generation. Files and directories are flushed before the atomic symlink
 switch. The prior generation stays available. Failed staging is retained for review.
-Generations are not pruned automatically yet; monitor disk use and agree retention
-before prolonged scheduled operation.
 
-Retention implementation is now available in the working tree for workstream-1
-review, but has **not** been deployed or run against production storage. See
-[the detailed retention work log](workstreams/01-retention.md). The proposed code
-keeps current, previous and three newest other complete generations; expires failed
-staging strictly after two days; and retains fourteen checksum-validated operations
-backups. Its standalone `prune --dry-run` previews deletion without writing a report.
-Successful publication invokes pruning under the existing write locks. Cleanup
-failure reports `published=true` and `retention_attention=true` rather than undoing
-a valid publication. Invalid/incomplete copies are retained for manual attention.
-The API request path is unchanged and has no added reader lock or grace period.
+Retention is deployed (12 November 2026, workstream 1; see
+[the retention work log](workstreams/01-retention.md)). It keeps current, previous
+and three newest other complete generations; expires failed staging strictly after
+two days; and retains fourteen checksum-validated operations backups. Standalone
+`prune --dry-run` previews deletion without writing a report. Successful publication
+invokes pruning under the existing write locks. Cleanup failure reports
+`published=true` and `retention_attention=true` rather than undoing a valid
+publication. Invalid/incomplete copies are retained for manual attention. The API
+request path is unchanged and has no added reader lock or grace period.
 
-Workstream 1 was approved after code review on 12 November 2026. Approval does not
-deploy the working-tree implementation; the deployed version remains unchanged.
+A source that finds nothing new is not a failure when its collector says so
+(`crawl/nothing_due`): standing offers with no new or due panels, and contract
+notices when the API has nothing new or every new notice has no page on the site
+yet (up to 25; see [workstream 8](workstreams/08-reliability.md)). Any other empty
+or failed source still stops publication and the day's brief.
 
 ### Publication exit status
 
@@ -187,10 +195,9 @@ sudo /opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_cloud_ops.py publ
 `latest_run.json` must identify the intended successful run. Do not reuse a sent
 edition as a new email authorization or overwrite its artifacts.
 
-The daily collection timer is installed but **disabled**. Its proposed cadence is
-08:00 Asia/Kolkata daily, with a short randomized delay. Activate only after the
-outage-alert contact is verified, retention/restore arrangements accepted, and the
-user's cadence decision is recorded. This is separate from the old local monitor.
+The standalone `illoura-cloud-collect.timer` stays **disabled**: since 12 November
+the daily brief (06:15 Sydney) runs collection itself, so collection never runs
+twice. This is separate from the old local monitor.
 
 ## Recovery
 
@@ -225,8 +232,12 @@ Rollback targets `previous`. It is deliberately not an alternating undo/redo tog
 repeat invocation selects the same previous generation. Source databases are unchanged.
 
 An AWS-managed instance snapshot `illoura-before-cloud-ops-20261112` was created
-before deployment and its state was confirmed `available`. Whole-VM recovery has
-not been exercised. Verify a snapshot's AWS state before relying on later backups.
+before deployment and its state was confirmed `available`. Since 13 November,
+Lightsail automatic snapshots run daily at 23:00 UTC (`snapshots status`); Lightsail
+keeps the newest seven. They are stored by AWS outside the instance, so losing the
+server loses at most a day. Whole-VM recovery (create a new instance from a
+snapshot, reattach the static IP) has not been exercised. Verify a snapshot's AWS
+state before relying on it.
 
 ## Independent failure detection
 
@@ -236,11 +247,16 @@ internal recipient; AWS contact status is now `Valid`. The configured alarm test
 succeeded on 12 November; inbox delivery/read has not been independently verified. This alarm
 detects server status problems; it does not verify application/Gmail correctness.
 
-`deploy/illoura_external_watch.py` can poll HTTPS `/readyz` from a different host.
-It returns exit 1 on network failure, stale health or unhealthy data/auth state.
-The probe was tested from the operator's computer. A continuously hosted external
-readiness monitor and its independent delivery channel are not yet configured.
-The in-instance health timer alone cannot notify when its own machine is down.
+Since 13 November the CloudFormation stack `illoura-watch` (template
+`deploy/aws/illoura-watch.yaml`, deployed with `watch deploy --yes`) polls `/readyz`
+from AWS Lambda every 5 minutes and records `Illoura/Watch ReadyzOk`. Alarm
+`illoura-watch-needs-attention` emails through SNS when every check fails for two
+15-minute periods, or when checks stop arriving, and again on recovery. It covers
+the server being down, a failed or hung collection, a failed publication, lost Gmail
+authorisation, low disk, retention attention and a missed 08:15 brief. It does not
+depend on the server or on its Gmail token. Alarm emails arrive only after the SNS
+subscription is confirmed from the AWS email; check with `watch status`.
+`deploy/illoura_external_watch.py` remains a manual probe for the same endpoint.
 
 ## Validation and scope
 
