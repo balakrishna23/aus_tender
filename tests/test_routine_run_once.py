@@ -20,7 +20,7 @@ class RunOnceTests(unittest.TestCase):
             base = Path(temp)
             project, work = base/'project', base/'work'
             work.mkdir()
-            real_path = Path
+            real_path = type(project)
             def path(value):
                 return {'/opt/aus_tender': project, '/opt/illoura-routine': work}.get(value, real_path(value))
             def process(args, **kwargs):
