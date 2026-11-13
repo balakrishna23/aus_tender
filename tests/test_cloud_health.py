@@ -49,7 +49,7 @@ class CloudHealth(unittest.TestCase):
             self.root / "missing-token.json",
             brief_enabled=brief_enabled,
             now=now,
-            cert=self.root / "no-certificate.pem",
+            cert=None,  # certificate covered by CertificateExpiry
         )
 
     def test_failure_is_not_hidden_by_fresh_previous_run(self):
@@ -200,7 +200,7 @@ class MorningRunAndDailyBrief(unittest.TestCase):
             os.environ.pop("ILLOURA_GMAIL_SENDER", None)
             checks = health.check(self.work, served, Path(self.temp.name) / "t.json",
                                   brief_enabled=True, now=now,
-                                  cert=Path(self.temp.name) / "no-certificate.pem")["checks"]
+                                  cert=None)["checks"]
         for name in ("publication", "collection", "last_run", "daily_brief"):
             self.assertEqual(checks[name]["status"], "ok", name)
 
@@ -235,9 +235,24 @@ class CertificateExpiry(unittest.TestCase):
 
     def test_openssl_date_format_is_parsed(self):
         result = type("R", (), {"stdout": "notAfter=Nov  8 22:59:29 2026 GMT\n"})()
-        with patch.object(health.subprocess, "run", return_value=result):
-            end = health.cert_not_after(Path("cert.pem"))
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.object(health.subprocess, "run", return_value=result):
+            cert = Path(temp) / "cert.pem"
+            cert.write_text("placeholder")
+            end = health.cert_not_after(cert)
         self.assertEqual(end, datetime(2026, 11, 8, 22, 59, 29, tzinfo=timezone.utc))
+
+    def test_missing_certificate_fails_health(self):
+        # Codex review of PR #3: a missing file must not silently drop the check.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "served").mkdir()
+            result = health.check(
+                root / "work", root / "served", root / "token.json",
+                brief_enabled=False, now=self.now, cert=root / "gone.pem",
+            )
+        self.assertEqual(result["checks"]["certificate"]["status"], "missing")
+        self.assertEqual(result["status"], "attention")
 
     def test_expiring_certificate_makes_health_attention(self):
         with tempfile.TemporaryDirectory() as temp:

@@ -21,6 +21,8 @@ CERT_WARN_SECONDS = 24 * 3600
 
 def cert_not_after(path):
     """Expiry of a PEM certificate, read with openssl (no extra Python packages)."""
+    if not Path(path).exists():
+        raise FileNotFoundError(path)
     out = subprocess.run(
         ["openssl", "x509", "-enddate", "-noout", "-in", str(path)],
         capture_output=True, text=True, timeout=10, check=True,
@@ -33,18 +35,12 @@ def certificate(path, now, read_end=cert_not_after):
     """Warn a day before the HTTPS certificate expires, long before the external watch notices."""
     try:
         left = (read_end(path) - now).total_seconds()
+    except FileNotFoundError:
+        return {"status": "missing"}  # nginx cannot serve HTTPS without it
     except (OSError, ValueError, IndexError, subprocess.SubprocessError):
         return {"status": "unavailable"}
     status = "ok" if left > CERT_WARN_SECONDS else ("expiring" if left > 0 else "expired")
     return {"status": status, "hours_left": round(left / 3600, 1)}
-
-
-def https_installed(path):
-    """The certificate exists (or cannot even be looked at, which certificate() reports)."""
-    try:
-        return Path(path).exists()
-    except OSError:
-        return True
 
 
 def brief_timer_enabled():
@@ -117,8 +113,9 @@ def check(
     if brief_enabled is None:
         brief_enabled = brief_timer_enabled()
     checks = {}
-    # Only where HTTPS is installed (the server); nginx cannot serve without this file.
-    if https_installed(cert):
+    # The server always serves HTTPS, so a missing certificate is a failure, not "not
+    # configured". cert=None switches the check off explicitly (tests only).
+    if cert is not None:
         checks["certificate"] = certificate(cert, now, read_cert_end)
 
     def freshness(name, path, field):

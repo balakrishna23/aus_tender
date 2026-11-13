@@ -77,6 +77,7 @@ OPS_TESTS = (
     "test_cloud_retention.py",
     "test_cloud_health.py",
     "test_cloud_daily_brief.py",
+    "test_cloud_collect.py",
 )
 # Collector code: the source runner and the spiders package only (see deploy_collectors).
 COLLECTOR_DIR = "/opt/aus_tender"
