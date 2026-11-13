@@ -15,7 +15,7 @@ import asyncio
 import logging
 import sqlite3
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import activity_log
 from project_paths import database_directory
@@ -27,6 +27,8 @@ from undetected_playwright import stealth_async
 BASE        = 'https://buy.nsw.gov.au'
 # IT first (Illoura spec); healthcare kept for the later healthcare vertical.
 CATEGORIES  = 'information-and-technology%2Crecruitment-services%2Chealthcare'
+DETAIL_REFRESH_DAYS = 7
+DETAIL_REFRESH_CAP = 20
 NOTICE_TYPES = ['can', 'son']   # can = contract awards, son = standing offers
 DB_PATH     = database_directory() / 'nsw_tender.db'
 LOG_FILE    = Path(__file__).parent / 'logs' / 'nsw_tender.log'
@@ -174,7 +176,7 @@ def init_db():
         updated_at TEXT DEFAULT CURRENT_TIMESTAMP
     )''')
     columns = {row[1] for row in con.execute('PRAGMA table_info(nsw_tenders)')}
-    for column in ('notice_type', 'location', 'contact_phone', 'all_details') + DETAIL_COLUMNS:
+    for column in ('notice_type', 'location', 'contact_phone', 'all_details', 'detail_refreshed_at') + DETAIL_COLUMNS:
         if column not in columns:
             con.execute(f'ALTER TABLE nsw_tenders ADD COLUMN {column} TEXT')
     con.commit()
@@ -412,7 +414,7 @@ def _parse_opportunity_detail(text):
 def upsert_opportunity(con, item):
     """Insert a new open opportunity, or refresh listing fields; detail fields are kept when absent."""
     existing = con.execute('SELECT 1 FROM nsw_tenders WHERE url = ?', (item['url'],)).fetchone()
-    detail = ('contact_phone', 'all_details') + DETAIL_COLUMNS
+    detail = ('contact_phone', 'all_details', 'detail_refreshed_at') + DETAIL_COLUMNS
     keep_detail = ''.join(f"{c}=COALESCE(NULLIF(excluded.{c}, ''), {c}),\n            " for c in detail)
     con.execute(f'''INSERT INTO nsw_tenders
         (portal, reference, title, agency, category, status, notice_type, close_date, publish_date,
@@ -441,12 +443,23 @@ def upsert_opportunity(con, item):
 async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
     """All currently open NSW opportunities (RFT/RFQ/EOI...), every category.
 
-    Detail pages are opened only for opportunities not seen before. Opportunities
+    Detail pages are opened for new opportunities and a bounded batch of stale open ones. Opportunities
     that drop off the open list are marked Closed.
     """
     known = {row[0] for row in con.execute(
         "SELECT url FROM nsw_tenders WHERE portal = 'nsw_opportunity' AND publish_date != '' "
         "AND COALESCE(all_details, '') != ''")}  # saved before every page field was kept: re-read once
+    # A separate timestamp is essential: listing upserts refresh scraped_at every day.
+    columns = {row[1] for row in con.execute('PRAGMA table_info(nsw_tenders)')}
+    refresh_due = set()
+    if 'detail_refreshed_at' in columns:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=DETAIL_REFRESH_DAYS)).isoformat()
+        refresh_due = {row[0] for row in con.execute(
+            "SELECT url FROM nsw_tenders WHERE portal='nsw_opportunity' AND status='Open' "
+            "AND (detail_refreshed_at IS NULL OR detail_refreshed_at < ?) "
+            "ORDER BY COALESCE(detail_refreshed_at, ''), url LIMIT ?", (cutoff, DETAIL_REFRESH_CAP))}
+    refreshed = refresh_failures = 0
+
     seen, schemes, new, detail_failures = set(), set(), 0, 0
     events = []  # for activity.db
     async with async_playwright() as p:
@@ -492,17 +505,25 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
                     opp_url = BASE + card['href']
                     seen.add(opp_url)
                     info = {'publish_date': '', 'locations': '', 'contact_name': '', 'contact_email': ''}
-                    if opp_url not in known:
+                    if opp_url not in known or opp_url in refresh_due:
                         try:
-                            await detail.goto(opp_url, wait_until='load', timeout=45000)
+                            detail_response = await detail.goto(opp_url, wait_until='load', timeout=45000)
+                            if detail_response is None or detail_response.status >= 400:
+                                raise RuntimeError('NSW detail HTTP failure')
                             await detail.wait_for_timeout(1500)
                             # Only the opportunity itself, not the site's menus.
                             body = 'main' if await detail.query_selector('main') else 'body'
                             info = _parse_opportunity_detail(await detail.inner_text(body))
+                            if not info['publish_date'] or not info['all_details']:
+                                raise RuntimeError('NSW detail missing publish date or content')
+                            info['detail_refreshed_at'] = datetime.now(timezone.utc).isoformat()
+                            refreshed += opp_url in known
                         except Exception as e:
                             # Saved from the listing without a publish date, so the next run
                             # retries the detail page; one slow page must not sink the run.
                             detail_failures += 1
+                            refresh_failures += opp_url in known
+                            info = {'publish_date': '', 'locations': '', 'contact_name': '', 'contact_email': ''}
                             log.warning(f"    Detail page failed, will retry next run: {opp_url} ({e})")
                         await asyncio.sleep(1)
                     category = '; '.join(card['categories'])
@@ -513,7 +534,7 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
                         'publish_date': info['publish_date'], 'description': card['description'].strip(),
                         'contact_name': info['contact_name'], 'contact_email': info['contact_email'],
                         'location': info['locations'],
-                        **{c: info.get(c, '') for c in ('contact_phone', 'all_details') + DETAIL_COLUMNS},
+                        **{c: info.get(c, '') for c in ('contact_phone', 'all_details', 'detail_refreshed_at') + DETAIL_COLUMNS},
                         'illoura_relevant': int(is_relevant(f"{card['title']} {category} {card['agency']}")),
                         'url': opp_url, 'scraped_at': datetime.utcnow().isoformat(),
                     })
@@ -546,6 +567,8 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
             list(seen)).rowcount
         con.commit()
     activity_log.record_items(events)
+    log.info("'crawl/nsw_details_refreshed': %s; 'crawl/nsw_detail_refresh_errors': %s; "
+             "'crawl/nsw_detail_errors': %s", refreshed, refresh_failures, detail_failures)
     if detail_failures > max(3, len(seen) // 10):
         # A few slow pages are normal; this many means the site is blocking or has changed.
         raise RuntimeError(f'NSW detail pages failing: {detail_failures} of {len(seen)}')

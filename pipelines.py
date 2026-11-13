@@ -21,6 +21,7 @@ class DatabasePipeline:
         self.db_manager = DatabaseManager()
         self.logger = logging.getLogger(__name__)
         self.stats = {}
+        self.field_counts = {}
         self.events = []  # new/changed records, written to activity.db at the end
     
     def open_spider(self, spider):
@@ -50,6 +51,8 @@ class DatabasePipeline:
         spider_name = spider.name
         adapter = ItemAdapter(item)
         
+        self._count_fields(adapter, spider)
+
         # Update stats
         self.stats[spider_name]['items_processed'] += 1
         
@@ -89,6 +92,7 @@ class DatabasePipeline:
         """Log statistics when spider finishes and optionally sync to Google Sheets"""
         spider_name = spider.name
         stats = self.stats.get(spider_name, {})
+        self._finish_field_checks(spider)
         activity_log.record_items(self.events)
         self.events = []
         
@@ -124,6 +128,35 @@ class DatabasePipeline:
             else:
                 self.logger.warning("Google Sheets auto-sync enabled but missing GSHEETS_SPREADSHEET_ID or GSHEETS_SERVICE_ACCOUNT_JSON_CONTENT")
     
+    KEY_FIELDS = {
+        'aus_tender': ('Close Date & Time', 'Description'),
+        'standing_offer': ('Description',),
+        'aus_contract': ('Supplier Name', 'Contract Value (AUD)'),
+    }
+
+    def _count_fields(self, adapter, spider):
+        fields = self.KEY_FIELDS.get(spider.name)
+        if not fields:
+            return
+        counts = self.field_counts.setdefault(spider.name, {'total': 0, 'missing': 0})
+        counts['total'] += 1
+        missing = [field for field in fields if adapter.get(field) is None or
+                   not str(adapter.get(field)).strip()]
+        # Zero is a value; count missing items once even if several fields disappeared.
+        counts['missing'] += bool(missing)
+        spider.crawler.stats.inc_value('crawl/field_loss_items_checked')
+        for field in missing:
+            spider.crawler.stats.inc_value('crawl/field_loss_missing/' + field)
+        if missing:
+            spider.crawler.stats.inc_value('crawl/field_loss_items_missing')
+
+    def _finish_field_checks(self, spider):
+        counts = self.field_counts.get(spider.name, {})
+        total, missing = counts.get('total', 0), counts.get('missing', 0)
+        if total >= 10 and missing > total / 2:
+            spider.crawler.stats.set_value('crawl/field_loss_failed', 1)
+            self.logger.error('Key field loss for %s: %s of %s items', spider.name, missing, total)
+
     def _validate_item(self, adapter, spider_name):
         """Validate item has minimum required fields"""
         validation_rules = {

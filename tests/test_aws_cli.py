@@ -451,7 +451,7 @@ class DeployCollectorsTests(unittest.TestCase):
         names = cli.collector_files()
         self.assertEqual(names[0], "run_spiders.py")
         self.assertIn("spiders/aus_contract.py", names)
-        allowed = {"run_spiders.py", *cli.STANDALONE_COLLECTORS}
+        allowed = {"run_spiders.py", *cli.STANDALONE_COLLECTORS, *cli.COLLECTOR_SUPPORT}
         self.assertTrue(all(n in allowed or n.startswith("spiders/") for n in names))
 
     def test_standalone_collectors_match_the_runner(self):
