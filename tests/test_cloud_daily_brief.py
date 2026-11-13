@@ -201,7 +201,9 @@ class SendSafetyTests(unittest.TestCase):
                 with brief.send_lock():
                     self.fail('Send lock released early')
             self.write(self.out, 'send_receipt.json', {'sent': True})
+        # TOKEN points at a temp path: on the server the real token folder is private to scraper.
         with (patch.dict('sys.modules', {'send_gmail': SimpleNamespace(send=check_locked)}),
+              patch.object(brief, 'TOKEN', self.out / 'no-token.json'),
               patch.object(brief, 'record_sent', side_effect=check_locked), redirect_stdout(io.StringIO())):
             brief.send(self.out)
 
