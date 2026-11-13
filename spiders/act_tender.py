@@ -149,6 +149,14 @@ def _parse_cell0(text):
     return ref, status, category
 
 
+def _explicit_empty(text):
+    """Conservative rendered empty-state markers; never infer empty from missing rows."""
+    return any(re.fullmatch(
+        r'(?:no (?:results|tenders)(?: found| available| to display)?[.!]?|'
+        r'(?:total\s*:?\s*)?0 (?:results|tenders)(?: found)?[.!]?)',
+        ' '.join(line.split()), re.I) for line in text.splitlines())
+
+
 def _parse_cell1(text):
     """Parse 'title\\nIssued by: agency' from cell 1."""
     lines = [l.strip() for l in text.split('\n') if l.strip()]
@@ -244,6 +252,13 @@ class ActTenderSpider(scrapy.Spider):
             self.logger.info(f"Rows found: {len(rows)} on {response.url}")
 
             if not rows:
+                if _explicit_empty(await page.inner_text('body')):
+                    self.logger.info('Explicitly empty ACT listing: %s', response.url)
+                    self.crawler.stats.inc_value('crawl/act_empty_lists')
+                    empty = getattr(self, '_empty_lists', set())
+                    empty.add(response.url)
+                    self._empty_lists = empty
+                    return
                 self.logger.error('No ACT rows extracted from %s; verify listing and selectors', response.url)
                 self.crawler.stats.inc_value('crawl/extraction_failed')
 
@@ -309,6 +324,11 @@ class ActTenderSpider(scrapy.Spider):
         finally:
             if page:
                 await page.close()
+
+    def closed(self, reason):
+        roots = {f'{self.BASE}/tenders/open', f'{self.BASE}/tenders/closed'}
+        if reason == 'finished' and roots.issubset(getattr(self, '_empty_lists', set())):
+            self.crawler.stats.set_value('crawl/nothing_due', 1)
 
     def errback(self, failure):
         self.logger.error(f"Request failed: {failure.request.url} -- {failure.value}")

@@ -77,6 +77,7 @@ OPS_TESTS = (
     "test_cloud_retention.py",
     "test_cloud_health.py",
     "test_cloud_daily_brief.py",
+    "test_cloud_collect.py",
 )
 # Collector code: the source runner and the spiders package only (see deploy_collectors).
 COLLECTOR_DIR = "/opt/aus_tender"
@@ -542,10 +543,15 @@ def deploy_ops(
     }
 
 
+# The two sources run_spiders.py starts as standalone scripts (see its STANDALONE_SCRIPTS).
+STANDALONE_COLLECTORS = ("austender_api.py", "nsw_tender_fetch.py")
+
+
 def collector_files(repo=REPO):
-    """The collector code this tool may ship: run_spiders.py and spiders/*.py, nothing else."""
+    """The collector code this tool may ship: run_spiders.py, its standalone source scripts
+    and spiders/*.py, nothing else."""
     spiders = sorted("spiders/" + p.name for p in (Path(repo) / "spiders").glob("*.py"))
-    return ["run_spiders.py", *spiders]
+    return ["run_spiders.py", *STANDALONE_COLLECTORS, *spiders]
 
 
 def collector_tests(repo=REPO):
@@ -1134,6 +1140,105 @@ def reconcile_send(remote, run, *, mark_undelivered=False, yes=False):
     return result
 
 
+# --------------------------------------------------------------------------- newsletter routine
+
+ROUTINE_DIR = "/opt/illoura-routine"
+ROUTINE_TEST_PATTERN = "test_routine_*.py"
+MAIL_ENV = "/etc/illoura-routine/mail.env"
+MAIL_ENV_HELPER = "deploy/routine_mail_env.py"
+
+
+def routine_files(repo=REPO):
+    """run_once.py and scripts/*.py from routine/. routine/legacy/ is reference only, never shipped."""
+    scripts = sorted("scripts/" + p.name for p in (Path(repo) / "routine/scripts").glob("*.py"))
+    return ["run_once.py", *scripts]
+
+
+def routine_tests(repo=REPO):
+    return sorted(p.name for p in (Path(repo) / "tests").glob(ROUTINE_TEST_PATTERN))
+
+
+def set_mail_config(remote, *, yes=False, repo=REPO):
+    """Create /etc/illoura-routine/mail.env from the literals in the deployed routine scripts.
+
+    The values stay on the server: the helper reads them there and prints only key names.
+    Never replaces an existing file. Needed once before `deploy-routine`.
+    """
+    if not yes:
+        raise OperationError("set-mail-config writes a private server file; rerun with --yes")
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, {"routine_mail_env.py": lf_bytes(Path(repo) / MAIL_ENV_HELPER)})
+        code, out, err = remote.run(
+            ["sudo", OPS_PYTHON, f"{stage}/routine_mail_env.py", "--write", MAIL_ENV], timeout=60
+        )
+        lines = [line for line in out.splitlines() if line.strip().startswith("{")]
+        if code not in (0, 3) or not lines:
+            raise OperationError(f"set-mail-config failed (exit {code}): {(err or out).strip()[-300:]}")
+        result = json.loads(lines[-1])
+        result["exit_code"] = code
+        return result
+    finally:
+        remove_stage(remote, stage)
+
+
+def deploy_routine(remote, *, yes=False, repo=REPO, test_only=False):
+    """Stage, verify and test routine/ on the server; install only the files that changed.
+
+    Installed as root:scraper 0640 (the collector can read but not change its code); originals
+    kept in /var/backups/illoura/routine-<time>/. Refuses while the brief or a collection runs,
+    and refuses to install before mail.env exists (the repository routine reads it).
+    """
+    if not yes and not test_only:
+        raise OperationError("deploy-routine changes the server; rerun with --yes")
+    for unit in BUSY_UNITS:
+        _, out, _ = remote.run(["systemctl", "is-active", unit])
+        if out.strip() in ("active", "activating", "deactivating", "reloading"):
+            raise OperationError(f"{unit} is running; nothing was changed. Try after it finishes.")
+    names = routine_files(repo)
+    files = {"routine/" + n: lf_bytes(Path(repo) / "routine" / n) for n in names}
+    files.update({"tests/" + n: lf_bytes(Path(repo) / "tests" / n) for n in routine_tests(repo)})
+    files[MAIL_ENV_HELPER] = lf_bytes(Path(repo) / MAIL_ENV_HELPER)
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, files)
+        tests = run_tests(
+            remote,
+            ["env", "GSHEETS_AUTO_SYNC=False", "PYTHONDONTWRITEBYTECODE=1", OPS_PYTHON, "-m",
+             "unittest", "discover", "-s", stage + "/tests", "-p", ROUTINE_TEST_PATTERN],
+            "staged routine tests (nothing installed)",
+        )
+        if test_only:
+            return {"tested": True, "installed": [], "tests": tests}
+        code, _, _ = remote.run(["sudo", "-u", "scraper", "test", "-r", MAIL_ENV])
+        if code:
+            raise OperationError("mail.env is missing; run set-mail-config --yes first. Nothing installed.")
+        targets = {n: f"{ROUTINE_DIR}/{n}" for n in names}
+        _, out, _ = remote.run(["sudo", "sha256sum", *targets.values()])
+        current = {line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()}
+        changed = [n for n in names if current.get(targets[n]) != sha256(files["routine/" + n])]
+        if not changed:
+            return {"installed": [], "tests": tests, "note": "server already matches"}
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = f"{BACKUP_ROOT}/routine-{stamp}"
+        must(remote, ["sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0700",
+                      backup, backup + "/scripts"], "create routine backup folder")
+        for name in changed:
+            if targets[name] in current:
+                must(remote, ["sudo", "cp", "-p", targets[name], f"{backup}/{name}"], "back up " + name)
+            must(remote, ["sudo", "install", "-o", "root", "-g", "scraper", "-m", "0640",
+                          f"{stage}/routine/{name}", targets[name]], "install " + name)
+        out = must(remote, ["sudo", "sha256sum", *[targets[n] for n in changed]], "hash installed routine")
+        after = {line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()}
+        wrong = [n for n in changed if after.get(targets[n]) != sha256(files["routine/" + n])]
+        if wrong:
+            raise OperationError("Installed routine files do not match: " + ", ".join(wrong)
+                                 + f"; originals are in {backup}")
+        return {"installed": changed, "backup": backup, "tests": tests}
+    finally:
+        remove_stage(remote, stage)
+
+
 # --------------------------------------------------------------------------- CLI
 
 
@@ -1203,6 +1308,17 @@ def build_parser():
     rec.add_argument("--mark-undelivered", action="store_true",
                      help="Not in Sent: record that it was not delivered so later days can send")
     rec.add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "set-mail-config",
+        help="Create the routine's private mail.env from the deployed scripts (values stay on the server)",
+    ).add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "deploy-routine",
+        help="Ship, test and install routine/run_once.py and routine/scripts/*.py (changed files only)",
+    ).add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "verify-routine", help="Stage and run the routine tests on the server; installs nothing"
+    )
     return p
 
 
@@ -1258,6 +1374,12 @@ def main(argv=None, remote_factory=SshRemote):
         elif args.action == "reconcile-send":
             result = reconcile_send(remote, args.run, mark_undelivered=args.mark_undelivered,
                                     yes=args.yes)
+        elif args.action == "set-mail-config":
+            result = set_mail_config(remote, yes=args.yes)
+        elif args.action == "deploy-routine":
+            result = deploy_routine(remote, yes=args.yes)
+        elif args.action == "verify-routine":
+            result = deploy_routine(remote, test_only=True)
         else:
             result = api_key(remote, settings, args.key_action, args.name)
     finally:

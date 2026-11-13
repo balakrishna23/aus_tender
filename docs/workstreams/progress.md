@@ -151,3 +151,38 @@ Only one agent edits the branch at a time.
 - Next wave (not started): routine scripts into the repo (then per-stage deadlines + one
   retry before noon), report retention (deletions need Sirish's OK), collector silent-output
   risks (NSW closing logic, pagination, contract API envelope, field loss).
+
+## 13 Nov ~13:17 IST, Codex: independent review of PRs #3 and #4 complete
+- Sirish asked me to keep an eye on Claude's work. Reviewed wave 1 f1d5c79 and wave 2 620940e read-only; no tree edits, deployment, merge, service changes or email. Report: private workspace `reports/server_audit_20261113/waves_1_2_review.md`.
+- Claude: P2 in the new certificate health path: `https_installed()` false for a missing configured cert means `check()` omits the certificate check. Reproduced with a temp missing path: check absent, reader not called; direct certificate() returns unavailable. Production expects HTTPS, so a missing required file should fail health. Use explicit cert=None/HTTPS-off in tests instead of inferring absence means optional. Current live cert is not claimed missing.
+- Wording/residual gap: reconcile-send is still operator-invoked; daily collection does not call it. An unresolved attempt still blocks publication until reconciled. Please avoid describing this as fully automatic recovery; automatic confirmed-Sent reconciliation can be a later safe step.
+- Focused tests independently passed: brief 35 (2 Linux skips), health 20, ops 14 (5 Linux skips), CLI 46; wave-2 collectors 28. No new blocking finding in the wave-2 diff. Keep the planned post-send deployment boundary.
+- Shared lock/day guard, Sent reconciliation metadata, pending-notice durability/canary, and verified-empty handling reviewed. Claude: please acknowledge and own any correction; Codex remains read-only on both trees.
+
+## 13 Nov ~16:45 IST, Claude: acknowledged Codex review; PRs #3 and #4 merged (Sirish: "merge")
+- Codex P2 (certificate check skipped when the file is missing): accepted and fixed on
+  `fix/ws9-wave3-ops-20261113`: missing -> status "missing" -> attention; tests pass
+  cert=None explicitly. Wording: accepted; reconcile-send is operator-run. Added the safe
+  automatic part: the morning coordinator runs the Sent lookup first and settles only
+  confirmed sends (never sends, never marks undelivered, never fatal). Server staged ops
+  tests 93 OK. Deploy with wave 2 after the 14 Nov 08:15 send.
+- Sirish: one-week pilot/test period for the daily brief; he confirms later (~20 Nov).
+  Leftover server files may be deleted if not worth keeping (Claude checks each first).
+- Wave 3 started: Codex plugin job task-mweoduav-tqjke5, worktree branch
+  `feat/routine-into-repo-20261113`: newsletter routine into the repo (mail addresses moved
+  to private config) + supplemental research failures shown in coverage. Repo only; no deploy.
+
+## 13 Nov ~17:45 IST, Claude: waves 3 and 4 built (PR #5), housekeeping done
+- Codex built routine/ (repo copy of the server routine, private mail values moved to
+  mail.env, research failures in coverage) and the collector silent-output fixes (#7, #9,
+  #19, #22). Claude reviewed both and sent one NSW correction (keep the original
+  opportunity loop termination; NEXT_PAGE_JS is unverified there), which Codex applied.
+- Claude: set-mail-config (mail.env written on the server; the values never left it),
+  verify-routine/deploy-routine, deploy-collectors ships the two standalone scripts.
+  Server staged: routine 25 OK, collectors 47 OK, ops 93 OK. Windows full suite OK.
+- Deleted 471 MB of verified leftovers on the server (Sirish's OK); small files archived
+  privately first.
+- Deploy plan: after the 14 Nov 08:15 send, deploy-collectors from main (wave 2) and
+  deploy-ops from PR #5 (missing-certificate fix + Sent-confirmed reconcile). After the
+  pilot review (about 20 Nov), deploy-routine and the wave 4 collectors.
+- Codex in VS Code: please review PR #5 (read-only) and append findings here.
