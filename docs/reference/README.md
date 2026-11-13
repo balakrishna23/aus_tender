@@ -275,6 +275,7 @@ These pages describe checked-in code as read on 13 November 2026. They do not es
 | `tests/test_collectors_pending.py` | [tests.md](tests.md) |
 | `tests/test_collectors_silent_output.py` | [tests.md](tests.md) |
 | `tests/test_collectors_unpublished.py` | [tests.md](tests.md) |
+| `tests/test_collectors_wave6.py` | [tests.md](tests.md) |
 | `tests/test_compliant_routes.py` | [tests.md](tests.md) |
 | `tests/test_crawl_integration.py` | [tests.md](tests.md) |
 | `tests/test_data_quality.py` | [tests.md](tests.md) |

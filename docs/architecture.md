@@ -70,6 +70,7 @@ flowchart LR
 | 08:15 | Re-check timer and cutoff, then send once per edition; write the receipt | `routine/scripts/send_gmail.py` |
 | 09:00 | Health expects today's receipt; otherwise `/readyz` fails and the alarm emails after 30 minutes | `deploy/illoura_cloud_health.py` |
 | 12:00 | Cutoff: a brief not ready by now is kept for review, never sent late | |
+| (after wave 5 is deployed) | Each stage has a time limit; a failed collection or composition is retried once if it starts by 09:30 and can finish before 12:00; the send is never retried | `routine/run_once.py`, `deploy/illoura_daily_brief.py` |
 | every 15 min | Health: freshness, last run, daily brief, coordinator, disk, retention, Gmail authorisation, HTTPS certificate | `deploy/illoura_cloud_health.py` |
 | 00:00 and 12:00 (+random) | Certificate renewal check | `illoura-cert-renew.timer` |
 | 23:00 UTC | Lightsail automatic snapshot of the whole server (newest 7 kept) | AWS |

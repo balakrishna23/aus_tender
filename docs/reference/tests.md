@@ -42,6 +42,7 @@ Files covered:
 - `tests/test_collectors_pending.py`
 - `tests/test_collectors_silent_output.py`
 - `tests/test_collectors_unpublished.py`
+- `tests/test_collectors_wave6.py`
 - `tests/test_compliant_routes.py`
 - `tests/test_crawl_integration.py`
 - `tests/test_data_quality.py`
@@ -123,6 +124,7 @@ The API suite additionally needs `api/requirements.txt`; optional Gmail authoriz
 | `tests/test_collectors_pending.py` | Stored-notice canary, durable unpublished-page retry/tombstone queue and explicitly empty ATM coverage. | Unit/fixture suite; dependencies required. |
 | `tests/test_collectors_silent_output.py` | Invalid API envelopes, valid empty windows, watermark preservation, ACT empty lists and NSW pagination failures. | Unit/fixture suite; dependencies required. |
 | `tests/test_collectors_unpublished.py` | API notices without public pages, duplicate-filter bypass and runner no-work versus failure classification. | Unit/fixture suite; dependencies required. |
+| `tests/test_collectors_wave6.py` | NSW detail refresh, planned-procurement empty plans, ACT total reconciliation, BuyICT fallback paging and the pipeline field-loss check. | Unit/fixture suite; dependencies required. |
 | `tests/test_compliant_routes.py` | Robots-allowed notice/list/plan/panel routes, final-record skipping and explicit no-work reporting. | Unit/fixture suite; dependencies required. |
 | `tests/test_crawl_integration.py` | Real Scrapy/middleware/pipeline/SQLite path against a local fixture HTTP service, including refresh. | Unit/fixture suite; dependencies required. |
 | `tests/test_data_quality.py` | Placeholder phone removal, postcode state mapping, BuyICT text cleanup and standing-offer agencies. | Unit/fixture suite; dependencies required. |

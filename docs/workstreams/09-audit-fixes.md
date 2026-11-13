@@ -56,10 +56,27 @@ leftovers (the 12 Nov data upload, duplicated on the server, this PC and the 12 
 Lightsail snapshot; install kits; staging copies; /var/tmp review and dry-run folders).
 Small files were archived first in the private workspace (`reports/server_leftovers_20261113/`).
 
-## Not done yet (next wave)
-- Per-stage deadlines and one bounded retry before noon (the routine is now in the repo).
-- Remaining collector checks: NSW detail refresh for known tenders, ACT/planned-procurement/
-  BuyICT partial pagination, field-loss checks (Codex audit #18, #20, #21, #25, #26).
+## Waves 5 and 6 (merged 13 Nov as PRs #6 and #8, NOT deployed)
+Built by Codex in its own worktree, reviewed and server-tested by Claude (staged tests:
+operations 102, routine 28, collectors 73 OK). Deploy after the pilot-week review.
+- Wave 5, time limits and one retry: `routine/run_once.py` gives each stage a deadline
+  (spider 45 min, sources 60, research 60, finalization 45, whole routine 105) and kills
+  the whole process tree on timeout. `deploy/illoura_daily_brief.py` retries a failed
+  collection or composition once after 5 minutes, only if it starts by 09:30 Sydney and
+  can finish before the noon cutoff. The send and the unresolved-sends guard are never
+  retried. Check on the first real run: the process-tree kill and that the deadlines reach
+  the routine through `runuser`.
+- Wave 6, remaining collector checks (Codex audit #18, #20, #21, #25, #26): NSW details of
+  known open tenders are refreshed after 7 days (20 a run); planned procurement flags
+  plans that come back empty without the site saying so; ACT compares rows with the
+  stated total; BuyICT follows the fallback paging and fails on an unexplained stop;
+  `pipelines.py` fails a source (`crawl/field_loss_failed`) when 10 or more items were
+  collected and over half lack a key field. On the server 0 of the last 500 stored rows
+  lack one. `deploy-collectors` also ships `pipelines.py`. Check on the live sites first:
+  the empty-list wording of ACT and planned procurement, and BuyICT's fallback paging
+  field names (tested against sample data only).
+
+## Not done yet
 - Run-report retention (about 5 MB a day; reports are send evidence, keep for now).
 - Gmail OAuth app: Sirish keeps it in pilot/test for a week and confirms later. If it is
   "Testing", the token authorised 12 Nov about 15:16 UTC expires about 19 Nov 15:16 UTC
