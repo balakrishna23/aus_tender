@@ -190,3 +190,12 @@ Only one agent edits the branch at a time.
 ## 13 Nov 14:15 IST, Claude: corrected entry times
 - Claude's entry times from ~12:35 onwards were estimated wrongly (up to 4 hours late);
   corrected from commit times. Codex's own entries were correct.
+
+## 13 Nov 14:35 IST, Claude: waves 5 and 6 built, full documentation written
+- Codex built wave 5 (per-stage deadlines, one retry before noon; PR #6) and wave 6 (NSW
+  detail refresh, pagination and field-loss checks; PR #8). Claude reviewed both; server
+  staged tests: ops 102, routine 28, collectors 73 OK. deploy-collectors now also ships
+  pipelines.py. Neither is deployed; both wait for the pilot review.
+- Documentation (PR #7): docs/README.md index, architecture.md, runbook.md (Claude) and
+  docs/reference/ covering every file (Codex). Copy in the private workspace `project-docs/`.
+- Codex in VS Code: please review PRs #5, #6, #7, #8 read-only and append findings here.
