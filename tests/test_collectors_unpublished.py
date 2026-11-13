@@ -7,10 +7,11 @@ runner reported FAIL(no items), which stopped the daily brief.
 
 import io
 import os
+import sqlite3
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -23,9 +24,25 @@ import run_spiders  # noqa: E402
 URL = 'https://www.tenders.gov.au/Cn/Show/{}'
 
 
+class MemoryDB:
+    """Only an in-memory SQLite database; never opens the application's databases."""
+    def __init__(self):
+        self.conn = sqlite3.connect(':memory:')
+        self.conn.execute('CREATE TABLE contracts (id INTEGER PRIMARY KEY, cn_id TEXT, url TEXT)')
+        self.load_column_map = Mock(return_value={})
+        self.get_state = Mock(return_value='2026-11-12')
+        self.set_state = Mock()
+        self.initialize_database = Mock()
+
+    @contextmanager
+    def get_connection(self, name):
+        yield self.conn
+
+
 def spider_with(stats):
     with patch('spiders.austender_common.DatabaseManager'):
         spider = AusContractSpider()
+    spider.db_manager = MemoryDB()
     spider.crawler = SimpleNamespace(stats=Mock())
     spider.crawler.stats.get_stats.return_value = stats
     return spider
@@ -56,7 +73,6 @@ class UnpublishedNoticeTests(unittest.TestCase):
 
     def start(self, notices, stored):
         spider = spider_with({})
-        spider.db_manager = Mock()
         spider.db_manager.load_column_map.return_value = {n: n for n in stored}
         spider.db_manager.get_state.return_value = '2026-11-12'
         with patch.object(spider, '_api_notices', return_value=notices):
@@ -72,7 +88,7 @@ class UnpublishedNoticeTests(unittest.TestCase):
         self.assertEqual([r.meta['notice_id'] for r in requests], ['CN1', 'CN2'])
         self.assertTrue(all(r.dont_filter for r in requests))
         self.assertEqual(spider.requested_notices, 2)
-        spider.crawler.stats.set_value.assert_not_called()
+        spider.crawler.stats.set_value.assert_called_once_with('contract/canary_ok', 0)
 
 
 class RunnerTests(unittest.TestCase):
@@ -85,7 +101,8 @@ class RunnerTests(unittest.TestCase):
                 patch.object(run_spiders, 'LOG_DIR', Path(logs)), \
                 patch.object(sys, 'argv', ['run_spiders.py', '--spiders', 'aus_contract', '--no-sync', '--no-feed']), \
                 patch.object(run_spiders, 'load_dotenv'), patch.object(run_spiders, 'DatabaseManager'), \
-                patch.object(run_spiders, 'rotate_log'), patch.object(run_spiders, 'collect_db_count', return_value=1), \
+                patch('activity_log.start_run'), patch('activity_log.record_scrape'), \
+                patch('activity_log.finish_run'), patch.object(run_spiders, 'rotate_log'), patch.object(run_spiders, 'collect_db_count', return_value=1), \
                 patch.object(run_spiders, 'run_spider', return_value=0), \
                 patch.object(run_spiders, 'read_text', return_value=log_text), \
                 patch.dict(os.environ), redirect_stdout(io.StringIO()):

@@ -30,6 +30,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': True,
     }
     OVERLAP_DAYS = 3
+    # Without a stored health canary, retain the conservative fallback.
     # AusTender lists some notices in its API before their page is on the site (they redirect
     # to /System/NotFound, often overnight amendments). A run where every new notice is like
     # that has nothing to save and is a normal day, up to this many; more than this at once
@@ -61,6 +62,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             return
         self.db_manager.initialize_database(self.name)
         stored = set(self.db_manager.load_column_map(self.name, 'cn_id', 'cn_id'))
+        pending, expired = self._pending_notices(stored)
         if self.scope == 'active_it':
             # Original notices only: the panel (SON ID) and the other page-only fields are set when
             # the contract is let; amendments don't change them.
@@ -73,17 +75,30 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             notices = self._api_notices('v.published_on >= ?', self.window_start.isoformat())
             self.logger.info('Contract notices published %s to %s: %s in the API', self.window_start,
                              self.today, len(notices))
-        todo = [(notice, url) for notice, url in notices if notice not in stored]
-        self.logger.info('%s notices to fetch, %s already stored', len(todo), len(notices) - len(todo))
+        todo = dict((notice, url) for notice, url in notices
+                    if notice not in stored and notice not in expired)
+        todo.update(pending)
+        self.logger.info('%s notices to fetch, %s already stored', len(todo), sum(notice in stored for notice, _ in notices))
         self.requested_notices = len(todo)
         if not todo:
             # Nothing new in the API is a normal day, not a failed crawl: run_spiders reads this stat.
             self.crawler.stats.set_value('crawl/nothing_due', 1)
-        for notice, url in todo:
+        # Direct request enumeration (without an attached Scrapy crawler) is also used by
+        # offline callers; only a running crawler can record a canary's health result.
+        if todo and getattr(self, 'crawler', None) is not None:
+            with self.db_manager.get_connection(self.name) as conn:
+                canary = conn.execute("SELECT cn_id, url FROM contracts WHERE COALESCE(url, '') != '' "
+                                      "ORDER BY id DESC LIMIT 1").fetchone()
+            self.canary_requested = bool(canary)
+            self.crawler.stats.set_value('contract/canary_ok', 0)
+            if canary:
+                yield scrapy.Request(canary[1], callback=self.parse_contract, dont_filter=True,
+                                     meta={'contract_canary': True, 'notice_id': canary[0]})
+        for notice, url in todo.items():
             # dont_filter: unpublished notices all redirect to the same NotFound page, and each
             # must still reach parse_contract to be counted rather than dropped as a duplicate.
             yield scrapy.Request(url, callback=self.parse_contract, dont_filter=True,
-                                 meta={'refresh_existing': True, 'notice_id': notice})
+                                 meta={'refresh_existing': True, 'notice_id': notice, 'notice_url': url})
 
     async def start(self):
         for request in self.start_requests():
@@ -99,6 +114,47 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             return api.execute(f'SELECT DISTINCT v.notice_id, v.page_url FROM contract_versions v '
                                f'WHERE {where} AND v.page_url IS NOT NULL ORDER BY v.notice_id',
                                (value,)).fetchall()
+
+    @staticmethod
+    def _pending_schema(conn):
+        conn.execute('CREATE TABLE IF NOT EXISTS pending_notices ('
+                     'notice_id TEXT PRIMARY KEY, page_url TEXT NOT NULL, '
+                     'first_seen TEXT NOT NULL, last_checked TEXT NOT NULL, '
+                     'attempts INTEGER NOT NULL DEFAULT 1)')
+
+    def _pending_notices(self, stored):
+        """Keep expired rows as tombstones so an API backfill cannot restart retries."""
+        pending, expired = {}, set()
+        with self.db_manager.get_connection(self.name) as conn:
+            self._pending_schema(conn)
+            conn.execute('DELETE FROM pending_notices WHERE notice_id IN (SELECT cn_id FROM contracts)')
+            rows = conn.execute('SELECT notice_id, page_url, first_seen FROM pending_notices').fetchall()
+            for notice, url, first_seen in rows:
+                if notice in stored:
+                    continue
+                if (self.today - parse_day(first_seen)).days >= 30:
+                    expired.add(notice)
+                    self.logger.warning('Giving up unpublished notice %s after 30 days', notice)
+                else:
+                    pending[notice] = url
+                    conn.execute('UPDATE pending_notices SET last_checked = ?, attempts = attempts + 1 '
+                                 'WHERE notice_id = ?', (self.today.isoformat(), notice))
+            conn.commit()
+        return pending, expired
+
+    def _remember_pending(self, response):
+        notice = response.meta.get('notice_id')
+        url = response.meta.get('notice_url')
+        if not notice or not url:
+            return
+        with self.db_manager.get_connection(self.name) as conn:
+            self._pending_schema(conn)
+            conn.execute('INSERT INTO pending_notices '
+                         '(notice_id, page_url, first_seen, last_checked, attempts) VALUES (?, ?, ?, ?, 1) '
+                         'ON CONFLICT(notice_id) DO UPDATE SET page_url = excluded.page_url, '
+                         'last_checked = excluded.last_checked',
+                         (notice, url, self.today.isoformat(), self.today.isoformat()))
+            conn.commit()
 
     def _refetch_missing_supplier(self):
         self.db_manager.initialize_database(self.name)
@@ -123,13 +179,22 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         requested = getattr(self, 'requested_notices', 0)
         unpublished = stats.get('contract/page_not_found', 0)
         if (reason == 'finished' and requested and not stats.get('item_scraped_count')
-                and unpublished == requested and requested <= self.MAX_UNPUBLISHED_NOTICES):
+                and unpublished == requested
+                and not any(stats.get(k) for k in ('crawl/extraction_failed', 'retry/max_reached',
+                                                   'database/items_failed'))
+                and (stats.get('contract/canary_ok') == 1 if getattr(self, 'canary_requested', False)
+                     else requested <= self.MAX_UNPUBLISHED_NOTICES)):
             self.logger.info('All %s new notices have no page on the site yet (not yet published or '
                              'withdrawn); nothing to save, later runs retry them', requested)
             self.crawler.stats.set_value('crawl/nothing_due', 1)
         complete = reason == 'finished' and not any(
             stats.get(k) for k in ('crawl/extraction_failed', 'retry/max_reached', 'database/items_failed',
                                    'downloader/response_status_count/404'))
+        if getattr(self, 'requested_notices', 0):
+            with self.db_manager.get_connection(self.name) as conn:
+                self._pending_schema(conn)
+                conn.execute('DELETE FROM pending_notices WHERE notice_id IN (SELECT cn_id FROM contracts)')
+                conn.commit()
         if complete and self.window_start and not self.refetch:
             previous = parse_day(self.db_manager.get_state(self.name, 'covered_through') or '')
             # A backfill only extends coverage if it joins up with what was already covered.
@@ -144,7 +209,11 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         if '/System/NotFound' in response.url:
             # In the API but not (or no longer) shown on the site, e.g. withdrawn: nothing to add.
             self.logger.info('No page on the site for %s', response.meta.get('notice_id') or response.url)
+            if response.meta.get('contract_canary'):
+                self.crawler.stats.set_value('contract/canary_ok', 0)
+                return
             self.crawler.stats.inc_value('contract/page_not_found')
+            self._remember_pending(response)
             return
 
         def get_detail(label):
@@ -163,6 +232,14 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
 
         publish_date = get_detail("Publish Date") or get_detail("Amendment Publish Date")
         son_link = response.xpath('//div[@class="list-desc"][span/text()="SON ID:"]//a/@href').get()
+
+        if response.meta.get('contract_canary'):
+            # Same required identity fields as DatabasePipeline, plus the expected CN identity.
+            # Return before yielding: no database writes, activity events or scraped items.
+            ok = (response.status == 200 and get_detail("CN ID") == response.meta.get('notice_id')
+                  and bool(get_detail("Agency")))
+            self.crawler.stats.set_value('contract/canary_ok', int(ok))
+            return
 
         yield {
             "Professional services": response.css('p.lead::text').get(),
