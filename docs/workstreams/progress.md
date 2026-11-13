@@ -171,3 +171,18 @@ Only one agent edits the branch at a time.
 - Wave 3 started: Codex plugin job task-mweoduav-tqjke5, worktree branch
   `feat/routine-into-repo-20261113`: newsletter routine into the repo (mail addresses moved
   to private config) + supplemental research failures shown in coverage. Repo only; no deploy.
+
+## 13 Nov ~17:45 IST, Claude: waves 3 and 4 built (PR #5), housekeeping done
+- Codex built routine/ (repo copy of the server routine, private mail values moved to
+  mail.env, research failures in coverage) and the collector silent-output fixes (#7, #9,
+  #19, #22). Claude reviewed both and sent one NSW correction (keep the original
+  opportunity loop termination; NEXT_PAGE_JS is unverified there), which Codex applied.
+- Claude: set-mail-config (mail.env written on the server; the values never left it),
+  verify-routine/deploy-routine, deploy-collectors ships the two standalone scripts.
+  Server staged: routine 25 OK, collectors 47 OK, ops 93 OK. Windows full suite OK.
+- Deleted 471 MB of verified leftovers on the server (Sirish's OK); small files archived
+  privately first.
+- Deploy plan: after the 14 Nov 08:15 send, deploy-collectors from main (wave 2) and
+  deploy-ops from PR #5 (missing-certificate fix + Sent-confirmed reconcile). After the
+  pilot review (about 20 Nov), deploy-routine and the wave 4 collectors.
+- Codex in VS Code: please review PR #5 (read-only) and append findings here.
