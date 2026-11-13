@@ -77,6 +77,10 @@ OPS_TESTS = (
     "test_cloud_health.py",
     "test_cloud_daily_brief.py",
 )
+# Collector code: the source runner and the spiders package only (see deploy_collectors).
+COLLECTOR_DIR = "/opt/aus_tender"
+COLLECTOR_TESTS = ("test_collectors_unpublished.py",)
+BUSY_UNITS = ("illoura-daily-brief.service", "illoura-cloud-collect.service")
 EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 DRY_RUN_DIR = re.compile(r"^/var/tmp/illoura-brief-dryrun-[0-9TZ]+$")
 
@@ -533,6 +537,102 @@ def deploy_ops(
     }
 
 
+def collector_files(repo=REPO):
+    """The collector code this tool may ship: run_spiders.py and spiders/*.py, nothing else."""
+    spiders = sorted("spiders/" + p.name for p in (Path(repo) / "spiders").glob("*.py"))
+    return ["run_spiders.py", *spiders]
+
+
+def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
+    """Stage, verify and test collector code; install only the files that changed.
+
+    Refuses while a collection or the daily brief is running. Replaced files are kept in
+    /var/backups/illoura/collectors-<time>/. Never touches databases, settings or timers.
+    """
+    if not yes and not test_only:
+        raise OperationError("deploy-collectors changes the server; rerun with --yes")
+    for unit in BUSY_UNITS:
+        _, out, _ = remote.run(["systemctl", "is-active", unit])
+        if out.strip() in ("active", "activating", "deactivating", "reloading"):
+            raise OperationError(
+                f"{unit} is running; deploy collectors after it finishes. Nothing was changed."
+            )
+    names = collector_files(repo)
+    files = {name: lf_bytes(Path(repo) / name) for name in names}
+    files.update(
+        {"tests/" + n: lf_bytes(Path(repo) / "tests" / n) for n in COLLECTOR_TESTS}
+    )
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, files)
+        # The staged runner and spiders package come first on the path; everything else they
+        # import (database_manager, pipelines, settings) is the installed project, read-only.
+        tests = run_tests(
+            remote,
+            [
+                "env",
+                f"PYTHONPATH={stage}:{COLLECTOR_DIR}",
+                "GSHEETS_AUTO_SYNC=False",
+                OPS_PYTHON,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                stage + "/tests",
+                "-p",
+                "test_collectors_*.py",
+            ],
+            "staged collector tests (nothing installed)",
+        )
+        if test_only:
+            return {"tested": True, "installed": [], "tests": tests}
+        installed = [f"{COLLECTOR_DIR}/{n}" for n in names]
+        _, out, _ = remote.run(["sudo", "sha256sum", *installed])
+        current = {
+            line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()
+        }
+        changed = [n for n in names if current.get(f"{COLLECTOR_DIR}/{n}") != sha256(files[n])]
+        if not changed:
+            return {"installed": [], "tests": tests, "note": "server already matches"}
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = f"{BACKUP_ROOT}/collectors-{stamp}"
+        must(
+            remote,
+            ["sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0700",
+             backup, backup + "/spiders"],
+            "create collector backup folder",
+        )
+        for name in changed:
+            target = f"{COLLECTOR_DIR}/{name}"
+            if target in current:
+                must(remote, ["sudo", "cp", "-p", target, f"{backup}/{name}"], "back up " + name)
+            must(
+                remote,
+                ["sudo", "install", "-o", "scraper", "-g", "scraper", "-m", "0644",
+                 f"{stage}/{name}", target],
+                "install " + name,
+            )
+        out = must(
+            remote,
+            ["sudo", "sha256sum", *[f"{COLLECTOR_DIR}/{n}" for n in changed]],
+            "hash installed collectors",
+        )
+        after = {line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()}
+        wrong = [n for n in changed if after.get(f"{COLLECTOR_DIR}/{n}") != sha256(files[n])]
+        if wrong:
+            raise OperationError(
+                f"Installed collector files do not match: {wrong}; originals are in {backup}"
+            )
+    finally:
+        remove_stage(remote, stage)
+    return {
+        "installed": changed,
+        "backup": backup,
+        "tests": tests,
+        "hashes": {n: sha256(files[n]) for n in changed},
+    }
+
+
 def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False):
     """Stage and test api/app.py as the API user; install with rollback unless test_only."""
     if not yes and not test_only:
@@ -800,6 +900,14 @@ def build_parser():
     sub.add_parser(
         "verify-api", help="Stage and run the API tests on the server; installs nothing"
     )
+    sub.add_parser(
+        "deploy-collectors",
+        help="Ship, test and install run_spiders.py and spiders/*.py (changed files only)",
+    ).add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "verify-collectors",
+        help="Stage and run the collector tests on the server; installs nothing",
+    )
     key = sub.add_parser("api-key")
     key.add_argument("key_action", choices=["create", "revoke"])
     key.add_argument("--name", required=True)
@@ -841,6 +949,10 @@ def main(argv=None, remote_factory=SshRemote):
             result = deploy_ops(remote, test_only=True)
         elif args.action == "verify-api":
             result = deploy_api(remote, test_only=True)
+        elif args.action == "deploy-collectors":
+            result = deploy_collectors(remote, yes=args.yes)
+        elif args.action == "verify-collectors":
+            result = deploy_collectors(remote, test_only=True)
         elif args.action == "set-health-sender":
             result = set_health_sender(remote, args.email, yes=args.yes)
         elif args.action == "daily-brief-dry-run":

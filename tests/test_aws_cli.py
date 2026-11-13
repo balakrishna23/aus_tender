@@ -32,10 +32,19 @@ class FakeRemote:
             (Path(cli.REPO) / "api/requirements.txt").read_text(encoding="utf-8"),
         )
         self.keys = [{"name": "admin", "sha256": "x" * 64, "enabled": True}]
+        self.busy = options.get("busy", ())  # units reported as running
 
     def run(self, argv, timeout=900):
         cli.command_line(argv)  # every call must pass the same safety check as SSH
         self.calls.append(list(argv))
+        if argv[:2] == ["systemctl", "is-active"] and len(argv) == 3:
+            return (0, "active\n", "") if argv[2] in self.busy else (3, "inactive\n", "")
+        if argv[:2] == ["sudo", "sha256sum"]:
+            present = [p for p in argv[2:] if p in self.files]
+            lines = [hashlib.sha256(self.files[p]).hexdigest() + "  " + p for p in present]
+            return (0 if len(present) == len(argv) - 2 else 1), "\n".join(lines), ""
+        if argv[:2] == ["sudo", "install"] and argv[-2] in self.files:
+            self.files[argv[-1]] = self.files[argv[-2]]  # installed copies hash like the original
         if argv[0] == "sha256sum":
             lines = []
             for path in argv[1:]:
@@ -321,6 +330,68 @@ class SettingsAndMainTests(unittest.TestCase):
             remote.calls[-1],
             ["sudo", cli.OPS_PYTHON, cli.OPS_SCRIPT, "prune", "--dry-run"],
         )
+
+
+class DeployCollectorsTests(unittest.TestCase):
+    def server_with_current_code(self, **options):
+        """A server whose collector files already match the repo, except aus_contract.py."""
+        remote = FakeRemote(**options)
+        for name in cli.collector_files():
+            remote.files[f"{cli.COLLECTOR_DIR}/{name}"] = cli.lf_bytes(Path(cli.REPO) / name)
+        remote.files[f"{cli.COLLECTOR_DIR}/spiders/aus_contract.py"] = b"# old version\n"
+        return remote
+
+    def test_ships_only_the_runner_and_spiders(self):
+        names = cli.collector_files()
+        self.assertEqual(names[0], "run_spiders.py")
+        self.assertIn("spiders/aus_contract.py", names)
+        self.assertTrue(all(n == "run_spiders.py" or n.startswith("spiders/") for n in names))
+
+    def test_needs_yes(self):
+        with self.assertRaises(cli.OperationError):
+            cli.deploy_collectors(FakeRemote())
+
+    def test_refuses_while_the_brief_or_collection_runs(self):
+        for unit in cli.BUSY_UNITS:
+            remote = FakeRemote(busy=(unit,))
+            with self.subTest(unit=unit), self.assertRaises(cli.OperationError):
+                cli.deploy_collectors(remote, yes=True)
+            self.assertEqual(remote.files, {})  # nothing staged or installed
+
+    def test_verify_runs_staged_tests_and_installs_nothing(self):
+        remote = FakeRemote()
+        result = cli.deploy_collectors(remote, test_only=True)
+        self.assertTrue(result["tested"])
+        self.assertEqual(remote.installs(), [])
+        test_run = next(c for c in remote.calls if "unittest" in c)
+        self.assertTrue(test_run[1].startswith("PYTHONPATH=/var/tmp/illoura-stage-"))
+        self.assertTrue(any(c[:2] == ["rm", "-rf"] for c in remote.calls))
+
+    def test_failed_tests_install_nothing(self):
+        remote = self.server_with_current_code(tests_ok=False)
+        with self.assertRaises(cli.OperationError):
+            cli.deploy_collectors(remote, yes=True)
+        self.assertEqual(remote.installs(), [])
+
+    def test_installs_only_changed_files_as_scraper_after_backup(self):
+        remote = self.server_with_current_code()
+        result = cli.deploy_collectors(remote, yes=True)
+        self.assertEqual(result["installed"], ["spiders/aus_contract.py"])
+        files = [c for c in remote.installs() if "-d" not in c]
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0][2:8], ["-o", "scraper", "-g", "scraper", "-m", "0644"])
+        self.assertIn(["sudo", "cp", "-p", f"{cli.COLLECTOR_DIR}/spiders/aus_contract.py",
+                       result["backup"] + "/spiders/aus_contract.py"], remote.calls)
+        self.assertFalse(any("systemctl" in c and "enable" in c for c in remote.calls))
+
+    def test_up_to_date_server_is_left_alone(self):
+        remote = self.server_with_current_code()
+        remote.files[f"{cli.COLLECTOR_DIR}/spiders/aus_contract.py"] = cli.lf_bytes(
+            Path(cli.REPO) / "spiders/aus_contract.py"
+        )
+        result = cli.deploy_collectors(remote, yes=True)
+        self.assertEqual(result["installed"], [])
+        self.assertEqual(remote.installs(), [])
 
 
 if __name__ == "__main__":
