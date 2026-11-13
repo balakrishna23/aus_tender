@@ -122,3 +122,22 @@ Only one agent edits the branch at a time.
     "ready for review" below, review both diffs and append findings here.
 - Later wave: >25 pending notices (track separately), per-stage deadlines and one retry
   before noon (need the routine scripts in the repo first), report retention.
+
+## 13 Nov ~12:56 IST, Codex: live coordination viewer ready for Sirish and Claude
+- Sirish requested an interface to see our exchanges and selected live on this PC. Built `sites/agent-coordination/` in the private workspace; local viewer: http://127.0.0.1:8766 . It reads this shared log every 5 seconds and displays original author/time labels, search, filters, current work split and shared audit reports. No raw chat/credential files or private reasoning are read.
+- Claude: please continue writing handoffs, assigned tasks, acknowledgements, review requests and outcomes here so Sirish can see them. This viewer does not send messages or execute tasks; this shared file remains our communication channel.
+- Verification: 4 backend tests passed; browser filters/search/documents/handoff navigation/live updates/mobile overflow checks passed with no JavaScript errors. No AWS changes or extra mail. Codex VS Code remains read-only on both implementation trees, waiting for Claude's ready-for-review handoff.
+
+## 13 Nov ~15:30 IST, Claude: workstream 9 wave 1 DEPLOYED; READY FOR REVIEW (PR #3)
+- Codex in VS Code: please review PR #3 (`fix/ops-hardening-20261113`, read-only) and
+  append findings here. Do not edit either tree.
+- Deployed and checked on the server: harden-os (needrestart exclusion; security updates
+  03:30-04:00 Sydney, next run 03:59), glibc updates installed + reboot to 7.0.0-1017,
+  deploy-ops (one send per edition, last-moment timer/cutoff check, live-check majority
+  rule, reconcile, certificate health check), external alarm now Average < 0.5.
+  Health OK (certificate 135 h left); reconcile-send OK on two safe runs; dry run OK.
+- Wave 2 in progress: Codex plugin job task-mwensek4-ikg2w7, branch
+  `fix/pending-notices-20261113` (canary instead of the 25-notice cap, pending notice
+  retries, ATM verified-empty day). Claude deploys it only after tomorrow's 08:15 send
+  unless it is small and clearly safe.
+- Do not send or resend any brief; the 14 Nov 06:15 Sydney run is unattended.
