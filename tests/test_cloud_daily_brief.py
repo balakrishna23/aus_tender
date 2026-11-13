@@ -210,8 +210,8 @@ class SendSafetyTests(unittest.TestCase):
     def run_brief(self, moments, enabled='enabled'):
         systemctl = Mock(return_value=SimpleNamespace(returncode=0, stdout=enabled))
         output = io.StringIO()
-        with (patch.object(brief.subprocess, 'run'), patch.object(brief, 'scraper') as scraper,
-              patch.object(brief, 'utc_now', side_effect=moments), patch.object(brief.time, 'sleep') as sleep,
+        with (patch.object(brief, 'bounded_command'), patch.object(brief, 'scraper') as scraper,
+              patch.object(brief, 'utc_now', side_effect=[moments[0]] * 3 + moments), patch.object(brief.time, 'sleep') as sleep,
               redirect_stdout(output)):
             brief.run(systemctl=systemctl)
         return scraper, sleep, systemctl, output.getvalue()
@@ -440,6 +440,112 @@ class ComposeSafetyTests(unittest.TestCase):
         for outcomes in ([], ['closed', 'closed'], ['failed', 'open'], ['failed', 'closed']):
             with self.subTest(outcomes=outcomes):
                 self.compose(outcomes)
+
+
+class RetryTests(unittest.TestCase):
+    setUp = SendSafetyTests.setUp
+    write = SendSafetyTests.write
+
+    def stage(self, stage, failures, now=NOW, after_pause=None):
+        action = Mock(side_effect=failures)
+        output = io.StringIO()
+        clock = Mock(return_value=now)
+        def sleep(seconds):
+            self.assertEqual(seconds, 300)
+            clock.return_value = after_pause or now + timedelta(seconds=300)
+        with (patch.object(brief, 'utc_now', clock), patch.object(brief.time, 'sleep', side_effect=sleep),
+              redirect_stdout(output)):
+            brief.run_stage(stage, action, brief.send_window(now)[1])
+        return action, [json.loads(line) for line in output.getvalue().splitlines()]
+
+    def failure(self, stderr='transient'):
+        return brief.subprocess.CalledProcessError(1, ['synthetic'], stderr=stderr)
+
+    def test_collect_transient_retried_once(self):
+        action, lines = self.stage('collect', [self.failure(), None])
+        self.assertEqual(action.call_count, 2)
+        self.assertEqual(action.call_args.args, (7200,))
+        self.assertTrue(lines[0]['retry'])
+
+    def test_compose_transient_retried_once(self):
+        action, lines = self.stage('compose', [self.failure(), None])
+        self.assertEqual(action.call_count, 2)
+        self.assertEqual(action.call_args.args, (900,))
+
+    def test_after_latest_start_and_pause_crossing_latest_fail(self):
+        for moment in (NOW + timedelta(hours=3), NOW + timedelta(hours=2, minutes=28)):
+            with self.assertRaises(brief.subprocess.CalledProcessError):
+                self.stage('collect', [self.failure()], now=moment)
+        with self.assertRaises(brief.subprocess.CalledProcessError):
+            self.stage('collect', [self.failure()], after_pause=NOW + timedelta(hours=3))
+
+    def test_latest_start_boundary_allowed(self):
+        action, _ = self.stage('collect', [self.failure(), None], now=NOW + timedelta(hours=2, minutes=25))
+        self.assertEqual(action.call_count, 2)
+
+    def test_unresolved_guard_never_retried(self):
+        self.write(self.work, 'coordinator_status.json', {'status': 'failed', 'error_type': 'RuntimeError'})
+        error = self.failure('RuntimeError: Unresolved sends require reconciliation')
+        self.assertTrue(brief.unresolved_guard(error))
+        action = Mock(side_effect=error)
+        with (patch.object(brief, 'utc_now', return_value=NOW), patch.object(brief.time, 'sleep') as sleep,
+              redirect_stdout(io.StringIO()), self.assertRaises(brief.subprocess.CalledProcessError)):
+            brief.run_stage('collect', action, brief.send_window(NOW)[1])
+        action.assert_called_once()
+        sleep.assert_not_called()
+        self.assertFalse(brief.unresolved_guard(self.failure('another RuntimeError')))
+
+    def test_two_failures_propagate_nonzero(self):
+        for stage in ('collect', 'compose'):
+            action = Mock(side_effect=[self.failure(), self.failure()])
+            with (patch.object(brief, 'utc_now', return_value=NOW), patch.object(brief.time, 'sleep'),
+                  redirect_stdout(io.StringIO()), self.assertRaises(brief.subprocess.CalledProcessError) as raised):
+                brief.run_stage(stage, action, brief.send_window(NOW)[1])
+            self.assertEqual(action.call_count, 2)
+            self.assertNotEqual(raised.exception.returncode, 0)
+
+    def test_send_failure_never_retried(self):
+        scraper = Mock(side_effect=[None, self.failure('uncertain send')])
+        with (patch.object(brief, 'utc_now', return_value=NOW + timedelta(hours=2)),
+              patch.object(brief, 'bounded_command') as collect, patch.object(brief, 'scraper', scraper),
+              self.assertRaises(brief.subprocess.CalledProcessError)):
+            brief.run(systemctl=Mock(return_value=SimpleNamespace(returncode=0, stdout='enabled')))
+        self.assertEqual(scraper.call_count, 2)
+        self.assertEqual(scraper.call_args.args[1], 'send')
+        self.assertEqual(scraper.call_args.kwargs['timeout'], 900)
+        self.assertEqual(collect.call_args.args[1], 7200)
+        self.assertIn('ILLOURA_MORNING_DEADLINE', collect.call_args.kwargs['env'])
+
+    def test_bounded_command_passes_timeout_and_kills_on_expiry(self):
+        process = Mock(returncode=0)
+        process.communicate.return_value = (None, '')
+        with patch.object(brief.subprocess, 'Popen', return_value=process) as popen:
+            brief.bounded_command(['fake'], 45)
+        process.communicate.assert_called_once_with(timeout=45)
+        self.assertEqual(popen.call_args.kwargs['start_new_session'], os.name != 'nt')
+        process.communicate.side_effect = [brief.subprocess.TimeoutExpired('fake', 45), (None, '')]
+        with (patch.object(brief.subprocess, 'Popen', return_value=process),
+              patch.object(brief, 'kill_tree') as kill,
+              self.assertRaises(brief.subprocess.TimeoutExpired)):
+            brief.bounded_command(['fake'], 45)
+        kill.assert_called_once_with(process)
+
+
+class ProcessGroupTests(unittest.TestCase):
+    @unittest.skipIf(os.name == 'nt', 'Linux process group cleanup')
+    def test_detached_descendant_groups_are_killed_and_parent_reaped(self):
+        process = Mock(pid=100001)
+        entry = SimpleNamespace(parent=SimpleNamespace(name='100002'),
+                                read_text=lambda: '100002 (child) S 100001 100002 0')
+        fake_path = Mock()
+        fake_path.glob.return_value = [entry]
+        with (patch.object(brief, 'Path', return_value=fake_path),
+              patch.object(brief.os, 'getpgid', side_effect=lambda pid: pid),
+              patch.object(brief.os, 'getpgrp', return_value=99999),
+              patch.object(brief.os, 'killpg') as kill):
+            brief.kill_tree(process)
+        self.assertEqual({call.args[0] for call in kill.call_args_list}, {100001, 100002})
+        process.wait.assert_called_once_with()
 
 
 if __name__ == '__main__':
