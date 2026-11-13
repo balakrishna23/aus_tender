@@ -8,6 +8,7 @@ Subcommands (installed in /opt/illoura-ops; the timer runs `run` as root):
   run                 collect + publish (root), compose (scraper), wait, send (scraper)
   compose --out RUN   select and verify listings, write editorial notes, compose, layout check
   send --out RUN      send once through the existing send helper and record the receipt
+  reconcile --out RUN [--mark-undelivered]   check an uncertain send in Gmail Sent; never send
   dry-run             compose a copy of the latest run under /var/tmp; never sends
 
 Selection is automatic and the email says so: open, relevant BuyICT ICT labour-hire
@@ -23,7 +24,7 @@ import sqlite3
 import subprocess
 import sys
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -44,7 +45,7 @@ AUTHORIZATION = 'User requested the Illoura routine and email on AWS'
 SCHEDULE_NOTE = 'Daily 08:15 Australia/Sydney, requested by Sirish on 12 November 2026'
 RESTRICTED = re.compile(r'selected sellers?|invited sellers?|by invitation|invitation only|only (?:be )?open to|'
                         r'additional sellers will not|existing panel members only', re.I)
-SEND_ARTEFACTS = ('send_receipt.json', 'send_attempt.json', 'cloud_send_review.json', 'mail_authorization.json',
+SEND_ARTEFACTS = ('send_receipt.json', 'send_attempt.json', 'send_reconciliation.json', 'cloud_send_review.json', 'mail_authorization.json',
                   'outbound_send_request.json', 'newsletter_editorial.json', 'editorial_notes.json',
                   'email_layout_checks.json')
 
@@ -184,6 +185,10 @@ def compose(out, now=None):
             verified[key] = record
         else:
             dropped.append({'id': key, 'reason': 'no longer open or closing within two hours'})
+    checked = len(verified) + len(dropped)
+    failed = sum(item['reason'] == 'live check failed' for item in dropped)
+    if checked and failed * 2 > checked:
+        raise SystemExit('More than half of shortlisted live checks failed; not approving the send')
     baseline_file = out / 'baseline_buyict_ids.json'
     baseline = json.loads(baseline_file.read_text()) if baseline_file.exists() else []
     report = json.loads((out / 'source_refresh.json').read_text(encoding='utf-8'))
@@ -219,17 +224,37 @@ def send_window(now):
     return target, cutoff
 
 
-def send(out):
-    """Runs as scraper. The helper refuses duplicates and checks identity, layout and content hashes."""
-    sys.path[:0] = [str(PROJECT), str(SCRIPTS)]
-    from send_gmail import send as gmail_send  # noqa: E402  (server routine module)
-    out = Path(out).resolve()
-    now = utc_now()
-    write_json(out / 'mail_authorization.json', {'status': 'authorized', 'schedule': SCHEDULE_NOTE,
-                                                 'gmail_credential_installed': TOKEN.exists(),
-                                                 'recorded_at_utc': now.isoformat()})
-    gmail_send(out, TOKEN)
-    receipt = json.loads((out / 'send_receipt.json').read_text())
+@contextmanager
+def send_lock():
+    import fcntl
+    with (WORK / 'send.lock').open('a+') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise SystemExit('Another send or reconciliation is in progress')
+        yield
+
+
+def check_edition(out):
+    edition = json.loads((out / 'editorial_notes.json').read_text())['edition_date']
+    datetime.strptime(edition, '%Y-%m-%d')
+    for other in (WORK / 'reports').iterdir():
+        if other.resolve() == out or not other.is_dir():
+            continue
+        notes = other / 'editorial_notes.json'
+        if not notes.exists() or json.loads(notes.read_text()).get('edition_date') != edition:
+            continue
+        receipt = other / 'send_receipt.json'
+        if receipt.exists() and json.loads(receipt.read_text()).get('sent') is True:
+            raise SystemExit('This edition was already sent from another run')
+        reconciliation = other / 'send_reconciliation.json'
+        resolved = (reconciliation.exists()
+                    and json.loads(reconciliation.read_text()).get('delivered') is False)
+        if (other / 'send_attempt.json').exists() and not receipt.exists() and not resolved:
+            raise SystemExit('This edition has an unresolved send attempt in another run; reconcile first')
+
+
+def record_sent(out, receipt):
     for name in ('cloud_run.json', 'newsletter_review.json'):
         path = out / name
         if path.exists():
@@ -237,25 +262,155 @@ def send(out):
             value.update(status='sent', sent=True, sent_at_utc=receipt.get('recorded_at_utc'),
                          send_receipt=str(out / 'send_receipt.json'), schedule=SCHEDULE_NOTE)
             write_json(path, value)
-    state = json.loads((WORK / 'latest_run.json').read_text())
-    if state.get('run_dir') == str(out):
-        state.update(status='sent', sent=True, sent_at_utc=receipt.get('recorded_at_utc'))
-        write_json(WORK / 'latest_run.json', state)
+    latest = WORK / 'latest_run.json'
+    if latest.exists():
+        state = json.loads(latest.read_text())
+        if state.get('run_dir') == str(out):
+            state.update(status='sent', sent=True, sent_at_utc=receipt.get('recorded_at_utc'))
+            write_json(latest, state)
+
+
+def send(out):
+    with send_lock():
+        _send_locked(Path(out).resolve())
+
+
+def _send_locked(out):
+    """Runs as scraper. The helper refuses duplicates and checks identity, layout and content hashes."""
+    sys.path[:0] = [str(PROJECT), str(SCRIPTS)]
+    from send_gmail import send as gmail_send  # noqa: E402  (server routine module)
+    out = Path(out).resolve()
+    check_edition(out)
+    now = utc_now()
+    write_json(out / 'mail_authorization.json', {'status': 'authorized', 'schedule': SCHEDULE_NOTE,
+                                                 'gmail_credential_installed': TOKEN.exists(),
+                                                 'recorded_at_utc': now.isoformat()})
+    gmail_send(out, TOKEN)
+    receipt = json.loads((out / 'send_receipt.json').read_text())
+    record_sent(out, receipt)
     print(json.dumps({'sent': True, 'subject': receipt.get('subject'), 'message_id': receipt.get('message_id')}))
 
 
-def run():
+def gmail_session():
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import AuthorizedSession, Request
+    credentials = Credentials.from_authorized_user_file(str(TOKEN))
+    if not credentials.valid:
+        credentials.refresh(Request())
+    return AuthorizedSession(credentials)
+
+
+def find_sent(session, attempt):
+    api = 'https://gmail.googleapis.com/gmail/v1/users/me'
+
+    def get(path, **params):
+        response = session.get(api + path, params=params, timeout=45)
+        response.raise_for_status()
+        return response.json()
+
+    sender, recipient, subject = (attempt[key] for key in ('sender', 'recipient', 'subject'))
+    if get('/profile')['emailAddress'].lower() != sender.lower():
+        raise ValueError('Gmail identity mismatch')
+    queries = ['in:sent rfc822msgid:' + attempt['message_id_header'].strip('<>'),
+               'in:sent from:' + sender + ' to:' + recipient + ' subject:"' + subject.replace('"', '') + '"']
+    searched = []
+    for query in queries:
+        searched.append(query)
+        page = None
+        while True:
+            params = {'q': query, 'maxResults': 100}
+            if page:
+                params['pageToken'] = page
+            matches = get('/messages', **params)
+            for item in matches.get('messages', []):
+                message = get('/messages/' + item['id'], format='metadata')
+                headers = {h['name'].lower(): h['value'] for h in message.get('payload', {}).get('headers', [])}
+                if ('SENT' in message.get('labelIds', []) and headers.get('subject') == subject
+                        and recipient in headers.get('to', '') and sender in headers.get('from', '')):
+                    return message, searched
+            page = matches.get('nextPageToken')
+            if not page:
+                break
+    return None, searched
+
+
+def reconcile(out, mark_undelivered=False, session=None):
+    original = Path(out).absolute()
+    out = original.resolve()
+    if (original.is_symlink() or out.parent != (WORK / 'reports').resolve()
+            or not out.name.startswith('daily_sweep_') or not out.is_dir()):
+        raise SystemExit('Unexpected reconciliation run directory')
+    with send_lock():
+        if (out / 'send_receipt.json').exists():
+            print(json.dumps({'status': 'already_sent'}))
+            return 0
+        if not (out / 'send_attempt.json').exists():
+            print(json.dumps({'status': 'nothing_to_reconcile'}))
+            return 0
+        attempt = json.loads((out / 'send_attempt.json').read_text())
+        owned_session = session is None
+        session = gmail_session() if owned_session else session
+        try:
+            message, searched = find_sent(session, attempt)
+        finally:
+            if owned_session:
+                session.close()
+        if message:
+            now = utc_now()
+            sent_at = (datetime.fromtimestamp(int(message['internalDate']) / 1000, timezone.utc)
+                       if 'internalDate' in message else now)
+            receipt = {'sent': True, 'reconciled_existing_sent': True, 'reconciled_by': 'reconcile',
+                       'message_id': message['id'], 'thread_id': message.get('threadId'),
+                       'label_ids': message.get('labelIds', []), 'recorded_at_utc': sent_at.isoformat(),
+                       'reconciled_at_utc': now.isoformat(),
+                       'sender': attempt['sender'], 'recipient': attempt['recipient'], 'subject': attempt['subject']}
+            write_json(out / 'send_receipt.json', receipt)
+            record_sent(out, receipt)
+            print(json.dumps({'status': 'delivered', 'message_id': receipt['message_id'],
+                              'thread_id': receipt['thread_id']}))
+            return 0
+        if not mark_undelivered:
+            print(json.dumps({'status': 'not_found_in_sent'}))
+            return 2
+        write_json(out / 'send_reconciliation.json', {
+            'delivered': False, 'checked_at_utc': utc_now().isoformat(),
+            'message_id_header': attempt['message_id_header'], 'searched': searched, 'decided_by': 'operator'})
+        print(json.dumps({'status': 'marked_undelivered'}))
+        return 0
+
+
+def timer_enabled(systemctl=None):
+    try:
+        result = (systemctl or subprocess.run)(['systemctl', 'is-enabled', 'illoura-daily-brief.timer'],
+                                              capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and result.stdout.strip() == 'enabled'
+
+
+def run(systemctl=None):
     """Root, from the timer: collect + publish, compose as scraper, wait for 08:15, send as scraper."""
     subprocess.run([str(PYTHON), str(OPS / 'illoura_cloud_collect.py')], check=True, cwd=str(PROJECT))
     out = json.loads((WORK / 'latest_run.json').read_text())['run_dir']
     scraper(str(OPS / 'illoura_daily_brief.py'), 'compose', '--out', out)
     target, cutoff = send_window(utc_now())
     now = utc_now()
-    if now > cutoff:
+    if now >= cutoff:
         print(json.dumps({'sent': False, 'reason': 'past the 12:00 Sydney cutoff; brief kept for review'}))
         return
     if now < target:
         time.sleep((target - now).total_seconds())
+    edition = json.loads((Path(out) / 'editorial_notes.json').read_text())['edition_date']
+    edition_day = datetime.strptime(edition, '%Y-%m-%d').date()
+    cutoff = datetime.combine(edition_day, datetime.min.time(), tzinfo=SYDNEY).replace(
+        hour=LATEST_SEND[0], minute=LATEST_SEND[1])
+    if not timer_enabled(systemctl):
+        print(json.dumps({'sent': False, 'reason': 'daily brief timer is not enabled; brief kept for review'}))
+        return
+    now = utc_now()
+    if now.astimezone(SYDNEY).date() != edition_day or now >= cutoff:
+        print(json.dumps({'sent': False, 'reason': 'past the edition 12:00 Sydney cutoff; brief kept for review'}))
+        return
     scraper(str(OPS / 'illoura_daily_brief.py'), 'send', '--out', out)
 
 
@@ -276,6 +431,9 @@ def main(argv=None):
     sub.add_parser('dry-run')
     for name in ('compose', 'send'):
         sub.add_parser(name).add_argument('--out', required=True)
+    reconcile_parser = sub.add_parser('reconcile')
+    reconcile_parser.add_argument('--out', required=True)
+    reconcile_parser.add_argument('--mark-undelivered', action='store_true')
     args = parser.parse_args(argv)
     if args.action == 'run':
         run()
@@ -283,6 +441,8 @@ def main(argv=None):
         dry_run()
     elif args.action == 'compose':
         compose(args.out)
+    elif args.action == 'reconcile':
+        raise SystemExit(reconcile(args.out, args.mark_undelivered))
     else:
         send(args.out)
 

@@ -58,7 +58,10 @@ uv run --no-project --python 3.11 --with-requirements requirements-deploy.txt py
 | `verify-ops` / `verify-api` | Stage the code and run its tests on the server (operations tests unprivileged with real symlinks; API tests as `illoura-api`), then remove the staging folder. Installs nothing; no `--yes` needed. Run before any deploy. |
 | `set-health-sender --email ADDRESS --yes` | Writes `/etc/illoura-ops/health.env` (root, 0600). The address is uploaded as file content, never placed in a command line or printed. |
 | `daily-brief-dry-run` | Composes a copy of the latest run under `/var/tmp` with live listing checks and layout checks, returns the text preview. Never sends. |
-| `schedule enable --yes` / `schedule disable --yes` | Turns the 08:15 daily brief on or off. The only action that changes a timer's enable state. |
+| `schedule enable --yes` / `schedule disable --yes` | Turns the 08:15 daily brief on or off. The only action that changes a timer's enable state. `disable` also stops a brief that has started and is waiting for 08:15, and the brief itself re-checks the timer and the 12:00 cutoff just before sending. |
+| `reconcile-send --run daily_sweep_<time> --yes [--mark-undelivered]` | Settles a send whose result is unknown (an attempt with no receipt blocks every later morning). Looks the message up in the sender's Gmail Sent folder as `scraper`: found writes the receipt; not found exits 2, and with `--mark-undelivered` records a person's decision that it was not delivered. Never sends. |
+| `harden-os --yes` | Ubuntu upkeep away from the 06:15-08:15 Sydney brief: needrestart never restarts the Illoura jobs (`deploy/system/needrestart-illoura.conf`), security updates run 03:30-04:00 Sydney (`deploy/system/apt-daily-upgrade-illoura.conf`); clears known stale failed units. |
+| `os-update --yes [--reboot]` | Installs pending security updates now; with `--reboot`, reboots if one needs it and waits for `/readyz`. Refuses 05:30-09:30 Sydney and while the brief or a collection runs. API offline for about a minute. |
 | `api-key create --name NAME` / `api-key revoke --name NAME` | Named team credentials. The key is written only to the private directory; the server stores its hash. |
 | `verify-collectors` / `deploy-collectors --yes` | Collector code (`run_spiders.py`, `spiders/*.py` only): stage, hash-check, run `tests/test_collectors_*.py` on the server against the staged code, then install only changed files as `scraper`, keeping the originals in `/var/backups/illoura/collectors-<time>/`. Refuses while the brief or collection runs. |
 | `watch deploy --yes` / `watch status` | External `/readyz` watch: CloudFormation stack `illoura-watch` (Lambda every 5 minutes, CloudWatch alarm, SNS email). The address defaults to the verified Lightsail alarm contact and is never printed; the new subscription must be confirmed from the email AWS sends. |
@@ -89,10 +92,19 @@ collection timer, which stays disabled so collection never runs twice.
    rechecks each public listing live, drops any that fail, adds "New on BuyICT since the last
    run", writes templated editorial notes, composes, and runs desktop/mobile layout checks.
 3. Records an automated review (content hashes, layout result, selection) and waits for 08:15.
-4. Sends once through the existing helper, which refuses source gaps, stale edition dates,
-   changed content, identity mismatch and duplicates (Gmail Sent is checked by subject).
+4. Just before sending, re-checks that the timer is still enabled and that it is before
+   12:00 Sydney on the edition's day; otherwise keeps the brief for review. Sends once
+   through the existing helper, which refuses source gaps, stale edition dates, changed
+   content, identity mismatch and duplicates (Gmail Sent is checked by subject). Since
+   13 November one edition date can be sent only once across all run folders, under a
+   server-wide `send.lock`, and an unresolved attempt in another folder blocks the send
+   until `reconcile-send` settles it. If most live listing checks fail (for example a
+   BuyICT outage) the brief is not approved, rather than reporting "0 requests".
    If the brief is not ready by 12:00 Sydney the day is skipped, not sent late. The timer
    has no catch-up after downtime.
+
+Ubuntu's own upkeep stays out of this window (`harden-os`): security updates run at
+03:30-04:00 Sydney, and needrestart never restarts the Illoura jobs after an upgrade.
 
 The email says plainly that selection was automatic and that invitation access, secure
 attachments and candidate fit are unverified. It goes only to the internal recipient fixed
@@ -250,12 +262,15 @@ detects server status problems; it does not verify application/Gmail correctness
 Since 13 November the CloudFormation stack `illoura-watch` (template
 `deploy/aws/illoura-watch.yaml`, deployed with `watch deploy --yes`) polls `/readyz`
 from AWS Lambda every 5 minutes and records `Illoura/Watch ReadyzOk`. Alarm
-`illoura-watch-needs-attention` emails through SNS when every check fails for two
-15-minute periods, or when checks stop arriving, and again on recovery. It covers
+`illoura-watch-needs-attention` emails through SNS when most checks (at least 2 of every 3)
+fail for two 15-minute periods, or when checks stop arriving, and again on recovery. It covers
 the server being down, a failed or hung collection, a failed publication, lost Gmail
 authorisation, low disk, retention attention and a missed 08:15 brief. It does not
-depend on the server or on its Gmail token. Alarm emails arrive only after the SNS
-subscription is confirmed from the AWS email; check with `watch status`.
+depend on the server or on its Gmail token. The SNS subscription was confirmed on
+13 November and alarm/recovery emails were delivered that day; check with `watch status`.
+Health also checks the HTTPS certificate (about 6.7-day lifetime, renewed by certbot
+with about 2 days left, twice-daily attempts): under 24 hours left makes `/readyz` fail,
+so a failing renewal is reported about a day before the certificate expires.
 `deploy/illoura_external_watch.py` remains a manual probe for the same endpoint.
 
 ## Validation and scope

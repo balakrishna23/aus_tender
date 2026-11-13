@@ -13,6 +13,38 @@ SYDNEY = ZoneInfo("Australia/Sydney")
 BRIEF_TIMER = "illoura-daily-brief.timer"
 BRIEF_DUE = (9, 0)  # Sydney time; the brief is sent at 08:15
 RUN_LIMIT_SECONDS = 5 * 3600  # a morning run normally finishes in about two hours
+CERT = Path("/etc/letsencrypt/live/illoura-api/cert.pem")
+# The certificate lives about 6.7 days and certbot renews it with roughly 2 days left,
+# retrying twice a day; under one day left means renewal has been failing.
+CERT_WARN_SECONDS = 24 * 3600
+
+
+def cert_not_after(path):
+    """Expiry of a PEM certificate, read with openssl (no extra Python packages)."""
+    out = subprocess.run(
+        ["openssl", "x509", "-enddate", "-noout", "-in", str(path)],
+        capture_output=True, text=True, timeout=10, check=True,
+    ).stdout
+    text = " ".join(out.strip().split("=", 1)[1].split())
+    return datetime.strptime(text, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
+
+
+def certificate(path, now, read_end=cert_not_after):
+    """Warn a day before the HTTPS certificate expires, long before the external watch notices."""
+    try:
+        left = (read_end(path) - now).total_seconds()
+    except (OSError, ValueError, IndexError, subprocess.SubprocessError):
+        return {"status": "unavailable"}
+    status = "ok" if left > CERT_WARN_SECONDS else ("expiring" if left > 0 else "expired")
+    return {"status": status, "hours_left": round(left / 3600, 1)}
+
+
+def https_installed(path):
+    """The certificate exists (or cannot even be looked at, which certificate() reports)."""
+    try:
+        return Path(path).exists()
+    except OSError:
+        return True
 
 
 def brief_timer_enabled():
@@ -78,11 +110,16 @@ def check(
     token=Path("/etc/illoura-routine/gmail-token.json"),
     brief_enabled=None,
     now=None,
+    cert=CERT,
+    read_cert_end=cert_not_after,
 ):
     now = now or datetime.now(timezone.utc)
     if brief_enabled is None:
         brief_enabled = brief_timer_enabled()
     checks = {}
+    # Only where HTTPS is installed (the server); nginx cannot serve without this file.
+    if https_installed(cert):
+        checks["certificate"] = certificate(cert, now, read_cert_end)
 
     def freshness(name, path, field):
         try:
