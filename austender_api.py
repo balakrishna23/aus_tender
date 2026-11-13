@@ -100,8 +100,18 @@ def walk(kind, start, end, http=requests, sleep=time.sleep):
     url = BY_DATES.format(kind=kind, start=iso(start), end=iso(end))
     while url:
         page = get_json(url, http)
-        yield from page.get('releases') or []
-        url = (page.get('links') or {}).get('next')
+        if not isinstance(page, dict) or not isinstance(page.get('releases'), list):
+            raise RuntimeError(f'Invalid OCDS envelope at {url}: releases must be a list')
+        if 'error' in page or 'errors' in page:
+            raise RuntimeError(f'Invalid OCDS envelope at {url}: API error object')
+        links = page.get('links', {})
+        if not isinstance(links, dict) or any(
+                not isinstance(value, str) and value is not None for value in links.values()):
+            raise RuntimeError(f'Invalid OCDS envelope at {url}: links must contain URL strings')
+        if any(not isinstance(release, dict) for release in page['releases']):
+            raise RuntimeError(f'Invalid OCDS envelope at {url}: releases must contain objects')
+        yield from page['releases']
+        url = links.get('next')
         if url:
             sleep(PAUSE)
 
