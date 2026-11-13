@@ -423,6 +423,13 @@ class WatchAndSnapshotTests(unittest.TestCase):
         self.assertNotRegex(text, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")  # no address
         self.assertIn("TreatMissingData: breaching", text)
 
+    def test_alarm_fires_on_mostly_failing_checks(self):
+        # 13 Nov audit: Maximum < 1 let one good check per 15 minutes hide repeated failures.
+        text = cli.WATCH_TEMPLATE.read_text(encoding="utf-8")
+        self.assertIn("Statistic: Average", text)
+        self.assertIn("Threshold: 0.5", text)
+        self.assertNotIn("Statistic: Maximum", text)
+
 
 class DeployCollectorsTests(unittest.TestCase):
     def server_with_current_code(self, **options):
@@ -438,6 +445,15 @@ class DeployCollectorsTests(unittest.TestCase):
         self.assertEqual(names[0], "run_spiders.py")
         self.assertIn("spiders/aus_contract.py", names)
         self.assertTrue(all(n == "run_spiders.py" or n.startswith("spiders/") for n in names))
+
+    def test_every_collector_test_file_is_staged(self):
+        # 13 Nov: a fixed list left a new collector test file out of the server run.
+        remote = FakeRemote()
+        cli.deploy_collectors(remote, test_only=True)
+        staged = {Path(p).name for p in remote.files if "/tests/" in p}
+        expected = {p.name for p in (Path(cli.REPO) / "tests").glob("test_collectors_*.py")}
+        self.assertEqual(staged, expected)
+        self.assertIn("test_collectors_unpublished.py", staged)
 
     def test_needs_yes(self):
         with self.assertRaises(cli.OperationError):
