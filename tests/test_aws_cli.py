@@ -38,10 +38,17 @@ class FakeRemote:
         self.sydney_hhmm = options.get("sydney_hhmm", "1830")
         self.reboot_required = options.get("reboot_required", False)
         self.reconcile = options.get("reconcile", (0, '{"status": "delivered"}\n'))
+        self.mail_env = options.get("mail_env", True)
+        self.mail_env_result = options.get(
+            "mail_env_result", (0, '{"status": "written", "keys": ["ILLOURA_MAIL_SENDER"]}\n'))
 
     def run(self, argv, timeout=900):
         cli.command_line(argv)  # every call must pass the same safety check as SSH
         self.calls.append(list(argv))
+        if argv[:5] == ["sudo", "-u", "scraper", "test", "-r"]:
+            return (0 if self.mail_env else 1), "", ""
+        if any(a.endswith("/routine_mail_env.py") for a in argv) and argv[0] == "sudo":
+            return self.mail_env_result[0], self.mail_env_result[1], ""
         if argv[:2] == ["systemctl", "is-failed"]:
             return (0, "failed\n", "") if argv[2] in self.failed else (1, "active\n", "")
         if argv[:3] == ["env", "TZ=Australia/Sydney", "date"]:
@@ -609,6 +616,65 @@ class OsUpkeepTests(unittest.TestCase):
         with self.assertRaises(cli.OperationError):
             cli.reconcile_send(FakeRemote(reconcile=(1, "Traceback\n")),
                                "daily_sweep_20261114_004500", yes=True)
+
+
+class RoutineDeployTests(unittest.TestCase):
+    """routine/ ships like the collectors: staged, tested, hash-checked, changed files only."""
+
+    def server_with_routine(self, **options):
+        remote = FakeRemote(**options)
+        for name in cli.routine_files():
+            remote.files[f"{cli.ROUTINE_DIR}/{name}"] = cli.lf_bytes(Path(cli.REPO) / "routine" / name)
+        remote.files[f"{cli.ROUTINE_DIR}/scripts/send_gmail.py"] = b"# deployed version\n"
+        return remote
+
+    def test_ships_runner_and_scripts_never_legacy(self):
+        names = cli.routine_files()
+        self.assertEqual(names[0], "run_once.py")
+        self.assertIn("scripts/send_gmail.py", names)
+        self.assertIn("scripts/mail_config.py", names)
+        self.assertFalse([n for n in names if "legacy" in n])
+
+    def test_verify_stages_all_routine_tests_and_installs_nothing(self):
+        remote = FakeRemote()
+        result = cli.deploy_routine(remote, test_only=True)
+        self.assertEqual(result["installed"], [])
+        staged = {Path(p).name for p in remote.files if "/tests/" in p}
+        self.assertEqual(staged, set(cli.routine_tests()))
+        self.assertIn("test_routine_mail_env.py", staged)
+        self.assertEqual(remote.installs(), [])
+
+    def test_needs_yes_mail_env_and_an_idle_server(self):
+        with self.assertRaises(cli.OperationError):
+            cli.deploy_routine(FakeRemote())
+        for remote in (self.server_with_routine(mail_env=False),
+                       self.server_with_routine(busy=(cli.BRIEF_SERVICE,))):
+            with self.assertRaises(cli.OperationError):
+                cli.deploy_routine(remote, yes=True)
+            self.assertEqual(remote.installs(), [])
+
+    def test_installs_only_changed_files_read_only_for_scraper(self):
+        remote = self.server_with_routine()
+        result = cli.deploy_routine(remote, yes=True)
+        self.assertEqual(result["installed"], ["scripts/send_gmail.py"])
+        install = [c for c in remote.installs() if "-d" not in c][-1]
+        self.assertEqual(install[-1], f"{cli.ROUTINE_DIR}/scripts/send_gmail.py")
+        self.assertEqual(install[2:8], ["-o", "root", "-g", "scraper", "-m", "0640"])
+        self.assertTrue(result["backup"].startswith(cli.BACKUP_ROOT + "/routine-"))
+
+    def test_set_mail_config_keeps_values_on_the_server(self):
+        with self.assertRaises(cli.OperationError):
+            cli.set_mail_config(FakeRemote())
+        remote = FakeRemote()
+        result = cli.set_mail_config(remote, yes=True)
+        self.assertEqual(result["status"], "written")
+        call = [c for c in remote.calls
+                if c[0] == "sudo" and any(a.endswith("routine_mail_env.py") for a in c)][0]
+        self.assertEqual(call[:2], ["sudo", cli.OPS_PYTHON])
+        self.assertEqual(call[-2:], ["--write", cli.MAIL_ENV])
+        self.assertNotIn("@", " ".join(" ".join(c) for c in remote.calls))
+        refused = FakeRemote(mail_env_result=(3, '{"status": "differs_not_replaced"}\n'))
+        self.assertEqual(cli.set_mail_config(refused, yes=True)["exit_code"], 3)
 
 
 if __name__ == "__main__":
