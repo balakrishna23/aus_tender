@@ -286,41 +286,46 @@ class BuyIctApiSpider(scrapy.Spider):
 
         self.title_updates += self.db_manager.update_buy_ict_listing(listing_updates)
 
-        total_items = data.get("totalItems")
-        if page_num == 1:
-            try:
-                last_page = (int(total_items) + self.page_size - 1) // self.page_size
-            except (TypeError, ValueError):
-                last_page = None
-            if last_page is not None:
-                if self.max_pages is not None:
-                    last_page = min(last_page, self.max_pages)
-                self.expected_pages = last_page
-                for next_page in range(2, last_page + 1):
-                    yield self._results_page_request(
-                        response.meta["results_payload"],
-                        response.meta["results_rectangle_id"],
-                        token,
-                        next_page,
-                    )
-                return
-
+        raw_total = data.get("totalItems")
+        # Do not truncate floats, accept booleans as integers, or trust negative totals.
+        total_items = (int(str(raw_total).strip()) if not isinstance(raw_total, bool) and
+                       re.fullmatch(r'\d+', str(raw_total).strip()) else None)
+        if page_num == 1 and total_items is not None:
+            last_page = (total_items + self.page_size - 1) // self.page_size
+            if self.max_pages is not None:
+                last_page = min(last_page, self.max_pages)
+            self.expected_pages = last_page
+            for next_page in range(2, last_page + 1):
+                yield self._results_page_request(
+                    response.meta["results_payload"], response.meta["results_rectangle_id"],
+                    token, next_page)
+            return
         if total_items is not None:
             return
-        try:
-            more_results = page_num * self.page_size < int(total_items)
-        except (TypeError, ValueError):
-            more_results = len(items) == self.page_size
-        within_limit = self.max_pages is None or page_num < self.max_pages
-        if not items and more_results and within_limit:
-            self.logger.warning("Empty BuyICT page %s before reported total %s", page_num, total_items)
-        if more_results and within_limit:
+
+        self.crawler.stats.inc_value('crawl/buyict_unknown_totals')
+        # Explicit API pagination only: public rows can be sparse because some sellers
+        # cannot see restricted opportunities. A short page does not prove completion.
+        next_page = data.get('nextPage')
+        has_next = data.get('hasNextPage')
+        if next_page is None and has_next is True:
+            next_page = page_num + 1
+        valid_next = (not isinstance(next_page, bool) and
+                      re.fullmatch(r'\d+', str(next_page).strip()) and
+                      int(next_page) == page_num + 1)
+        explicit_end = has_next is False or next_page is False or next_page == 0
+        if valid_next:
+            if self.max_pages is not None and page_num >= self.max_pages:
+                self.logger.error('BuyICT page cap reached with unknown total and more pages')
+                self.crawler.stats.inc_value('crawl/buyict_pagination_failed')
+                return
             yield self._results_page_request(
-                response.meta["results_payload"],
-                response.meta["results_rectangle_id"],
-                token,
-                page_num + 1,
-            )
+                response.meta["results_payload"], response.meta["results_rectangle_id"],
+                token, int(next_page))
+        elif not explicit_end:
+            self.logger.error('BuyICT totalItems=%r unparseable and no validated pagination on page %s',
+                              raw_total, page_num)
+            self.crawler.stats.inc_value('crawl/buyict_pagination_failed')
 
     def _detail_rectangle_request(self, detail_url, summary, token, rectangle_id,
                                   fallback_attempted=False):

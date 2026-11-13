@@ -22,6 +22,7 @@ class PlannedProcurementSpider(scrapy.Spider):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.plans = 0
+        self.plan_checks = {}
 
     def start_requests(self):
         yield scrapy.Request(AGENCY_LIST, callback=self.parse_agencies)
@@ -47,7 +48,21 @@ class PlannedProcurementSpider(scrapy.Spider):
         plan_url = response.url.split('?')[0].split('#')[0]
         agency = ' '.join(response.css('h1 ::text').getall()).replace('Annual Procurement Plan View -', '').strip()
         plan_contact = self._plan_contact(response)
-        for item in response.xpath('//div[starts-with(@id, "pp-")]'):
+        items = response.xpath('//div[starts-with(@id, "pp-")]')
+        text = '\n'.join(response.css('body ::text').getall())
+        explicit_empty = any(re.fullmatch(
+            r'no planned procurements(?: found| available| to display)?[.!]?', line.strip(), re.I)
+            for line in text.splitlines())
+        check = self.plan_checks.setdefault(plan_url, {'ids': set(), 'empty': False, 'total': None})
+        check['empty'] |= explicit_empty
+        check['ids'].update(item.attrib['id'] for item in items)
+        match = re.search(r'(?im)^\s*(?:Showing\s+\d+\s*[-?]\s*\d+\s+of\s+([\d,]+)|([\d,]+)\s+planned procurements)\s*$', text)
+        if match:
+            check['total'] = int((match.group(1) or match.group(2)).replace(',', ''))
+        if not items and not explicit_empty:
+            self.logger.warning('Unexplained empty planned procurement page: %s', response.url)
+            self.crawler.stats.inc_value('crawl/planned_unexplained_empty_pages')
+        for item in items:
             pp_id = item.attrib['id'][3:]
             row = item.xpath('./ancestor::div[contains(@class, "row")][1]')
             title = ' '.join(t.strip() for t in row.xpath(
@@ -90,6 +105,22 @@ class PlannedProcurementSpider(scrapy.Spider):
         next_page = response.css('li.next a::attr(href)').get()
         if next_page:
             yield response.follow(next_page, callback=self.parse_plan)
+
+    def closed(self, reason):
+        unexplained = sum(not c['ids'] and not c['empty'] for c in self.plan_checks.values())
+        self.crawler.stats.set_value('crawl/planned_unexplained_empty_plans', unexplained)
+        denominator = max(self.plans, len(self.plan_checks))
+        if denominator and unexplained > denominator / 2:
+            self.logger.error('Unexplained empty plans: %s of %s', unexplained, denominator)
+            self.crawler.stats.set_value('crawl/planned_extraction_failed', 1)
+        for url, check in self.plan_checks.items():
+            if check['total'] is None and check['ids']:
+                self.logger.warning('Planned pagination total unavailable; coverage unverified: %s', url)
+                self.crawler.stats.inc_value('crawl/planned_pagination_unverified')
+            if check['total'] is not None and len(check['ids']) < check['total']:
+                self.logger.warning('Planned pagination incomplete: %s (%s of %s)',
+                                    url, len(check['ids']), check['total'])
+                self.crawler.stats.inc_value('crawl/planned_pagination_warnings')
 
     @staticmethod
     def _split_contact(text):
