@@ -93,6 +93,7 @@ class AusTenderListingMixin:
         self.stored_urls = {}
         self.window_totals = {}
         self.window_seen = {}
+        self.empty_windows = set()
         self.skipped_known = 0
         self.recent_fetched = 0
 
@@ -175,6 +176,8 @@ class AusTenderListingMixin:
         empty = 'There are no results that match your selection' in response.text
         if empty:
             self.window_totals.setdefault(window, 0)
+        if not links and (empty or (total and int(total.group(1).replace(',', '')) == 0)):
+            self.empty_windows.add(window)
         if not links and not empty and not (total and int(total.group(1).replace(',', '')) == 0):
             self.logger.error('No notice links extracted from %s; verify listing and selectors', response.url)
             self.crawler.stats.inc_value('crawl/extraction_failed')
@@ -213,3 +216,15 @@ class AusTenderListingMixin:
         self.logger.info('Coverage: listed %s of %s reported notices across %s searches; '
                          'skipped %s already-final notices; reason=%s',
                          listed, reported, len(self.window_seen), self.skipped_known, reason)
+
+        stats = self.crawler.stats.get_stats()
+        if (reason == 'finished' and self.window_seen
+                and self.empty_windows == set(self.window_seen) and not listed
+                and not any(value for key, value in stats.items()
+                            if key.startswith('downloader/response_status_count/')
+                            and int(key.rsplit('/', 1)[1]) >= 400)
+                and not any(stats.get(k) for k in (
+                    'item_scraped_count', 'crawl/extraction_failed', 'crawl/coverage_failed',
+                    'retry/max_reached', 'database/items_failed',
+                    'downloader/exception_count', 'spider_exceptions/count'))):
+            self.crawler.stats.set_value('crawl/nothing_due', 1)
