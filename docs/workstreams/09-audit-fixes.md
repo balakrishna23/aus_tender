@@ -22,9 +22,18 @@ risks to the 08:15 Sydney email. Evidence and the full list are in the private w
 Also cleared the two stale failed units (cloud-init's launch script, 12 Nov; the skipped
 13 Nov brief).
 
+## Wave 1 deployed 13 Nov (PR #3)
+All rows above, plus the external alarm now fires when most checks fail (Average < 0.5 over
+two 15-minute periods) instead of only when all fail (audit #32). Checks: Windows 402 tests,
+server ops tests 88, health OK incl. certificate, reconcile-send on two safe runs, dry run.
+
+## Wave 2 built 13 Nov, deploy after the 14 Nov 08:15 send (PR #4, stacked on #3)
+- aus_contract canary replaces the 25-notice cap; unpublished notices retried from a
+  `pending_notices` table (30-day give-up); quiet ATM days are not FAIL(no items).
+- `verify-collectors` / `deploy-collectors` stage every `tests/test_collectors_*.py`.
+- Server staged collector tests 28 OK; canary checked read-only on real data.
+
 ## Not done yet (next wave)
-- More than 25 not-yet-published contract notices still skips the brief (track pending
-  notices separately; also stops them dropping out of retries after 3 days).
 - Per-stage deadlines and one bounded retry before noon: need the newsletter routine
   scripts in the repository first (9 differ between the server and the local copies).
 - Retention for run reports and dry-run copies; a 419 MB leftover upload in /home/ubuntu

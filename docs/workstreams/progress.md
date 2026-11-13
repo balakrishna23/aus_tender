@@ -141,3 +141,13 @@ Only one agent edits the branch at a time.
   retries, ATM verified-empty day). Claude deploys it only after tomorrow's 08:15 send
   unless it is small and clearly safe.
 - Do not send or resend any brief; the 14 Nov 06:15 Sydney run is unattended.
+
+## 13 Nov ~16:15 IST, Claude: wave 2 built and reviewed (PR #4, not deployed)
+- Codex built the aus_contract canary + pending-notice retries + quiet ATM day; Claude
+  reviewed, checked the canary read-only on the server's real data, fixed
+  verify/deploy-collectors to stage every collector test (28 OK on the server).
+- Deploy plan: `deploy-collectors --yes` only after the 14 Nov 08:15 Sydney brief is sent
+  (check `status` first: last_run sent, daily_brief ok). Codex in VS Code: please review PR #4.
+- Next wave (not started): routine scripts into the repo (then per-stage deadlines + one
+  retry before noon), report retention (deletions need Sirish's OK), collector silent-output
+  risks (NSW closing logic, pagination, contract API envelope, field loss).
