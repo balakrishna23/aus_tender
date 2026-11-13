@@ -446,6 +446,15 @@ class DeployCollectorsTests(unittest.TestCase):
         self.assertIn("spiders/aus_contract.py", names)
         self.assertTrue(all(n == "run_spiders.py" or n.startswith("spiders/") for n in names))
 
+    def test_every_collector_test_file_is_staged(self):
+        # 13 Nov: a fixed list left a new collector test file out of the server run.
+        remote = FakeRemote()
+        cli.deploy_collectors(remote, test_only=True)
+        staged = {Path(p).name for p in remote.files if "/tests/" in p}
+        expected = {p.name for p in (Path(cli.REPO) / "tests").glob("test_collectors_*.py")}
+        self.assertEqual(staged, expected)
+        self.assertIn("test_collectors_unpublished.py", staged)
+
     def test_needs_yes(self):
         with self.assertRaises(cli.OperationError):
             cli.deploy_collectors(FakeRemote())

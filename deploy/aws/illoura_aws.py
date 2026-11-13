@@ -80,7 +80,7 @@ OPS_TESTS = (
 )
 # Collector code: the source runner and the spiders package only (see deploy_collectors).
 COLLECTOR_DIR = "/opt/aus_tender"
-COLLECTOR_TESTS = ("test_collectors_unpublished.py",)
+COLLECTOR_TEST_PATTERN = "test_collectors_*.py"  # every collector test file is staged and run
 BUSY_UNITS = ("illoura-daily-brief.service", "illoura-cloud-collect.service")
 # External watch (CloudFormation stack in the project Region) and Lightsail snapshots.
 WATCH_STACK = "illoura-watch"
@@ -548,6 +548,11 @@ def collector_files(repo=REPO):
     return ["run_spiders.py", *spiders]
 
 
+def collector_tests(repo=REPO):
+    """Every tests/test_collectors_*.py file, so a new collector test cannot be left behind."""
+    return sorted(p.name for p in (Path(repo) / "tests").glob(COLLECTOR_TEST_PATTERN))
+
+
 def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
     """Stage, verify and test collector code; install only the files that changed.
 
@@ -565,7 +570,7 @@ def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
     names = collector_files(repo)
     files = {name: lf_bytes(Path(repo) / name) for name in names}
     files.update(
-        {"tests/" + n: lf_bytes(Path(repo) / "tests" / n) for n in COLLECTOR_TESTS}
+        {"tests/" + n: lf_bytes(Path(repo) / "tests" / n) for n in collector_tests(repo)}
     )
     stage = new_stage()
     try:
@@ -585,7 +590,7 @@ def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
                 "-s",
                 stage + "/tests",
                 "-p",
-                "test_collectors_*.py",
+                COLLECTOR_TEST_PATTERN,
             ],
             "staged collector tests (nothing installed)",
         )
