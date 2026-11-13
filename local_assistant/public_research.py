@@ -12,15 +12,16 @@ def findings(entities,roles=(),path=PATH):
     if path.stat().st_size>1_000_000:raise ValueError('Public research input too large')
     package=json.loads(path.read_text(encoding='utf-8'))
     checks={r['source_url']:r for r in json.loads(CHECKS.read_text(encoding='utf-8'))} if CHECKS.is_file() else {}
-    checked=datetime.fromisoformat(package['reviewed_at_utc'])
-    age=max(0,(datetime.now(timezone.utc)-checked).days)
     matches=[]
     for record in package['records']:
         org=record['organisation'].casefold()
         if entities and not any(org in entity.casefold() or entity.casefold() in org for entity in entities):continue
         if record['kind']=='job advert' and roles and record.get('role_family') not in roles:continue
-        row={**record,'reviewed_at_utc':package['reviewed_at_utc'],
-             'review_method':package['review_method'],'review_age_days':age,
+        reviewed=record.get('reviewed_at_utc',package['reviewed_at_utc'])
+        checked=datetime.fromisoformat(reviewed)
+        age=max(0,(datetime.now(timezone.utc)-checked).days)
+        row={**record,'reviewed_at_utc':reviewed,
+             'review_method':record.get('review_method',package['review_method']),'review_age_days':age,
              'review_status':'needs recheck (older than 30 days)' if age>30 else 'recent manual source review; not checked live by this answer'}
         if record.get('source_url') in checks:
             check=checks[record['source_url']]

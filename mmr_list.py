@@ -173,6 +173,15 @@ def match(conn, contracts_db=None, today=None):
         found = {key: 'name' for key in strict_index.get(strict, ())}
         if not found and len(loose) > 3:
             found = {key: 'loose name' for key in loose_index.get(loose, ())}
+        # Keep historical suggestions for audit, but retire unreviewed alternatives
+        # when current source data supplies a stronger exact-name match. Human
+        # decisions are never replaced by re-matching.
+        for old in conn.execute('SELECT supplier_abn, review FROM mmr_matches WHERE organisation = ?',
+                                (company['organisation'],)).fetchall():
+            if old['supplier_abn'] not in found and not old['review']:
+                conn.execute("UPDATE mmr_matches SET match_method = 'superseded suggestion', matched_at = ? "
+                             'WHERE organisation = ? AND supplier_abn = ?',
+                             (matched_at, company['organisation'], old['supplier_abn']))
         matched += bool(found)
         for key, method in found.items():
             row = stats[key]

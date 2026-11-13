@@ -4,6 +4,35 @@ import contact_discovery as contacts
 
 
 class ContactDiscoveryTests(unittest.TestCase):
+    def test_priority_research_excludes_expired_and_equipment_only_suppliers(self):
+        import tempfile,sqlite3
+        from pathlib import Path
+        from contextlib import closing
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)
+            with closing(sqlite3.connect(root/'contract_api.db')) as db:
+                db.execute('CREATE TABLE contracts(supplier_abn,current_end_date,category_family)')
+                db.executemany('INSERT INTO contracts VALUES (?,?,?)',[
+                    ('1','2027-01-01','ICT services'),('2','2025-01-01','labour hire and recruitment'),
+                    ('3','2027-01-01','ICT equipment and general')])
+                db.commit()
+            self.assertEqual(contacts.priority_supplier_keys(root,'2026-10-24'),{'ABN:1'})
+
+    def test_page_redirect_cannot_reuse_another_hosts_robots_permission(self):
+        from urllib.robotparser import RobotFileParser
+        robot=RobotFileParser('https://data3.com.au/robots.txt')
+        robot.parse(['User-agent: *','Allow: /'])
+        class Session:
+            def __init__(self):self.visits=[]
+            def get(self,url,**kwargs):
+                self.visits.append(url)
+                return type('Response',(),{'status_code':301,'headers':{'Location':'https://www.data3.com/contact'}})()
+        session=Session()
+        with patch.object(contacts,'safe_url',side_effect=lambda url,allowed:url):
+            with self.assertRaisesRegex(ValueError,'own robots review'):
+                contacts.get_public(session,'https://data3.com.au/contact',{'data3.com.au'},robot)
+        self.assertEqual(session.visits,['https://data3.com.au/contact'])
+
     def test_form_examples_and_embedded_templates_are_not_contacts(self):
         parser = contacts.ContactHTML()
         parser.feed('''<input placeholder="jane@agency.gov.au">

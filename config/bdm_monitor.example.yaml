@@ -1,0 +1,22 @@
+# Copy outside the public repository before adding private credentials.
+poll_minutes: 15
+send_enabled: false
+desktop_enabled: false
+workbench_enabled: false
+alert_since_utc: ''
+alert_max_age_hours: 24
+busy_retries: 2
+busy_retry_seconds: 60
+# Internal-only: one recipient on the sender's own domain. Put real addresses only
+# in your private copy (or ILLOURA_MAIL_SENDER / ILLOURA_MAIL_RECIPIENT).
+sender: sender@example.com
+recipient: recipient@example.com
+oauth_token_file: ''
+# Empty title filter alerts on all public BuyICT LH/PCS/RFI records.
+# Fill these with approved service keywords to reduce noise.
+include_prefixes: ['LH-', 'PCS-', 'RFI-']
+title_keywords: []
+exclude_keywords: []
+digest_limit: 20
+max_source_age_minutes: 45
+healthcheck_url: ''

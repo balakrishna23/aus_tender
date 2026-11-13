@@ -55,14 +55,24 @@ TABS = [
     ('BuyICT rates', 'BuyICT requests linked to their contracts; day rate is an estimate',
      'SELECT buyict_id, role_title, buyer, supplier, contract_value, start_date, end_date, business_days, '
      'estimated_day_rate, rate_note, page_url FROM buyict_links ORDER BY buyict_id'),
-    ('Panel members', 'Current members of the watched panels, with ABNs and contract counts',
-     'SELECT panel, son_id, member, abn, state, deed_end, contracts, active_contracts, it_contracts, panel_contracts '
+    ('Panel members', 'Watched panel membership history; status is evaluated from deed dates',
+     'SELECT panel, son_id, member, abn, state, deed_end, membership_status, status_as_of, contracts, active_contracts, it_contracts, panel_contracts '
      'FROM panel_members ORDER BY panel, panel_contracts DESC'),
     ('NSW small ICT contracts', 'NSW ICT contract awards of $250,000 or less',
      'SELECT reference, title, agency, value, category, published, url FROM nsw_small_contracts ORDER BY value'),
     ('Organisation review', 'Possible duplicate organisations: never merged without a decision',
      'SELECT raw_name, source, candidate_name, candidate_org, similarity, decision FROM organisation_review '
      'ORDER BY similarity DESC'),
+    ('Data quality review', 'Published source gaps and date placeholders; values have not been guessed or overwritten',
+     "SELECT cn_id,issue_type,observed_value,source_url,last_detected_at_utc FROM data_quality_findings WHERE severity='review' ORDER BY issue_type,cn_id"),
+    ('Contract source checks', 'Targeted official API checks; source status is not proof of hiring or renewal intent',
+     'SELECT * FROM contract_quality ORDER BY date_quality,cn_id'),
+    ('ABN identity review', 'Proposals only: exact names do not establish legal identity; no ABNs were auto-filled',
+     'SELECT * FROM abn_identity_review ORDER BY cn_id'),
+    ('MMR identity review', 'All latest-list identity suggestions, including quarantined and unmatched entries',
+     'SELECT * FROM mmr_match_review ORDER BY identity_status,organisation'),
+    ('Registry identity checks', 'Government-published entity names; does not approve MMR matches or prove obligations',
+     'SELECT * FROM registry_identity_checks ORDER BY status,expected_entity'),
 ]
 HEADER = PatternFill('solid', fgColor='1F3A5F')
 

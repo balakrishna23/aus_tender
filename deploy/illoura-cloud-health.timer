@@ -1,0 +1,8 @@
+[Unit]
+Description=Illoura operational health checks every 15 minutes; enable after acceptance
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Unit=illoura-cloud-health.service
+[Install]
+WantedBy=timers.target

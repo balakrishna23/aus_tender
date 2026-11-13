@@ -1,0 +1,16 @@
+[Unit]
+Description=Illoura AWS source/evidence collection and snapshot publication
+After=network-online.target
+Wants=network-online.target
+OnFailure=illoura-cloud-health.service
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/aus_tender
+ExecStart=/opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_cloud_collect.py
+TimeoutStartSec=5h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+MemoryMax=5G
+CPUQuota=150%
+

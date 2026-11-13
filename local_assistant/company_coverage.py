@@ -55,7 +55,7 @@ def contact_counts(connection):
     connection.executemany('INSERT OR REPLACE INTO coverage_info VALUES (?,?)',[(k,str(v)) for k,v in counts.items()])
     return counts
 
-def build():
+def build(report_dir=None):
     collected={};source=assistant.DB_DIR/'contract_api.db'
     def add(name,abn,cn,stamp,record=None):
         if not name or not str(name).strip():return
@@ -94,7 +94,8 @@ def build():
                     except (ValueError,TypeError):continue
                     for member in members:
                         if isinstance(member,dict):
-                            name=member.get('name') or member.get('supplier');abn=member.get('abn')
+                            name=member.get('Supplier Name') or member.get('name') or member.get('supplier')
+                            abn=member.get('ABN') or member.get('abn')
                             add(name,abn,None,None)
                             if name:collected[identity(name,abn)[0]]['panel_source_url']=row['url']
     path=assistant.DB_DIR/'company_contacts.db'
@@ -139,7 +140,8 @@ def build():
         destination.executemany('INSERT OR REPLACE INTO coverage_info VALUES (?,?)',[(k,str(v)) for k,v in summary.items()])
         destination.commit()
         if destination.execute('PRAGMA quick_check').fetchone()[0]!='ok':raise ValueError('Contact register integrity failed')
-    output=Path(__file__).parent/'reports';output.mkdir(exist_ok=True)
+    output=Path(report_dir) if report_dir is not None else Path(__file__).parent/'reports'
+    output.mkdir(parents=True,exist_ok=True)
     (output/'company-coverage.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
     print(json.dumps(summary),flush=True)
     return summary

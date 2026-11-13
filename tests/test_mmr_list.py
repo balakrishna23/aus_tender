@@ -117,6 +117,19 @@ class MmrListTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mmr_list.import_review(self.conn, review)
 
+    def test_new_exact_entity_retires_old_unreviewed_loose_suggestions(self):
+        mmr_list.load(self.conn,self.workbook,'2026-10-07')
+        mmr_list.match(self.conn,today='2026-10-07')
+        self.conn.execute("INSERT INTO mmr_matches(organisation,supplier_abn,match_method) "
+                          "VALUES ('DXC TECHNOLOGY AUSTRALIA PTY LIMITED','99999999999','loose name')")
+        self.conn.commit()
+        mmr_list.match(self.conn,today='2026-10-07')
+        old=self.matches()[('DXC TECHNOLOGY AUSTRALIA PTY LIMITED','99999999999')]
+        self.assertEqual(old['match_method'],'superseded suggestion')
+        self.assertIsNone(old['review'])
+        exact=self.matches()[('DXC TECHNOLOGY AUSTRALIA PTY LIMITED','18008476944')]
+        self.assertEqual(exact['match_method'],'name')
+
     def test_name_keys(self):
         self.assertEqual(mmr_list.name_keys('DXC Technology Australia Pty. Ltd.')[0], 'DXC TECHNOLOGY AUSTRALIA')
         self.assertEqual(mmr_list.name_keys('ERNST & YOUNG')[1], 'ERNST AND YOUNG')

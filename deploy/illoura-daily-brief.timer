@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily Illoura brief: start 06:15 Sydney (about two hours of margin); the email is sent at 08:15
+[Timer]
+OnCalendar=*-*-* 06:15:00 Australia/Sydney
+# No catch-up after downtime: a missed morning is skipped, never sent late by surprise.
+Persistent=false
+Unit=illoura-daily-brief.service
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,2 @@
+# Administrator-machine dependency for deploy/aws/illoura_aws.py (SSH). Not needed on the server.
+paramiko==4.0.0

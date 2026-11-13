@@ -1,0 +1,14 @@
+[Unit]
+Description=Illoura freshness, disk and Gmail authorization health (no sends)
+After=network-online.target
+[Service]
+Type=oneshot
+# Private settings (ILLOURA_GMAIL_SENDER). Optional file: absent => mail check reports "unconfigured".
+EnvironmentFile=-/etc/illoura-ops/health.env
+ExecStart=/opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_cloud_health.py
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+TimeoutStartSec=90
+MemoryMax=256M
+

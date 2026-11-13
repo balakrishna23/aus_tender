@@ -133,9 +133,10 @@ class BuildTests(unittest.TestCase):
                  retrieved_at='2026-10-05', contact_safety='SAFE_GENERAL', url='plan2')]
         with patch.object(bi, 'opted_out', return_value=set()):
             contacts = {c['email']: c for c in bi.build_agency_contacts(TODAY, opportunities)}
-        apra = contacts['buyer@apra.gov.au']   # contract-notice row: placeholder phone replaced, still general
+        apra = contacts['buyer@apra.gov.au']   # existing address also belongs to a live tender
         self.assertEqual((apra['phone'], apra['source'], apra['contact_safety']),
-                         ('02 6213 5000', 'AusTender contract notice', 'SAFE_GENERAL'))
+                         ('02 6213 5000', 'AusTender contract notice', 'FORMAL_CHANNEL_ONLY'))
+        self.assertEqual(apra['usable_for_outreach'], 0)
         self.assertIn('phone from AusTender tender notice', apra['enriched'])
         tender = contacts['tenders@finance.gov.au']   # open tender: formal channel only, never outreach
         self.assertEqual((tender['source'], tender['verified'], tender['contact_safety'], tender['usable_for_outreach']),
@@ -150,6 +151,49 @@ class BuildTests(unittest.TestCase):
         self.assertIn('outside the agency', adviser['source'])
         for own in ('tenders@abc.net.au', 'p@airservicesaustralia.com'):   # the domain names the agency
             self.assertEqual(contacts[own]['confidence'], 'Medium', own)
+
+    def test_contact_freshness_uses_an_actual_amendment_not_its_download_date(self):
+        with closing(sqlite3.connect(self.dir / 'contract_api.db')) as conn:
+            conn.execute("UPDATE contracts SET contact_email='buyer@apra.gov.au', first_published='2024-01-01' "
+                         "WHERE cn_id='CN4226826'")
+            conn.execute('''CREATE TABLE contract_versions (buyer,contact_name,contact_email,contact_phone,
+                contact_branch,contact_division,published_on,release_date,page_url,retrieved_at)''')
+            conn.execute('INSERT INTO contract_versions VALUES (?,?,?,?,?,?,?,?,?,?)',
+                ('Australian Prudential Regulation Authority','Current procurement team','buyer@apra.gov.au',
+                 '02 1234 5678',None,None,'2026-09-01','2026-09-01T00:00:00Z','amendment-page','2026-10-07'))
+            conn.commit()
+        with patch.object(bi,'opted_out',return_value=set()):
+            row=next(c for c in bi.build_agency_contacts(TODAY) if c['email']=='buyer@apra.gov.au')
+        self.assertEqual((row['verified'],row['stale'],row['source_url'],row['name']),
+                         ('2026-09-01',0,'amendment-page','Current procurement team'))
+
+    def test_loose_and_superseded_mmr_matches_do_not_drive_recommendations(self):
+        with closing(sqlite3.connect(self.dir/'organisations.db')) as conn:
+            conn.execute("UPDATE mmr_matches SET match_method='loose name'")
+            conn.commit()
+        self.assertEqual(bi.build_mmr(TODAY,bi.contract_counts(TODAY)),([],[]))
+        with closing(sqlite3.connect(self.dir/'organisations.db')) as conn:
+            conn.execute("UPDATE mmr_matches SET review='confirmed'")
+            conn.commit()
+        self.assertEqual(len(bi.build_mmr(TODAY,bi.contract_counts(TODAY))[0]),1)
+
+    def test_registry_entity_conflict_is_not_used_as_an_mmr_prime(self):
+        with patch.object(bi,'registry_entity_names',return_value={'18008476944':'Unrelated Pty Ltd'}):
+            self.assertEqual(bi.build_mmr(TODAY,bi.contract_counts(TODAY)),([],[]))
+        with patch.object(bi,'registry_entity_names',return_value={'18008476944':'DXC Technology Australia Pty Ltd'}):
+            primes,_=bi.build_mmr(TODAY,bi.contract_counts(TODAY))
+        self.assertEqual(primes[0]['registry_identity_check'],'official entity name matches')
+
+    def test_expired_panel_history_is_retained_and_explicitly_labelled(self):
+        panel=bi.classify.config('panels')['panels'][0]
+        source={'son_id':panel['son_id'],'title':panel['name'],'url':'panel-source',
+                'current_suppliers':json.dumps([
+                    {'Supplier Name':'Expired Pty Ltd','ABN':'18008476944','Deed Start Date':'1-Jul-2024','Deed End Date':'30-Jun-2026'},
+                    {'Supplier Name':'Current Pty Ltd','ABN':'18008476944','Deed Start Date':'1-Jul-2026','Deed End Date':'30-Jun-2027'}])}
+        with patch.object(bi,'rows',side_effect=lambda name,*args:[source] if name=='standing_offer' else []):
+            result=bi.build_panel_members({},TODAY)
+        self.assertEqual([(r['member'],r['membership_status']) for r in result],
+                         [('Expired Pty Ltd','expired'),('Current Pty Ltd','current')])
 
     def test_company_groups_add_up_their_mmr_contracts(self):
         with closing(sqlite3.connect(self.dir / 'organisations.db')) as conn:
