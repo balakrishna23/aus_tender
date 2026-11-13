@@ -50,6 +50,7 @@ PUBLICATION = "/opt/illoura-routine/publication.json"
 BACKUP_ROOT = "/var/backups/illoura"
 KEYS_FILE = "/etc/illoura-api/keys.json"
 BRIEF_TIMER = "illoura-daily-brief.timer"
+BRIEF_SERVICE = "illoura-daily-brief.service"
 TIMERS = (
     "illoura-cloud-collect.timer",
     "illoura-cloud-health.timer",
@@ -978,8 +979,154 @@ def schedule(remote, action, *, yes=False):
     if action not in ("enable", "disable"):
         raise ValueError("Use enable or disable")
     must(remote, ["sudo", "systemctl", action, "--now", BRIEF_TIMER], f"{action} {BRIEF_TIMER}")
+    stopped = False
+    if action == "disable":
+        # Stopping the timer does not stop a brief that already started and is waiting
+        # for 08:15; "off" must mean no email today either.
+        _, state, _ = remote.run(["systemctl", "is-active", BRIEF_SERVICE])
+        if state.strip() in ("active", "activating"):
+            must(remote, ["sudo", "systemctl", "stop", BRIEF_SERVICE], "stop the running brief")
+            stopped = True
     _, listing, _ = remote.run(["systemctl", "list-timers", BRIEF_TIMER, "--no-pager"])
-    return {"timer": BRIEF_TIMER, "enabled": timer_states(remote)[BRIEF_TIMER], "list_timers": listing.strip()}
+    return {"timer": BRIEF_TIMER, "enabled": timer_states(remote)[BRIEF_TIMER],
+            "stopped_running_brief": stopped, "list_timers": listing.strip()}
+
+
+# --------------------------------------------------------------------------- OS upkeep
+
+# deploy/system/<name> -> installed path. See harden_os.
+OS_FILES = {
+    "needrestart-illoura.conf": "/etc/needrestart/conf.d/illoura.conf",
+    "apt-daily-upgrade-illoura.conf": "/etc/systemd/system/apt-daily-upgrade.timer.d/illoura.conf",
+}
+# Failed states that are known and harmless: cloud-init's launch script (12 Nov) and a past
+# brief run. Clearing them keeps `systemctl --failed` meaningful.
+STALE_FAILED_UNITS = ("cloud-final.service", BRIEF_SERVICE)
+BRIEF_WINDOW = ("0530", "0930")  # Sydney HHMM: no package upgrades or reboots in this window
+
+
+def harden_os(remote, *, yes=False, repo=REPO):
+    """Keep Ubuntu's own upkeep out of the daily brief's 06:15-08:15 Sydney window.
+
+    Installs two small settings files (needrestart never restarts Illoura jobs; security
+    updates run at 03:30-04:00 Sydney) and clears known stale failed states. Changes no
+    Illoura timer, service, data or code.
+    """
+    if not yes:
+        raise OperationError("harden-os changes server settings; rerun with --yes")
+    files = {name: lf_bytes(Path(repo) / "deploy/system" / name) for name in OS_FILES}
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, files)
+        folders = sorted({str(Path(t).parent).replace("\\", "/") for t in OS_FILES.values()})
+        must(remote, ["sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0755", *folders],
+             "create settings folders")
+        for name, target in OS_FILES.items():
+            must(remote, ["sudo", "install", "-o", "root", "-g", "root", "-m", "0644",
+                          f"{stage}/{name}", target], "install " + target)
+        out = must(remote, ["sudo", "sha256sum", *OS_FILES.values()], "hash installed settings")
+        after = {line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()}
+        wrong = [t for n, t in OS_FILES.items() if after.get(t) != sha256(files[n])]
+        if wrong:
+            raise OperationError("Installed settings do not match: " + ", ".join(wrong))
+        # needrestart refuses to run with a broken settings file; list mode restarts nothing.
+        must(remote, ["sudo", "needrestart", "-b", "-r", "l"], "needrestart reads the new setting")
+        must(remote, ["sudo", "systemctl", "daemon-reload"], "reload systemd")
+        must(remote, ["sudo", "systemctl", "restart", "apt-daily-upgrade.timer"],
+             "reschedule security updates")
+        next_run = must(remote, ["systemctl", "show", "apt-daily-upgrade.timer", "-p",
+                                 "NextElapseUSecRealtime", "--value"], "read next update time")
+        cleared = []
+        for unit in STALE_FAILED_UNITS:
+            _, state, _ = remote.run(["systemctl", "is-failed", unit])
+            if state.strip() == "failed":
+                must(remote, ["sudo", "systemctl", "reset-failed", unit], "clear " + unit)
+                cleared.append(unit)
+        return {"installed": list(OS_FILES.values()), "security_updates_next": next_run.strip(),
+                "cleared_failed": cleared}
+    finally:
+        remove_stage(remote, stage)
+
+
+def wait_for_readyz(settings, wait_seconds, *, sleep=time.sleep, opener=None, clock=time.monotonic):
+    """Poll the public /readyz until it answers 200; used after a reboot."""
+    import urllib.request
+
+    url = readyz_url(settings)
+    opener = opener or (lambda u: urllib.request.urlopen(u, timeout=10))
+    deadline = clock() + wait_seconds
+    sleep(45)  # give the server time to go down before the first poll
+    while clock() < deadline:
+        try:
+            with opener(url) as response:
+                if response.status == 200:
+                    return "ok"
+        except (OSError, ValueError):  # urllib errors (incl. 503) are OSError subclasses
+            pass
+        sleep(15)
+    raise OperationError(
+        f"/readyz did not answer 200 within {wait_seconds} s of the reboot; "
+        "check the instance in Lightsail and run status"
+    )
+
+
+def os_update(remote, settings, *, yes=False, reboot=False, wait_seconds=600, waiter=wait_for_readyz):
+    """Install pending Ubuntu security updates now, and reboot if one needs it.
+
+    Refuses inside the 05:30-09:30 Sydney brief window and while a collection or brief
+    is running. The API is unavailable for about a minute during a reboot.
+    """
+    if not yes:
+        raise OperationError("os-update installs packages; rerun with --yes")
+    for unit in BUSY_UNITS:
+        _, out, _ = remote.run(["systemctl", "is-active", unit])
+        if out.strip() in ("active", "activating", "deactivating", "reloading"):
+            raise OperationError(f"{unit} is running; nothing was changed. Try after it finishes.")
+    hhmm = must(remote, ["env", "TZ=Australia/Sydney", "date", "+%H%M"], "read Sydney time").strip()
+    if BRIEF_WINDOW[0] <= hhmm < BRIEF_WINDOW[1]:
+        raise OperationError("Inside the 05:30-09:30 Sydney brief window; nothing was changed.")
+    out = must(remote, ["sudo", "unattended-upgrade", "-v"], "install security updates", timeout=1800)
+    summary = [line for line in out.splitlines()
+               if line.startswith(("Packages that will be upgraded", "All upgrades installed",
+                                   "No packages found"))]
+    code, _, _ = remote.run(["test", "-f", "/var/run/reboot-required"])
+    result = {"updates": summary, "reboot_required": code == 0, "rebooted": False}
+    if code == 0 and reboot:
+        try:
+            remote.run(["sudo", "systemctl", "reboot"], timeout=30)
+        except Exception:  # the SSH session usually drops as the server goes down
+            pass
+        result["rebooted"] = True
+        result["readyz_after_reboot"] = waiter(settings, wait_seconds)
+    return result
+
+
+RUN_NAME = re.compile(r"^daily_sweep_[0-9]{8}_[0-9]{6}$")
+
+
+def reconcile_send(remote, run, *, mark_undelivered=False, yes=False):
+    """Settle a send that may or may not have reached Gmail. Never sends anything.
+
+    Looks the message up in the mailbox's Sent folder: found -> writes the receipt; not
+    found -> exit 2, or with --mark-undelivered records that a person decided it was not
+    delivered. Either way later days can collect and send again.
+    """
+    if not yes:
+        raise OperationError("reconcile-send writes the run's send records; rerun with --yes")
+    if not RUN_NAME.match(run or ""):
+        raise ValueError("Expected a run folder name such as daily_sweep_20261114_004500")
+    argv = ["sudo", "runuser", "-u", "scraper", "--", "env", "-C", "/opt/illoura-routine",
+            OPS_PYTHON, OPS_DIR + "/illoura_daily_brief.py", "reconcile",
+            "--out", f"/opt/illoura-routine/reports/{run}"]
+    if mark_undelivered:
+        argv.append("--mark-undelivered")
+    code, out, err = remote.run(argv, timeout=300)
+    lines = [line for line in out.splitlines() if line.strip().startswith("{")]
+    if code not in (0, 2) or not lines:
+        raise OperationError(f"reconcile failed (exit {code}): {(err or out).strip()[-400:]}")
+    result = json.loads(lines[-1])
+    result["exit_code"] = code
+    return result
 
 
 # --------------------------------------------------------------------------- CLI
@@ -1039,6 +1186,18 @@ def build_parser():
     timer = sub.add_parser("schedule", help="Enable or disable the 08:15 Sydney daily brief")
     timer.add_argument("timer_action", choices=["enable", "disable"])
     timer.add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "harden-os",
+        help="Keep Ubuntu updates and service restarts out of the 06:15-08:15 Sydney brief window",
+    ).add_argument("--yes", action="store_true")
+    upd = sub.add_parser("os-update", help="Install pending security updates now (not 05:30-09:30 Sydney)")
+    upd.add_argument("--reboot", action="store_true", help="Reboot if an update needs it, then wait for /readyz")
+    upd.add_argument("--yes", action="store_true")
+    rec = sub.add_parser("reconcile-send", help="Settle an uncertain send by checking Gmail Sent; never sends")
+    rec.add_argument("--run", required=True, help="Run folder name, e.g. daily_sweep_20261114_004500")
+    rec.add_argument("--mark-undelivered", action="store_true",
+                     help="Not in Sent: record that it was not delivered so later days can send")
+    rec.add_argument("--yes", action="store_true")
     return p
 
 
@@ -1087,6 +1246,13 @@ def main(argv=None, remote_factory=SshRemote):
             result = daily_brief_dry_run(remote)
         elif args.action == "schedule":
             result = schedule(remote, args.timer_action, yes=args.yes)
+        elif args.action == "harden-os":
+            result = harden_os(remote, yes=args.yes)
+        elif args.action == "os-update":
+            result = os_update(remote, settings, yes=args.yes, reboot=args.reboot)
+        elif args.action == "reconcile-send":
+            result = reconcile_send(remote, args.run, mark_undelivered=args.mark_undelivered,
+                                    yes=args.yes)
         else:
             result = api_key(remote, settings, args.key_action, args.name)
     finally:

@@ -34,10 +34,22 @@ class FakeRemote:
         )
         self.keys = [{"name": "admin", "sha256": "x" * 64, "enabled": True}]
         self.busy = options.get("busy", ())  # units reported as running
+        self.failed = options.get("failed", ())  # units reported by systemctl is-failed
+        self.sydney_hhmm = options.get("sydney_hhmm", "1830")
+        self.reboot_required = options.get("reboot_required", False)
+        self.reconcile = options.get("reconcile", (0, '{"status": "delivered"}\n'))
 
     def run(self, argv, timeout=900):
         cli.command_line(argv)  # every call must pass the same safety check as SSH
         self.calls.append(list(argv))
+        if argv[:2] == ["systemctl", "is-failed"]:
+            return (0, "failed\n", "") if argv[2] in self.failed else (1, "active\n", "")
+        if argv[:3] == ["env", "TZ=Australia/Sydney", "date"]:
+            return 0, self.sydney_hhmm + "\n", ""
+        if argv[:2] == ["test", "-f"]:
+            return (0 if self.reboot_required else 1), "", ""
+        if "reconcile" in argv:
+            return self.reconcile[0], self.reconcile[1], ""
         if argv[:2] == ["systemctl", "is-active"] and len(argv) == 3:
             return (0, "active\n", "") if argv[2] in self.busy else (3, "inactive\n", "")
         if argv[:2] == ["sudo", "sha256sum"]:
@@ -472,6 +484,115 @@ class DeployCollectorsTests(unittest.TestCase):
         result = cli.deploy_collectors(remote, yes=True)
         self.assertEqual(result["installed"], [])
         self.assertEqual(remote.installs(), [])
+
+
+class OsUpkeepTests(unittest.TestCase):
+    """13 Nov audit: Ubuntu's 06:00-07:00 updates + needrestart could restart the waiting brief."""
+
+    def test_harden_os_needs_yes(self):
+        with self.assertRaises(cli.OperationError):
+            cli.harden_os(FakeRemote())
+
+    def test_harden_os_installs_both_settings_and_verifies_them(self):
+        remote = FakeRemote(failed=("cloud-final.service",))
+        result = cli.harden_os(remote, yes=True)
+        targets = [c[-1] for c in remote.installs() if "-d" not in c]
+        self.assertEqual(targets, list(cli.OS_FILES.values()))
+        for install in remote.installs():
+            self.assertIn("root", install)
+        self.assertIn(["sudo", "needrestart", "-b", "-r", "l"], remote.calls)
+        self.assertIn(["sudo", "systemctl", "restart", "apt-daily-upgrade.timer"], remote.calls)
+        self.assertEqual(result["cleared_failed"], ["cloud-final.service"])
+        # Never touches an Illoura timer's enable state.
+        self.assertFalse([c for c in remote.calls if "enable" in c or "disable" in c])
+
+    def test_settings_files_say_what_the_audit_needs(self):
+        system = Path(cli.REPO) / "deploy/system"
+        needrestart = (system / "needrestart-illoura.conf").read_text(encoding="utf-8")
+        self.assertIn("$nrconf{override_rc}{qr(^illoura-(daily-brief|cloud-collect|cloud-health)", needrestart)
+        self.assertTrue(needrestart.rstrip().endswith("= 0;"))
+        apt = (system / "apt-daily-upgrade-illoura.conf").read_text(encoding="utf-8")
+        self.assertIn("OnCalendar=\n", apt)  # clears Ubuntu's 06:00 before setting ours
+        self.assertIn("OnCalendar=*-*-* 03:30 Australia/Sydney", apt)
+
+    def test_schedule_disable_also_stops_a_waiting_brief(self):
+        remote = FakeRemote(busy=(cli.BRIEF_SERVICE,))
+        result = cli.schedule(remote, "disable", yes=True)
+        self.assertIn(["sudo", "systemctl", "stop", cli.BRIEF_SERVICE], remote.calls)
+        self.assertTrue(result["stopped_running_brief"])
+        idle = FakeRemote()
+        self.assertFalse(cli.schedule(idle, "disable", yes=True)["stopped_running_brief"])
+        self.assertNotIn(["sudo", "systemctl", "stop", cli.BRIEF_SERVICE], idle.calls)
+
+    def test_os_update_refuses_in_the_brief_window_or_while_busy(self):
+        for remote in (FakeRemote(sydney_hhmm="0700"), FakeRemote(busy=(cli.BRIEF_SERVICE,))):
+            with self.assertRaises(cli.OperationError):
+                cli.os_update(remote, cli.Settings(), yes=True, reboot=True)
+            self.assertFalse([c for c in remote.calls if "unattended-upgrade" in c])
+        with self.assertRaises(cli.OperationError):
+            cli.os_update(FakeRemote(), cli.Settings())
+
+    def test_os_update_reboots_only_when_needed_and_asked(self):
+        waited = []
+        waiter = lambda settings, seconds: waited.append(seconds) or "ok"
+        remote = FakeRemote(reboot_required=True)
+        result = cli.os_update(remote, cli.Settings(), yes=True, reboot=True, waiter=waiter)
+        self.assertIn(["sudo", "systemctl", "reboot"], remote.calls)
+        self.assertEqual(result["readyz_after_reboot"], "ok")
+        for remote, reboot in ((FakeRemote(reboot_required=True), False), (FakeRemote(), True)):
+            result = cli.os_update(remote, cli.Settings(), yes=True, reboot=reboot, waiter=waiter)
+            self.assertNotIn(["sudo", "systemctl", "reboot"], remote.calls)
+            self.assertFalse(result["rebooted"])
+        self.assertEqual(len(waited), 1)
+
+    def test_wait_for_readyz_polls_until_ok(self):
+        class Response:
+            def __init__(self, status):
+                self.status = status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        answers = [OSError("refused"), Response(503), Response(200)]
+
+        def opener(url):
+            answer = answers.pop(0)
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / "api-access.json").write_text('{"api_base_url": "https://203.0.113.5"}')
+            settings = cli.Settings(private_dir=Path(temp))
+            tick = iter(range(0, 10000, 15))
+            result = cli.wait_for_readyz(settings, 600, sleep=lambda s: None, opener=opener,
+                                         clock=lambda: next(tick))
+        self.assertEqual(result, "ok")
+        self.assertEqual(answers, [])
+
+    def test_reconcile_send_runs_as_scraper_and_never_sends(self):
+        with self.assertRaises(cli.OperationError):
+            cli.reconcile_send(FakeRemote(), "daily_sweep_20261114_004500")
+        for bad in ("../etc", "daily_sweep_x", "daily_sweep_20261114_004500;id"):
+            with self.assertRaises(ValueError):
+                cli.reconcile_send(FakeRemote(), bad, yes=True)
+        remote = FakeRemote(reconcile=(2, 'log line\n{"status": "not_found_in_sent"}\n'))
+        result = cli.reconcile_send(remote, "daily_sweep_20261114_004500", yes=True)
+        self.assertEqual(result, {"status": "not_found_in_sent", "exit_code": 2})
+        call = remote.calls[-1]
+        self.assertEqual(call[:5], ["sudo", "runuser", "-u", "scraper", "--"])
+        self.assertIn("reconcile", call)
+        self.assertNotIn("send", call)
+        self.assertNotIn("--mark-undelivered", call)
+        remote = FakeRemote(reconcile=(0, '{"status": "marked_undelivered"}\n'))
+        cli.reconcile_send(remote, "daily_sweep_20261114_004500", mark_undelivered=True, yes=True)
+        self.assertEqual(remote.calls[-1][-1], "--mark-undelivered")
+        with self.assertRaises(cli.OperationError):
+            cli.reconcile_send(FakeRemote(reconcile=(1, "Traceback\n")),
+                               "daily_sweep_20261114_004500", yes=True)
 
 
 if __name__ == "__main__":

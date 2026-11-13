@@ -49,6 +49,7 @@ class CloudHealth(unittest.TestCase):
             self.root / "missing-token.json",
             brief_enabled=brief_enabled,
             now=now,
+            cert=self.root / "no-certificate.pem",
         )
 
     def test_failure_is_not_hidden_by_fresh_previous_run(self):
@@ -198,9 +199,59 @@ class MorningRunAndDailyBrief(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=False):
             os.environ.pop("ILLOURA_GMAIL_SENDER", None)
             checks = health.check(self.work, served, Path(self.temp.name) / "t.json",
-                                  brief_enabled=True, now=now)["checks"]
+                                  brief_enabled=True, now=now,
+                                  cert=Path(self.temp.name) / "no-certificate.pem")["checks"]
         for name in ("publication", "collection", "last_run", "daily_brief"):
             self.assertEqual(checks[name]["status"], "ok", name)
+
+
+class CertificateExpiry(unittest.TestCase):
+    """The 6-day HTTPS certificate must warn a day ahead, not when the external watch fails."""
+
+    now = datetime(2026, 11, 13, 7, 0, tzinfo=timezone.utc)
+
+    def status(self, hours_left):
+        end = self.now + timedelta(hours=hours_left)
+        return health.certificate(Path("cert.pem"), self.now, read_end=lambda _: end)
+
+    def test_normal_lifetime_is_ok(self):
+        self.assertEqual(self.status(60)["status"], "ok")
+        self.assertEqual(self.status(25)["status"], "ok")
+
+    def test_under_a_day_left_is_expiring(self):
+        self.assertEqual(self.status(23)["status"], "expiring")
+
+    def test_expired(self):
+        self.assertEqual(self.status(-1)["status"], "expired")
+
+    def test_unreadable_certificate(self):
+        def broken(_):
+            raise OSError("permission denied")
+
+        self.assertEqual(
+            health.certificate(Path("cert.pem"), self.now, read_end=broken)["status"],
+            "unavailable",
+        )
+
+    def test_openssl_date_format_is_parsed(self):
+        result = type("R", (), {"stdout": "notAfter=Nov  8 22:59:29 2026 GMT\n"})()
+        with patch.object(health.subprocess, "run", return_value=result):
+            end = health.cert_not_after(Path("cert.pem"))
+        self.assertEqual(end, datetime(2026, 11, 8, 22, 59, 29, tzinfo=timezone.utc))
+
+    def test_expiring_certificate_makes_health_attention(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "served").mkdir()
+            cert = root / "cert.pem"
+            cert.write_text("placeholder")
+            result = health.check(
+                root / "work", root / "served", root / "token.json",
+                brief_enabled=False, now=self.now, cert=cert,
+                read_cert_end=lambda _: self.now + timedelta(hours=5),
+            )
+        self.assertEqual(result["checks"]["certificate"]["status"], "expiring")
+        self.assertEqual(result["status"], "attention")
 
 
 if __name__ == "__main__":
