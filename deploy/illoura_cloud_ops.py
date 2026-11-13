@@ -615,6 +615,7 @@ def backup_operations(project, work, backups):
         for name in [
             "send_attempt.json",
             "send_receipt.json",
+            "send_reconciliation.json",
             "cloud_send_review.json",
             "cloud_run.json",
             "newsletter_review.json",
@@ -660,6 +661,7 @@ def restore_drill(backup):
     databases = 0
     attempt_runs = set()
     receipt_runs = set()
+    reconciled_runs = set()
     with tempfile.TemporaryDirectory(prefix="illoura-restore-") as folder:
         restored = Path(folder)
         for name, expected in meta["files"].items():
@@ -686,8 +688,12 @@ def restore_drill(backup):
             if dest.name == "send_attempt.json":
                 attempts += 1
                 attempt_runs.add(relative.parent.as_posix())
+            if dest.name == "send_reconciliation.json":
+                value = json.loads(dest.read_text())
+                if value.get("delivered") is False:
+                    reconciled_runs.add(relative.parent.as_posix())
         # Recovery never starts a collector or transport; mail needs Sent reconciliation.
-    unresolved = sorted(attempt_runs - receipt_runs)
+    unresolved = sorted(attempt_runs - receipt_runs - reconciled_runs)
     # An attempt without a receipt may already have been delivered: never "passed".
     return {
         "status": "attention" if unresolved else "passed",
@@ -695,6 +701,7 @@ def restore_drill(backup):
         "databases": databases,
         "send_receipts": receipts,
         "send_attempts": attempts,
+        "reconciled_undelivered": len(reconciled_runs),
         "mail_replay_performed": False,
         "unresolved_send_runs": unresolved,
         "requires_mail_sent_reconciliation_before_resume": True,
