@@ -156,6 +156,33 @@ class CloudOperations(unittest.TestCase):
         )
         self.assertEqual(ops.restore_drill(backup)["status"], "passed")
 
+    def test_reconciled_undelivered_attempt_is_backed_up_and_resolved(self):
+        self.write("send_attempt.json", {"message_id_header": "uncertain"})
+        self.write("send_reconciliation.json", {"delivered": False, "decided_by": "operator"})
+        backup = ops.backup_operations(self.data.parent, self.work, self.root / "backups")
+        self.assertTrue((backup / "reports" / self.run.name / "send_reconciliation.json").is_file())
+        result = ops.restore_drill(backup)
+        self.assertEqual(result["status"], "passed")
+        self.assertEqual(result["reconciled_undelivered"], 1)
+        self.assertEqual(result["send_attempts"], 1)
+        self.assertEqual(result["unresolved_send_runs"], [])
+
+    def test_reconciliation_does_not_resolve_another_run(self):
+        self.write("send_attempt.json", {})
+        other = self.work / "reports/daily_sweep_other"
+        other.mkdir()
+        ops.atomic_json(other / "send_reconciliation.json", {"delivered": False})
+        backup = ops.backup_operations(self.data.parent, self.work, self.root / "backups")
+        self.assertEqual(ops.restore_drill(backup)["status"], "attention")
+
+    def test_nonfalse_reconciliation_does_not_resolve_attempt(self):
+        self.write("send_attempt.json", {})
+        self.write("send_reconciliation.json", {"delivered": None})
+        backup = ops.backup_operations(self.data.parent, self.work, self.root / "backups")
+        result = ops.restore_drill(backup)
+        self.assertEqual(result["status"], "attention")
+        self.assertEqual(result["reconciled_undelivered"], 0)
+
     def test_restore_drill_cli_exits_nonzero_on_attention(self):
         from contextlib import contextmanager, redirect_stdout
         from unittest.mock import patch
