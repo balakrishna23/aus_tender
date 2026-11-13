@@ -41,8 +41,15 @@ class CloudHealth(unittest.TestCase):
     def write(self, path, value):
         path.write_text(json.dumps(value))
 
-    def check(self):
-        return health.check(self.work, self.served, self.root / "missing-token.json")
+    def check(self, brief_enabled=False, now=None):
+        # brief_enabled is explicit so staged runs on the server never read its real timer.
+        return health.check(
+            self.work,
+            self.served,
+            self.root / "missing-token.json",
+            brief_enabled=brief_enabled,
+            now=now,
+        )
 
     def test_failure_is_not_hidden_by_fresh_previous_run(self):
         self.write(
@@ -114,6 +121,86 @@ class CloudHealth(unittest.TestCase):
             {"status": "attention", "errors": [{"error_type": "OSError"}]},
         )
         self.assertEqual(self.check()["checks"]["retention"]["status"], "attention")
+
+
+SYDNEY = health.SYDNEY
+
+
+def sydney(day, hour, minute=0):
+    """A UTC instant for a Sydney wall-clock time in November 2026 (AEDT)."""
+    return datetime(2026, 11, day, hour, minute, tzinfo=SYDNEY).astimezone(timezone.utc)
+
+
+class MorningRunAndDailyBrief(unittest.TestCase):
+    """13 November 2026: the brief was skipped and nobody was told; a normal run must not alarm."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name) / "work"
+        (self.work / "reports").mkdir(parents=True)
+
+    def run_dir(self, name, status, started, receipt_at=None):
+        run = self.work / "reports" / name
+        run.mkdir()
+        state = {"run_dir": str(run), "status": status, "started_at_utc": started.isoformat()}
+        (self.work / "latest_run.json").write_text(json.dumps(state))
+        if receipt_at:
+            receipt = {"sent": True, "recorded_at_utc": receipt_at.isoformat()}
+            (run / "send_receipt.json").write_text(json.dumps(receipt))
+        return run
+
+    def brief(self, now, enabled=True):
+        return health.daily_brief(self.work, now, enabled)
+
+    def test_brief_sent_today_is_ok_after_nine(self):
+        self.run_dir("daily_sweep_a", "sent", sydney(14, 6, 15), receipt_at=sydney(14, 8, 15))
+        self.assertEqual(self.brief(sydney(14, 9, 30))["status"], "ok")
+
+    def test_skipped_brief_is_missed_after_nine(self):
+        self.run_dir("daily_sweep_a", "sent", sydney(12, 19), receipt_at=sydney(12, 20))
+        self.run_dir("daily_sweep_b", "source_failure", sydney(13, 6, 15))
+        result = self.brief(sydney(13, 16, 17))
+        self.assertEqual(result["status"], "missed")
+        self.assertTrue(result["due_by_sydney"].startswith("2026-11-13T09:00"))
+
+    def test_yesterdays_brief_covers_the_morning_while_todays_run_works(self):
+        self.run_dir("daily_sweep_a", "sent", sydney(13, 6, 15), receipt_at=sydney(13, 8, 15))
+        self.run_dir("daily_sweep_b", "running_sources", sydney(14, 6, 15))
+        self.assertEqual(self.brief(sydney(14, 7, 0))["status"], "ok")
+
+    def test_schedule_off_never_alarms(self):
+        self.assertEqual(self.brief(sydney(14, 12), enabled=False)["status"], "ok")
+
+    def test_unsent_receipts_do_not_count(self):
+        run = self.run_dir("daily_sweep_a", "sent", sydney(14, 6, 15))
+        (run / "send_receipt.json").write_text(
+            json.dumps({"sent": False, "recorded_at_utc": sydney(14, 8, 15).isoformat()})
+        )
+        self.assertEqual(self.brief(sydney(14, 10))["status"], "missed")
+
+    def test_morning_collection_in_progress_is_healthy_until_five_hours(self):
+        started = sydney(14, 6, 15)
+        state = {"status": "running_sources", "started_at_utc": started.isoformat()}
+        self.assertTrue(health.run_in_progress(state, started + timedelta(hours=2)))
+        self.assertFalse(health.run_in_progress(state, started + timedelta(hours=6)))
+        self.assertFalse(health.run_in_progress({**state, "status": "source_failure"}, started))
+
+    def test_whole_check_during_collection_is_ok(self):
+        served = Path(self.temp.name) / "served"
+        (served / "current").mkdir(parents=True)
+        now = sydney(14, 7, 0)
+        (served / "current/manifest.json").write_text(
+            json.dumps({"snapshot_finished_utc": (now - timedelta(hours=23)).isoformat()})
+        )
+        self.run_dir("daily_sweep_a", "sent", sydney(13, 6, 15), receipt_at=sydney(13, 8, 15))
+        self.run_dir("daily_sweep_b", "building_evidence", sydney(14, 6, 15))
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("ILLOURA_GMAIL_SENDER", None)
+            checks = health.check(self.work, served, Path(self.temp.name) / "t.json",
+                                  brief_enabled=True, now=now)["checks"]
+        for name in ("publication", "collection", "last_run", "daily_brief"):
+            self.assertEqual(checks[name]["status"], "ok", name)
 
 
 if __name__ == "__main__":

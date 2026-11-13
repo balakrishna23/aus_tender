@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 
 spec = importlib.util.spec_from_file_location(
     "illoura_aws", Path(__file__).resolve().parents[1] / "deploy/aws/illoura_aws.py"
@@ -32,10 +33,19 @@ class FakeRemote:
             (Path(cli.REPO) / "api/requirements.txt").read_text(encoding="utf-8"),
         )
         self.keys = [{"name": "admin", "sha256": "x" * 64, "enabled": True}]
+        self.busy = options.get("busy", ())  # units reported as running
 
     def run(self, argv, timeout=900):
         cli.command_line(argv)  # every call must pass the same safety check as SSH
         self.calls.append(list(argv))
+        if argv[:2] == ["systemctl", "is-active"] and len(argv) == 3:
+            return (0, "active\n", "") if argv[2] in self.busy else (3, "inactive\n", "")
+        if argv[:2] == ["sudo", "sha256sum"]:
+            present = [p for p in argv[2:] if p in self.files]
+            lines = [hashlib.sha256(self.files[p]).hexdigest() + "  " + p for p in present]
+            return (0 if len(present) == len(argv) - 2 else 1), "\n".join(lines), ""
+        if argv[:2] == ["sudo", "install"] and argv[-2] in self.files:
+            self.files[argv[-1]] = self.files[argv[-2]]  # installed copies hash like the original
         if argv[0] == "sha256sum":
             lines = []
             for path in argv[1:]:
@@ -321,6 +331,147 @@ class SettingsAndMainTests(unittest.TestCase):
             remote.calls[-1],
             ["sudo", cli.OPS_PYTHON, cli.OPS_SCRIPT, "prune", "--dry-run"],
         )
+
+
+class FakeAws:
+    """Stands in for the AWS CLI wrapper; records argument lists."""
+
+    def __init__(self, stack_exists=True, contacts=("ops@example.com",)):
+        self.calls, self.stack_exists, self.contacts = [], stack_exists, contacts
+
+    def __call__(self, settings, *args, parse=True):
+        self.calls.append(list(args))
+        if args[:2] == ("lightsail", "get-contact-methods"):
+            return {"contactMethods": [{"contactEndpoint": c, "status": "Valid"} for c in self.contacts]}
+        if args[:2] == ("cloudformation", "describe-stacks"):
+            if not self.stack_exists:
+                raise cli.OperationError("AWS CLI failed: Stack with id illoura-watch does not exist")
+            return {"Stacks": [{"StackStatus": "CREATE_COMPLETE", "Outputs": [
+                {"OutputKey": "AlarmName", "OutputValue": "illoura-watch-needs-attention"},
+                {"OutputKey": "TopicArn", "OutputValue": "arn:aws:sns:ap-southeast-2:000000000000:t"}]}]}
+        if args[:2] == ("cloudwatch", "describe-alarms"):
+            return {"MetricAlarms": [{"StateValue": "INSUFFICIENT_DATA", "StateReason": "new"}]}
+        if args[:2] == ("sns", "list-subscriptions-by-topic"):
+            return {"Subscriptions": [{"SubscriptionArn": "PendingConfirmation", "Endpoint": "ops@example.com"}]}
+        if args[:2] == ("lightsail", "get-instance"):
+            return {"instance": {"addOns": [{"name": "AutoSnapshot", "status": "Enabled",
+                                             "snapshotTimeOfDay": cli.SNAPSHOT_TIME_UTC}]}}
+        if args[:2] == ("lightsail", "get-auto-snapshots"):
+            return {"autoSnapshots": [{"date": "2026-11-14", "status": "Success"}]}
+        return {} if parse else ""
+
+
+class WatchAndSnapshotTests(unittest.TestCase):
+    def settings(self, folder, base="https://api.example.test"):
+        Path(folder, "api-access.json").write_text(json.dumps({"api_base_url": base}))
+        return cli.Settings(private_dir=Path(folder))
+
+    def test_watch_deploy_needs_yes_and_uses_private_url_and_contact(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings, fake = self.settings(folder), FakeAws()
+            with unittest.mock.patch.object(cli, "aws", fake):
+                with self.assertRaises(cli.OperationError):
+                    cli.watch(settings, "deploy")
+                result = cli.watch(settings, "deploy", yes=True)
+        deploy = next(c for c in fake.calls if c[:2] == ["cloudformation", "deploy"])
+        self.assertIn("CAPABILITY_IAM", deploy)
+        self.assertIn("ReadyzUrl=https://api.example.test/readyz", deploy)
+        self.assertIn("AlertEmail=ops@example.com", deploy)
+        self.assertNotIn("ops@example.com", json.dumps(result))  # status never shows the address
+        self.assertEqual(result["email_subscriptions"][0][:7], "pending")
+
+    def test_watch_refuses_non_https_url_and_bad_email(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with unittest.mock.patch.object(cli, "aws", FakeAws()):
+                with self.assertRaises(cli.OperationError):
+                    cli.watch(self.settings(folder, "http://api.example.test"), "deploy", yes=True)
+                with self.assertRaises(ValueError):
+                    cli.watch(self.settings(folder), "deploy", yes=True, email="x; rm -rf /")
+
+    def test_watch_status_before_deploy(self):
+        with tempfile.TemporaryDirectory() as folder:
+            with unittest.mock.patch.object(cli, "aws", FakeAws(stack_exists=False)):
+                self.assertEqual(cli.watch(self.settings(folder), "status"), {"stack": "not deployed"})
+
+    def test_snapshots_enable_needs_yes_and_runs_after_the_brief(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings, fake = self.settings(folder), FakeAws()
+            with unittest.mock.patch.object(cli, "aws", fake):
+                with self.assertRaises(cli.OperationError):
+                    cli.snapshots(settings, "enable")
+                result = cli.snapshots(settings, "enable", yes=True)
+        request = next(c for c in fake.calls if c[:2] == ["lightsail", "enable-add-on"])
+        self.assertEqual(json.loads(request[-1])["autoSnapshotAddOnRequest"]["snapshotTimeOfDay"], "23:00")
+        self.assertEqual(result["snapshots"][0]["status"], "Success")
+
+    def test_template_holds_no_private_values(self):
+        text = cli.WATCH_TEMPLATE.read_text(encoding="utf-8")
+        self.assertNotRegex(text, r"\b\d{1,3}(\.\d{1,3}){3}\b")  # no IP address
+        self.assertNotRegex(text, r"\b\d{12}\b")  # no account ID
+        self.assertNotRegex(text, r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")  # no address
+        self.assertIn("TreatMissingData: breaching", text)
+
+
+class DeployCollectorsTests(unittest.TestCase):
+    def server_with_current_code(self, **options):
+        """A server whose collector files already match the repo, except aus_contract.py."""
+        remote = FakeRemote(**options)
+        for name in cli.collector_files():
+            remote.files[f"{cli.COLLECTOR_DIR}/{name}"] = cli.lf_bytes(Path(cli.REPO) / name)
+        remote.files[f"{cli.COLLECTOR_DIR}/spiders/aus_contract.py"] = b"# old version\n"
+        return remote
+
+    def test_ships_only_the_runner_and_spiders(self):
+        names = cli.collector_files()
+        self.assertEqual(names[0], "run_spiders.py")
+        self.assertIn("spiders/aus_contract.py", names)
+        self.assertTrue(all(n == "run_spiders.py" or n.startswith("spiders/") for n in names))
+
+    def test_needs_yes(self):
+        with self.assertRaises(cli.OperationError):
+            cli.deploy_collectors(FakeRemote())
+
+    def test_refuses_while_the_brief_or_collection_runs(self):
+        for unit in cli.BUSY_UNITS:
+            remote = FakeRemote(busy=(unit,))
+            with self.subTest(unit=unit), self.assertRaises(cli.OperationError):
+                cli.deploy_collectors(remote, yes=True)
+            self.assertEqual(remote.files, {})  # nothing staged or installed
+
+    def test_verify_runs_staged_tests_and_installs_nothing(self):
+        remote = FakeRemote()
+        result = cli.deploy_collectors(remote, test_only=True)
+        self.assertTrue(result["tested"])
+        self.assertEqual(remote.installs(), [])
+        test_run = next(c for c in remote.calls if "unittest" in c)
+        self.assertTrue(test_run[1].startswith("PYTHONPATH=/var/tmp/illoura-stage-"))
+        self.assertTrue(any(c[:2] == ["rm", "-rf"] for c in remote.calls))
+
+    def test_failed_tests_install_nothing(self):
+        remote = self.server_with_current_code(tests_ok=False)
+        with self.assertRaises(cli.OperationError):
+            cli.deploy_collectors(remote, yes=True)
+        self.assertEqual(remote.installs(), [])
+
+    def test_installs_only_changed_files_as_scraper_after_backup(self):
+        remote = self.server_with_current_code()
+        result = cli.deploy_collectors(remote, yes=True)
+        self.assertEqual(result["installed"], ["spiders/aus_contract.py"])
+        files = [c for c in remote.installs() if "-d" not in c]
+        self.assertEqual(len(files), 1)
+        self.assertEqual(files[0][2:8], ["-o", "scraper", "-g", "scraper", "-m", "0644"])
+        self.assertIn(["sudo", "cp", "-p", f"{cli.COLLECTOR_DIR}/spiders/aus_contract.py",
+                       result["backup"] + "/spiders/aus_contract.py"], remote.calls)
+        self.assertFalse(any("systemctl" in c and "enable" in c for c in remote.calls))
+
+    def test_up_to_date_server_is_left_alone(self):
+        remote = self.server_with_current_code()
+        remote.files[f"{cli.COLLECTOR_DIR}/spiders/aus_contract.py"] = cli.lf_bytes(
+            Path(cli.REPO) / "spiders/aus_contract.py"
+        )
+        result = cli.deploy_collectors(remote, yes=True)
+        self.assertEqual(result["installed"], [])
+        self.assertEqual(remote.installs(), [])
 
 
 if __name__ == "__main__":

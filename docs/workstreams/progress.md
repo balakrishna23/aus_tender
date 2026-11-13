@@ -50,3 +50,12 @@ Only one agent edits the branch at a time.
   7), dry run passed, schedule enabled: first run Fri 13 Nov 06:15 AEDT, email 08:15 AEDT.
 - Next: watch the first unattended run and its receipt; then roadmap packages B and C.
 - Half-finished: none.
+
+## 13 Nov ~11:20 IST, Claude: workstream 8 (first brief failed; alerts; snapshots)
+- Done: first unattended brief skipped (aus_contract: 13 new notices not yet on the
+  site, counted as FAIL(no items)); collector fix + `deploy-collectors` deployed; health
+  in-progress/daily_brief checks deployed; external watch stack `illoura-watch` and
+  daily Lightsail snapshots live. Record: `08-reliability.md`.
+- Next: confirm the SNS email subscription; check the 14 Nov 06:15 Sydney run; merge
+  PR #1 then this branch's PR.
+- Half-finished: none.

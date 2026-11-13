@@ -77,6 +77,14 @@ OPS_TESTS = (
     "test_cloud_health.py",
     "test_cloud_daily_brief.py",
 )
+# Collector code: the source runner and the spiders package only (see deploy_collectors).
+COLLECTOR_DIR = "/opt/aus_tender"
+COLLECTOR_TESTS = ("test_collectors_unpublished.py",)
+BUSY_UNITS = ("illoura-daily-brief.service", "illoura-cloud-collect.service")
+# External watch (CloudFormation stack in the project Region) and Lightsail snapshots.
+WATCH_STACK = "illoura-watch"
+WATCH_TEMPLATE = REPO / "deploy/aws/illoura-watch.yaml"
+SNAPSHOT_TIME_UTC = "23:00"  # 10:00 AEDT / 09:00 AEST: after the 08:15 Sydney brief
 EMAIL = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$")
 DRY_RUN_DIR = re.compile(r"^/var/tmp/illoura-brief-dryrun-[0-9TZ]+$")
 
@@ -146,7 +154,7 @@ def aws_cli():
     raise OperationError("AWS CLI not found")
 
 
-def aws(settings, *args):
+def aws(settings, *args, parse=True):
     result = subprocess.run(
         [
             aws_cli(),
@@ -165,7 +173,7 @@ def aws(settings, *args):
     )
     if result.returncode:
         raise OperationError("AWS CLI failed: " + result.stderr.strip()[:300])
-    return json.loads(result.stdout or "{}")
+    return json.loads(result.stdout or "{}") if parse else result.stdout
 
 
 def check_account(settings):
@@ -533,6 +541,102 @@ def deploy_ops(
     }
 
 
+def collector_files(repo=REPO):
+    """The collector code this tool may ship: run_spiders.py and spiders/*.py, nothing else."""
+    spiders = sorted("spiders/" + p.name for p in (Path(repo) / "spiders").glob("*.py"))
+    return ["run_spiders.py", *spiders]
+
+
+def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
+    """Stage, verify and test collector code; install only the files that changed.
+
+    Refuses while a collection or the daily brief is running. Replaced files are kept in
+    /var/backups/illoura/collectors-<time>/. Never touches databases, settings or timers.
+    """
+    if not yes and not test_only:
+        raise OperationError("deploy-collectors changes the server; rerun with --yes")
+    for unit in BUSY_UNITS:
+        _, out, _ = remote.run(["systemctl", "is-active", unit])
+        if out.strip() in ("active", "activating", "deactivating", "reloading"):
+            raise OperationError(
+                f"{unit} is running; deploy collectors after it finishes. Nothing was changed."
+            )
+    names = collector_files(repo)
+    files = {name: lf_bytes(Path(repo) / name) for name in names}
+    files.update(
+        {"tests/" + n: lf_bytes(Path(repo) / "tests" / n) for n in COLLECTOR_TESTS}
+    )
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, files)
+        # The staged runner and spiders package come first on the path; everything else they
+        # import (database_manager, pipelines, settings) is the installed project, read-only.
+        tests = run_tests(
+            remote,
+            [
+                "env",
+                f"PYTHONPATH={stage}:{COLLECTOR_DIR}",
+                "GSHEETS_AUTO_SYNC=False",
+                OPS_PYTHON,
+                "-m",
+                "unittest",
+                "discover",
+                "-s",
+                stage + "/tests",
+                "-p",
+                "test_collectors_*.py",
+            ],
+            "staged collector tests (nothing installed)",
+        )
+        if test_only:
+            return {"tested": True, "installed": [], "tests": tests}
+        installed = [f"{COLLECTOR_DIR}/{n}" for n in names]
+        _, out, _ = remote.run(["sudo", "sha256sum", *installed])
+        current = {
+            line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()
+        }
+        changed = [n for n in names if current.get(f"{COLLECTOR_DIR}/{n}") != sha256(files[n])]
+        if not changed:
+            return {"installed": [], "tests": tests, "note": "server already matches"}
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = f"{BACKUP_ROOT}/collectors-{stamp}"
+        must(
+            remote,
+            ["sudo", "install", "-d", "-o", "root", "-g", "root", "-m", "0700",
+             backup, backup + "/spiders"],
+            "create collector backup folder",
+        )
+        for name in changed:
+            target = f"{COLLECTOR_DIR}/{name}"
+            if target in current:
+                must(remote, ["sudo", "cp", "-p", target, f"{backup}/{name}"], "back up " + name)
+            must(
+                remote,
+                ["sudo", "install", "-o", "scraper", "-g", "scraper", "-m", "0644",
+                 f"{stage}/{name}", target],
+                "install " + name,
+            )
+        out = must(
+            remote,
+            ["sudo", "sha256sum", *[f"{COLLECTOR_DIR}/{n}" for n in changed]],
+            "hash installed collectors",
+        )
+        after = {line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()}
+        wrong = [n for n in changed if after.get(f"{COLLECTOR_DIR}/{n}") != sha256(files[n])]
+        if wrong:
+            raise OperationError(
+                f"Installed collector files do not match: {wrong}; originals are in {backup}"
+            )
+    finally:
+        remove_stage(remote, stage)
+    return {
+        "installed": changed,
+        "backup": backup,
+        "tests": tests,
+        "hashes": {n: sha256(files[n]) for n in changed},
+    }
+
+
 def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False):
     """Stage and test api/app.py as the API user; install with rollback unless test_only."""
     if not yes and not test_only:
@@ -759,6 +863,114 @@ def daily_brief_dry_run(remote):
     return result
 
 
+def readyz_url(settings):
+    """The public /readyz URL, from the private API access file (never the repository)."""
+    access = json.loads((settings.private_dir / "api-access.json").read_text(encoding="utf-8"))
+    base = str(access.get("api_base_url", "")).rstrip("/")
+    if not re.match(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?$", base):
+        raise OperationError("api-access.json has no usable https api_base_url")
+    return base + "/readyz"
+
+
+def alert_email(settings, email=None):
+    """--email if given, else the verified Lightsail alarm contact. Never printed."""
+    if email:
+        if not EMAIL.match(email.strip()):
+            raise ValueError("Not a plain email address")
+        return email.strip()
+    methods = aws(settings, "lightsail", "get-contact-methods", "--protocols", "Email")
+    valid = [
+        m["contactEndpoint"]
+        for m in methods.get("contactMethods", [])
+        if m.get("status") == "Valid" and m.get("contactEndpoint")
+    ]
+    if not valid:
+        raise OperationError("No verified Lightsail email contact; pass --email")
+    return valid[0]
+
+
+def watch_status(settings):
+    try:
+        stack = aws(settings, "cloudformation", "describe-stacks", "--stack-name", WATCH_STACK)
+    except OperationError as error:
+        if "does not exist" in str(error):
+            return {"stack": "not deployed"}
+        raise
+    stack = stack["Stacks"][0]
+    outputs = {o["OutputKey"]: o["OutputValue"] for o in stack.get("Outputs", [])}
+    result = {"stack": stack["StackStatus"]}
+    if "AlarmName" in outputs:
+        alarm = aws(settings, "cloudwatch", "describe-alarms", "--alarm-names", outputs["AlarmName"])
+        alarm = (alarm.get("MetricAlarms") or [{}])[0]
+        result.update(alarm=alarm.get("StateValue"), alarm_reason=alarm.get("StateReason"))
+    if "TopicArn" in outputs:
+        subs = aws(settings, "sns", "list-subscriptions-by-topic", "--topic-arn", outputs["TopicArn"])
+        # Addresses are private: report only whether each subscription is confirmed.
+        result["email_subscriptions"] = [
+            "pending confirmation (click the link in the AWS email)"
+            if s.get("SubscriptionArn") == "PendingConfirmation"
+            else "confirmed"
+            for s in subs.get("Subscriptions", [])
+        ]
+    return result
+
+
+def watch(settings, action, *, yes=False, email=None):
+    """Deploy or report the external /readyz watch (Lambda + alarm + SNS email)."""
+    if action == "status":
+        return watch_status(settings)
+    if not yes:
+        raise OperationError("watch deploy creates AWS resources; rerun with --yes")
+    url, address = readyz_url(settings), alert_email(settings, email)
+    aws(
+        settings,
+        "cloudformation",
+        "deploy",
+        "--template-file",
+        str(WATCH_TEMPLATE),
+        "--stack-name",
+        WATCH_STACK,
+        "--capabilities",
+        "CAPABILITY_IAM",
+        "--no-fail-on-empty-changeset",
+        "--parameter-overrides",
+        f"ReadyzUrl={url}",
+        f"AlertEmail={address}",
+        parse=False,
+    )
+    return watch_status(settings)
+
+
+def snapshots(settings, action, *, yes=False):
+    """Daily Lightsail automatic snapshots of the whole server (kept: newest 7)."""
+    if action == "enable":
+        if not yes:
+            raise OperationError("snapshots enable adds a paid add-on; rerun with --yes")
+        request = {
+            "addOnType": "AutoSnapshot",
+            "autoSnapshotAddOnRequest": {"snapshotTimeOfDay": SNAPSHOT_TIME_UTC},
+        }
+        aws(
+            settings,
+            "lightsail",
+            "enable-add-on",
+            "--resource-name",
+            settings.instance,
+            "--add-on-request",
+            json.dumps(request),
+        )
+    instance = aws(settings, "lightsail", "get-instance", "--instance-name", settings.instance)
+    add_ons = [a for a in instance["instance"].get("addOns") or [] if a.get("name") == "AutoSnapshot"]
+    taken = aws(settings, "lightsail", "get-auto-snapshots", "--resource-name", settings.instance)
+    return {
+        "auto_snapshot": add_ons[0] if add_ons else "off",
+        "snapshots": [
+            {"date": s.get("date"), "status": s.get("status")}
+            for s in taken.get("autoSnapshots", [])
+        ],
+    }
+
+
 def schedule(remote, action, *, yes=False):
     """Turn the 08:15 daily brief on or off. The only action that changes a timer's enable state."""
     if not yes:
@@ -800,6 +1012,14 @@ def build_parser():
     sub.add_parser(
         "verify-api", help="Stage and run the API tests on the server; installs nothing"
     )
+    sub.add_parser(
+        "deploy-collectors",
+        help="Ship, test and install run_spiders.py and spiders/*.py (changed files only)",
+    ).add_argument("--yes", action="store_true")
+    sub.add_parser(
+        "verify-collectors",
+        help="Stage and run the collector tests on the server; installs nothing",
+    )
     key = sub.add_parser("api-key")
     key.add_argument("key_action", choices=["create", "revoke"])
     key.add_argument("--name", required=True)
@@ -807,6 +1027,15 @@ def build_parser():
     sender.add_argument("--email", required=True)
     sender.add_argument("--yes", action="store_true")
     sub.add_parser("daily-brief-dry-run", help="Compose a copy of the latest run on the server; never sends")
+    watcher = sub.add_parser(
+        "watch", help="External /readyz watch with email alarm (AWS, independent of the server)"
+    )
+    watcher.add_argument("watch_action", choices=["deploy", "status"])
+    watcher.add_argument("--email", help="Alarm address (default: the verified Lightsail contact)")
+    watcher.add_argument("--yes", action="store_true")
+    snaps = sub.add_parser("snapshots", help="Daily Lightsail snapshots of the whole server")
+    snaps.add_argument("snapshot_action", choices=["enable", "status"])
+    snaps.add_argument("--yes", action="store_true")
     timer = sub.add_parser("schedule", help="Enable or disable the 08:15 Sydney daily brief")
     timer.add_argument("timer_action", choices=["enable", "disable"])
     timer.add_argument("--yes", action="store_true")
@@ -817,6 +1046,13 @@ def main(argv=None, remote_factory=SshRemote):
     args = build_parser().parse_args(argv)
     settings = Settings.from_env()
     check_account(settings)
+    if args.action in ("watch", "snapshots"):  # AWS APIs only; no SSH session needed
+        if args.action == "watch":
+            result = watch(settings, args.watch_action, yes=args.yes, email=args.email)
+        else:
+            result = snapshots(settings, args.snapshot_action, yes=args.yes)
+        print(json.dumps(result, indent=2))
+        return 0
     remote = remote_factory(settings)
     try:
         if args.action == "status":
@@ -841,6 +1077,10 @@ def main(argv=None, remote_factory=SshRemote):
             result = deploy_ops(remote, test_only=True)
         elif args.action == "verify-api":
             result = deploy_api(remote, test_only=True)
+        elif args.action == "deploy-collectors":
+            result = deploy_collectors(remote, yes=args.yes)
+        elif args.action == "verify-collectors":
+            result = deploy_collectors(remote, test_only=True)
         elif args.action == "set-health-sender":
             result = set_health_sender(remote, args.email, yes=args.yes)
         elif args.action == "daily-brief-dry-run":

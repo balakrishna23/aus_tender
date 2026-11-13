@@ -30,6 +30,11 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': True,
     }
     OVERLAP_DAYS = 3
+    # AusTender lists some notices in its API before their page is on the site (they redirect
+    # to /System/NotFound, often overnight amendments). A run where every new notice is like
+    # that has nothing to save and is a normal day, up to this many; more than this at once
+    # looks like the site itself changing, so the run still fails loudly.
+    MAX_UNPUBLISHED_NOTICES = 25
 
     def __init__(self, since=None, refresh_existing=False, refetch=None, scope=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -70,9 +75,15 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
                              self.today, len(notices))
         todo = [(notice, url) for notice, url in notices if notice not in stored]
         self.logger.info('%s notices to fetch, %s already stored', len(todo), len(notices) - len(todo))
+        self.requested_notices = len(todo)
+        if not todo:
+            # Nothing new in the API is a normal day, not a failed crawl: run_spiders reads this stat.
+            self.crawler.stats.set_value('crawl/nothing_due', 1)
         for notice, url in todo:
-            yield scrapy.Request(url, callback=self.parse_contract, meta={'refresh_existing': True,
-                                                                          'notice_id': notice})
+            # dont_filter: unpublished notices all redirect to the same NotFound page, and each
+            # must still reach parse_contract to be counted rather than dropped as a duplicate.
+            yield scrapy.Request(url, callback=self.parse_contract, dont_filter=True,
+                                 meta={'refresh_existing': True, 'notice_id': notice})
 
     async def start(self):
         for request in self.start_requests():
@@ -109,6 +120,13 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
 
     def closed(self, reason):
         stats = self.crawler.stats.get_stats()
+        requested = getattr(self, 'requested_notices', 0)
+        unpublished = stats.get('contract/page_not_found', 0)
+        if (reason == 'finished' and requested and not stats.get('item_scraped_count')
+                and unpublished == requested and requested <= self.MAX_UNPUBLISHED_NOTICES):
+            self.logger.info('All %s new notices have no page on the site yet (not yet published or '
+                             'withdrawn); nothing to save, later runs retry them', requested)
+            self.crawler.stats.set_value('crawl/nothing_due', 1)
         complete = reason == 'finished' and not any(
             stats.get(k) for k in ('crawl/extraction_failed', 'retry/max_reached', 'database/items_failed',
                                    'downloader/response_status_count/404'))
