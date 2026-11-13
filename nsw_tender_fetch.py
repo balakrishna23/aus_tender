@@ -307,6 +307,10 @@ async def fetch_notices(notice_type: str, max_pages: int, con: sqlite3.Connectio
                 # Pagination
                 next_href = await page.evaluate(NEXT_PAGE_JS)
                 if next_href and next_href != '#':
+                    if page_num == max_pages:
+                        log.warning("'crawl/nsw_notice_coverage_failed': 1; [%s] page cap %s reached with more pages remaining",
+                                    notice_type, max_pages)
+                        break
                     current_url = next_href if next_href.startswith('http') else (BASE + next_href)
                     page_num += 1
                     await asyncio.sleep(2)
@@ -456,6 +460,7 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
         detail = await ctx.new_page()
         await stealth_async(detail)
         reported = None
+        ended_normally = False
         try:
             for page_num in range(1, max_pages + 1):
                 url = f'{BASE}/opportunity/search?mode=regular&page={page_num}'
@@ -481,6 +486,7 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
                     ".map(a => a.getAttribute('href'))"))
                 fresh = [c for c in cards if BASE + c['href'] not in seen]
                 if not fresh:
+                    ended_normally = True
                     break
                 for card in fresh:
                     opp_url = BASE + card['href']
@@ -518,21 +524,27 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
         finally:
             await browser.close()
 
+    complete = reported is not None and ended_normally
+    if not complete:
+        log.warning("'crawl/nsw_opportunity_coverage_failed': 1; skipping closing: reported total=%s, "
+                    "pagination ended normally=%s (page cap=%s)", reported, ended_normally, max_pages)
     if reported is not None and len(seen) + len(schemes) < reported:
         raise RuntimeError(f'NSW opportunities incomplete: listed {len(seen)} tenders + '
                            f'{len(schemes)} schemes of {reported}')
     if not seen:
         raise RuntimeError('No NSW opportunities extracted; verify the listing page and selectors')
     # Only after a complete walk: anything no longer listed has closed.
-    placeholders = ','.join('?' * len(seen))
-    events += [('nsw_tender', 'closed', ref, title, url) for ref, title, url in con.execute(
-        f"SELECT reference, title, url FROM nsw_tenders WHERE portal = 'nsw_opportunity' "
-        f"AND status = 'Open' AND url NOT IN ({placeholders})", list(seen))]
-    closed = con.execute(
-        f"UPDATE nsw_tenders SET status = 'Closed', updated_at = CURRENT_TIMESTAMP "
-        f"WHERE portal = 'nsw_opportunity' AND status = 'Open' AND url NOT IN ({placeholders})",
-        list(seen)).rowcount
-    con.commit()
+    closed = 0
+    if complete:
+        placeholders = ','.join('?' * len(seen))
+        events += [('nsw_tender', 'closed', ref, title, url) for ref, title, url in con.execute(
+            f"SELECT reference, title, url FROM nsw_tenders WHERE portal = 'nsw_opportunity' "
+            f"AND status = 'Open' AND url NOT IN ({placeholders})", list(seen))]
+        closed = con.execute(
+            f"UPDATE nsw_tenders SET status = 'Closed', updated_at = CURRENT_TIMESTAMP "
+            f"WHERE portal = 'nsw_opportunity' AND status = 'Open' AND url NOT IN ({placeholders})",
+            list(seen)).rowcount
+        con.commit()
     activity_log.record_items(events)
     if detail_failures > max(3, len(seen) // 10):
         # A few slow pages are normal; this many means the site is blocking or has changed.
