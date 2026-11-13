@@ -1,9 +1,19 @@
-# 🇦🇺 Australian Government Procurement Scraper
+# 🇦🇺 Illoura IT Revenue Intelligence (Australian Government Procurement)
 
-**New to the project?** Start with [docs/SETUP_AND_OPERATIONS.md](docs/SETUP_AND_OPERATIONS.md): set up a PC,
-restore a data snapshot (public data is on GitHub Releases), run and manage it.
+Collects public Australian government procurement data (AusTender, BuyICT, NSW, ACT), builds
+intelligence from it, sends the team a daily brief at 08:15 Sydney from an AWS server, and
+serves the data read-only to Claude Desktop.
 
-A high-performance Scrapy project that automatically scrapes Australian Government procurement data and stores it in optimized SQLite databases.
+**Start here: [docs/README.md](docs/README.md)** lists every document. The essentials:
+
+- [docs/architecture.md](docs/architecture.md): what runs where and how the parts fit together
+- [docs/runbook.md](docs/runbook.md): the alarm emailed or the brief did not arrive
+- [docs/cloud_operations.md](docs/cloud_operations.md): operating the AWS server
+- [docs/SETUP_AND_OPERATIONS.md](docs/SETUP_AND_OPERATIONS.md): set up a PC, restore a data snapshot, run it locally
+- [docs/reference/](docs/reference/README.md): every file in this repository
+
+The rest of this page covers the collectors, which are a high-performance Scrapy project
+that scrapes Australian Government procurement data and stores it in optimized SQLite databases. that automatically scrapes Australian Government procurement data and stores it in optimized SQLite databases.
 
 Works on Windows, macOS, and Linux.
 
@@ -18,6 +28,7 @@ Each spider automatically saves data to its own dedicated SQLite database:
 - `buy_ict` → `databases/buy_ict.db` (BuyICT opportunities)
 - `act_tender` → `databases/act_tender.db` (ACT tenders)
 - `nsw_tender` → `databases/nsw_tender.db` (NSW contract awards and standing offers)
+- `contract_api` → `databases/contract_api.db` (AusTender's official OCDS contract API: every contract notice and amendment)
 
 ## ⚙️ Setup and Installation
 
