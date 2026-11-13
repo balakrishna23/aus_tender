@@ -262,6 +262,17 @@ class ActTenderSpider(scrapy.Spider):
                 self.logger.error('No ACT rows extracted from %s; verify listing and selectors', response.url)
                 self.crawler.stats.inc_value('crawl/extraction_failed')
 
+            root = response.url.split('?')[0]
+            coverage = getattr(self, '_coverage', {})
+            self._coverage = coverage
+            check = coverage.setdefault(root, {'ids': set(), 'total': None})
+            text = await page.inner_text('body')
+            match = re.search(
+                r'(?im)^\s*(?:Showing\s+\d+\s+(?:to|[-?])\s*\d+\s+of\s+([\d,]+)\s+(?:entries|results|tenders)|'
+                r'Total\s*:\s*([\d,]+)\s+(?:results|tenders))\s*$', text)
+            if match:
+                total = int((match.group(1) or match.group(2)).replace(',', ''))
+                check['total'] = max(check['total'] or 0, total)
             for row in rows:
                 ref, status, category = _parse_cell0(row.get('cell0', ''))
                 title, agency         = _parse_cell1(row.get('cell1', ''))
@@ -273,6 +284,8 @@ class ActTenderSpider(scrapy.Spider):
                 # address, never the shared listing URL (which would merge rows).
                 url = (self.BASE + href) if href.startswith('/') else (
                     href or f"{response.url.split('#')[0]}#{ref or title}")
+
+                check['ids'].add(href or ref or title)
 
                 full_text        = f"{title} {category} {agency}"
                 illoura_relevant = is_relevant(full_text)
@@ -314,7 +327,7 @@ class ActTenderSpider(scrapy.Spider):
             # ── Pagination ───────────────────────────────────────────────
             next_href = await page.evaluate(NEXT_PAGE_JS)
             if next_href and next_href != '#':
-                next_url = (self.BASE + next_href) if next_href.startswith('/') else next_href
+                next_url = response.urljoin(next_href)
                 self.logger.info(f"Next page: {next_url}")
                 yield scrapy.Request(
                     next_url, callback=self.parse,
@@ -326,6 +339,14 @@ class ActTenderSpider(scrapy.Spider):
                 await page.close()
 
     def closed(self, reason):
+        for root, check in getattr(self, '_coverage', {}).items():
+            if check['total'] is None:
+                self.logger.warning('ACT pagination total unavailable; coverage unverified: %s', root)
+                self.crawler.stats.inc_value('crawl/act_pagination_unverified')
+            elif len(check['ids']) < check['total']:
+                self.logger.error('ACT pagination incomplete: %s (%s of %s)',
+                                  root, len(check['ids']), check['total'])
+                self.crawler.stats.inc_value('crawl/act_pagination_failed')
         roots = {f'{self.BASE}/tenders/open', f'{self.BASE}/tenders/closed'}
         if reason == 'finished' and roots.issubset(getattr(self, '_empty_lists', set())):
             self.crawler.stats.set_value('crawl/nothing_due', 1)
