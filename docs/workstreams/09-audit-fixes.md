@@ -76,6 +76,13 @@ operations 102, routine 28, collectors 73 OK). Deploy after the pilot-week revie
   the empty-list wording of ACT and planned procurement, and BuyICT's fallback paging
   field names (tested against sample data only).
 
+## False alarm of 14 November (fixed in code, deploy pending)
+The 14 Nov brief was sent at 08:15 Sydney, yet the outside alarm emailed at 08:47 and cleared at
+09:17. Cause: between the send and 09:00 the health check still expected a receipt dated the
+previous day, so today's receipt read as `daily_brief: missed`. It would repeat every morning.
+Fix: a receipt dated on or after the due day counts (`deploy/illoura_cloud_health.py`, test in
+`tests/test_cloud_health.py`). Install with `deploy-ops --yes`.
+
 ## Not done yet
 - Run-report retention (about 5 MB a day; reports are send evidence, keep for now).
 - Gmail OAuth app: Sirish keeps it in pilot/test for a week and confirms later. If it is

@@ -158,6 +158,13 @@ class MorningRunAndDailyBrief(unittest.TestCase):
         self.run_dir("daily_sweep_a", "sent", sydney(14, 6, 15), receipt_at=sydney(14, 8, 15))
         self.assertEqual(self.brief(sydney(14, 9, 30))["status"], "ok")
 
+    def test_todays_brief_is_ok_between_the_send_and_nine(self):
+        # 14 November 2026: the alarm emailed at 08:47 although the brief went out at 08:15.
+        self.run_dir("daily_sweep_a", "sent", sydney(13, 6, 15), receipt_at=sydney(13, 8, 15))
+        self.run_dir("daily_sweep_b", "sent", sydney(14, 6, 15), receipt_at=sydney(14, 8, 15))
+        for minute in (16, 30, 59):
+            self.assertEqual(self.brief(sydney(14, 8, minute))["status"], "ok")
+
     def test_skipped_brief_is_missed_after_nine(self):
         self.run_dir("daily_sweep_a", "sent", sydney(12, 19), receipt_at=sydney(12, 20))
         self.run_dir("daily_sweep_b", "source_failure", sydney(13, 6, 15))
