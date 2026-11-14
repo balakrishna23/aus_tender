@@ -96,6 +96,24 @@ After the 08:47 false alarm every path to the alarm was reviewed. Fixed in `depl
 Reviewed and left as they are: the outside watcher (needs 30 minutes of mostly failing checks, so reboots and
 deploys do not alarm), the Lightsail status alarm (two 5-minute periods), certificate, disk and retention checks.
 
+## Cross testing, 14 November
+Sirish asked Claude and Codex to test the whole project against each other. Each wrote tests
+for the other's code in its own worktree, then Codex attacked the fixes in a second round and
+picked three areas nobody had tested. Failing tests were kept failing until the code was fixed.
+- Round 1: Claude wrote 45 tests for Codex's code (brief, routine, canary, retention); 12 failed.
+  Codex wrote 51 for Claude's code (operator tool, health, API, send recovery, mail, watcher); 15 failed.
+- Round 2: Codex wrote 47 more; 19 failed (send-state matrix, API header and key shapes, database
+  identity on save, runner persistence and sync classification, rollback verification).
+- All fixed; 672 tests pass on Windows; staged server suites pass (ops 115, API 15, collectors 73,
+  routine 28). The retention policy held over 80 generated layouts without a fix.
+- Highest-impact fixes: a damaged or "not sent" receipt no longer counts as a send; a delivered
+  brief is recognised whatever the address case; one odd listing or damaged old run folder no longer
+  stops the brief; a failed API restart rolls back; a page URL cannot overwrite another notice; items
+  that were not saved fail the source; one withdrawn notice no longer fails a quiet day.
+- Not deployed: these changes sit on main with waves 4-6 and go live with them after the pilot review.
+- Not covered: real web-framework transport beyond the two API tests, live sites, real Gmail and AWS,
+  power loss during publication. Cross tests for collectors run in CI, not in the staged server suite.
+
 ## Not done yet
 - Run-report retention (about 5 MB a day; reports are send evidence, keep for now).
 - Gmail OAuth app: Sirish keeps it in pilot/test for a week and confirms later. If it is

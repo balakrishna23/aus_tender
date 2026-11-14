@@ -45,6 +45,25 @@ Files covered:
 - `tests/test_collectors_wave6.py`
 - `tests/test_compliant_routes.py`
 - `tests/test_crawl_integration.py`
+- `tests/test_cross_claude_canary.py`
+- `tests/test_cross_claude_daily_brief.py`
+- `tests/test_cross_claude_retention.py`
+- `tests/test_cross_claude_run_once.py`
+- `tests/test_cross_codex_api.py`
+- `tests/test_cross_codex_aws.py`
+- `tests/test_cross_codex_collect.py`
+- `tests/test_cross_codex_health.py`
+- `tests/test_cross_codex_mail.py`
+- `tests/test_cross_codex_r2_api.py`
+- `tests/test_cross_codex_r2_aws.py`
+- `tests/test_cross_codex_r2_canary.py`
+- `tests/test_cross_codex_r2_database.py`
+- `tests/test_cross_codex_r2_health.py`
+- `tests/test_cross_codex_r2_publication.py`
+- `tests/test_cross_codex_r2_routine.py`
+- `tests/test_cross_codex_r2_runner.py`
+- `tests/test_cross_codex_r2_send.py`
+- `tests/test_cross_codex_watch.py`
 - `tests/test_data_quality.py`
 - `tests/test_data_quality_alerts.py`
 - `tests/test_export_views.py`
@@ -127,6 +146,25 @@ The API suite additionally needs `api/requirements.txt`; optional Gmail authoriz
 | `tests/test_collectors_wave6.py` | NSW detail refresh, planned-procurement empty plans, ACT total reconciliation, BuyICT fallback paging and the pipeline field-loss check. | Unit/fixture suite; dependencies required. |
 | `tests/test_compliant_routes.py` | Robots-allowed notice/list/plan/panel routes, final-record skipping and explicit no-work reporting. | Unit/fixture suite; dependencies required. |
 | `tests/test_crawl_integration.py` | Real Scrapy/middleware/pipeline/SQLite path against a local fixture HTTP service, including refresh. | Unit/fixture suite; dependencies required. |
+| `tests/test_cross_claude_canary.py` | Claude on Codex's code: contract health canary over several recent notices; damaged pending-notice dates. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_claude_daily_brief.py` | Claude on Codex's code: Gmail Sent matching, odd live listing shapes, email wording, damaged run history, send window on every day of two years, retry budget, selection edges, single send. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_claude_retention.py` | Claude on Codex's code: deletion policy over 80 generated layouts, dry run equals real run. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_claude_run_once.py` | Claude on Codex's code: morning deadline parsing and stage limits. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_api.py` | Codex on Claude's code: API keys, throttling, body limits, read-only SQL, readiness (function bodies, no web framework). | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_aws.py` | Codex on Claude's code: operator tool argument safety, staging, rollback, update window, schedule, reconcile. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_collect.py` | Codex on Claude's code: unsettled send recovery before collection. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_health.py` | Codex on Claude's code: health evidence, receipts, time zones, tolerance rules. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_mail.py` | Codex on Claude's code: mail settings migration and runtime reader. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_api.py` | Codex round 2: Content-Length forms and key-record shapes. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_aws.py` | Codex round 2: real deploy file names, staging cleanup, rollback reporting, clock values. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_canary.py` | Codex round 2: canary response orders and NotFound handling. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_database.py` | Codex round 2: notice identity on save (shared URL, moved URL, partial update). | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_health.py` | Codex round 2: receipt clock skew, pending window, Gmail tolerance chains, run-state shapes. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_publication.py` | Codex round 2: rollback verification of generations. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_routine.py` | Codex round 2: mail settings crash recovery, deadline values. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_runner.py` | Codex round 2: source result classification (persistence, sync, empty batch). | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_r2_send.py` | Codex round 2: 75-state send matrix, operator recovery, recipient parsing, listing shapes. | Cross test, 14 Nov 2026; unit/fixture suite. |
+| `tests/test_cross_codex_watch.py` | Codex on Claude's code: outside watcher Lambda and alarm arithmetic. | Cross test, 14 Nov 2026; unit/fixture suite. |
 | `tests/test_data_quality.py` | Placeholder phone removal, postcode state mapping, BuyICT text cleanup and standing-offer agencies. | Unit/fixture suite; dependencies required. |
 | `tests/test_data_quality_alerts.py` | Row-count drop and unexpected-no-new-record alerts without false warnings for normal runs. | Unit/fixture suite; dependencies required. |
 | `tests/test_export_views.py` | Tracker/brief/TODAY workbook columns and literal handling of note values. | Unit/fixture suite; dependencies required. |
