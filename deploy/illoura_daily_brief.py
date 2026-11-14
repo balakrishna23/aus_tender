@@ -114,15 +114,20 @@ def clean(text):
 
 
 def restricted_hint(record):
-    content = record.get('content', {})
+    content = record.get('content') or {}
+    if not isinstance(content, dict):
+        return False
     text = json.dumps({k: content.get(k) for k in ('description', 'criteriaText', 'additionalRequirements',
                                                    'response_requirements')}, ensure_ascii=False)
     return bool(RESTRICTED.search(text))
 
 
 def still_open(record, now, closing_time):
-    data = record.get('content', {})
-    details = {x.get('label'): x.get('value') for x in data.get('mainDetails', [])}
+    # The record comes from the live site: an odd shape drops this listing, never the whole brief.
+    data = record.get('content') or {}
+    if not isinstance(data, dict):
+        return False
+    details = {x.get('label'): x.get('value') for x in data.get('mainDetails') or [] if isinstance(x, dict)}
     end = closing_time(details.get('RFQ closing date') or details.get('RFI closing date'))
     return bool(end and end > now + timedelta(hours=2) and data.get('rfqOpen') and not data.get('is_cancelled'))
 
@@ -141,14 +146,16 @@ def editorial_notes(edition_day, verified, new_rows, report):
     sections = []
     if new_rows:
         sections.append({'title': 'New on BuyICT since the last run', 'items': [
-            {'heading': clean(f'{buyer} | {title} | {key}'), 'paragraphs': [f'Closes {closes}.'],
+            {'heading': ' | '.join(part for part in (clean(buyer), clean(title), clean(key)) if part),
+             'paragraphs': [f'Closes {closes}.'],
              'links': [{'label': key + ' official listing', 'url': url}]}
             for key, title, buyer, closes, url in new_rows]})
     gaps = [x['spider'] for x in report.get('results', []) if x.get('status') != 'OK']
     return {
         'edition_date': edition_day.isoformat(),
         'subject': f'Illoura daily brief | {date_text} | {count} open request{"s" if count != 1 else ""} to check',
-        'preheader': f'Automated 8:15 brief: {count} open BuyICT requests closing soonest, rechecked this morning.',
+        'preheader': (f'Automated 8:15 brief: {count} open BuyICT request{"s" if count != 1 else ""} '
+                      'closing soonest, rechecked this morning.'),
         'introduction': ('This is the automated daily brief. It lists the open ICT labour-hire requests '
                          'closing soonest, each rechecked on its public BuyICT listing this morning. Check existing '
                          'seller access and candidate availability before committing response effort.'),
@@ -301,7 +308,17 @@ def check_edition(out):
         if other.resolve() == out or not other.is_dir():
             continue
         notes = other / 'editorial_notes.json'
-        if not notes.exists() or json.loads(notes.read_text()).get('edition_date') != edition:
+        if not notes.exists():
+            continue
+        try:
+            other_edition = json.loads(notes.read_text())['edition_date']
+        except (OSError, ValueError, KeyError, TypeError):
+            # Run folders are kept for months. Damaged notes only matter when that folder
+            # shows a send: then its edition is unknown and sending again is not safe.
+            if (other / 'send_attempt.json').exists() or (other / 'send_receipt.json').exists():
+                raise SystemExit('A run with unreadable notes has a send record; check it before sending')
+            continue
+        if other_edition != edition:
             continue
         receipt = other / 'send_receipt.json'
         if receipt.exists() and json.loads(receipt.read_text()).get('sent') is True:
@@ -359,6 +376,12 @@ def gmail_session():
     return AuthorizedSession(credentials)
 
 
+def addresses(header):
+    """Lower-case mail addresses in a To/From header, without display names."""
+    from email.utils import getaddresses
+    return {address.lower() for _, address in getaddresses([header]) if address}
+
+
 def find_sent(session, attempt):
     api = 'https://gmail.googleapis.com/gmail/v1/users/me'
 
@@ -385,7 +408,8 @@ def find_sent(session, attempt):
                 message = get('/messages/' + item['id'], format='metadata')
                 headers = {h['name'].lower(): h['value'] for h in message.get('payload', {}).get('headers', [])}
                 if ('SENT' in message.get('labelIds', []) and headers.get('subject') == subject
-                        and recipient in headers.get('to', '') and sender in headers.get('from', '')):
+                        and recipient.lower() in addresses(headers.get('to', ''))
+                        and sender.lower() in addresses(headers.get('from', ''))):
                     return message, searched
             page = matches.get('nextPageToken')
             if not page:

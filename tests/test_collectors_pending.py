@@ -111,9 +111,11 @@ class CanaryTests(unittest.TestCase):
         spider.db_manager.conn.executemany('INSERT INTO contracts (cn_id, url) VALUES (?, ?)',
             [('CN-OLD', URL.format('old')), ('CN-STORED', URL.format('stored')), ('CN-NOURL', '')])
         requests = start(spider, [('CN1', URL.format('new'))])
-        self.assertEqual(len(requests), 2)
-        self.assertTrue(requests[0].meta['contract_canary'])
-        self.assertEqual(requests[0].meta['notice_id'], 'CN-STORED')
+        # Up to three recent stored notices with a URL, newest first (14 Nov: one withdrawn
+        # page must not fail a quiet day), then the one new notice.
+        self.assertEqual(len(requests), 3)
+        self.assertEqual([r.meta['notice_id'] for r in requests if r.meta.get('contract_canary')],
+                         ['CN-STORED', 'CN-OLD'])
         self.assertEqual(spider.requested_notices, 1)
 
 
