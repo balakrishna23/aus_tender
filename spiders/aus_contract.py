@@ -135,7 +135,9 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             for notice, url, first_seen in rows:
                 if notice in stored:
                     continue
-                if (self.today - parse_day(first_seen)).days >= 30:
+                # An unreadable first-seen date must not stop the whole collection: such a
+                # row is treated as first seen today and so keeps being retried.
+                if (self.today - (parse_day(first_seen) or self.today)).days >= 30:
                     expired.add(notice)
                     self.logger.warning('Giving up unpublished notice %s after 30 days', notice)
                 else:

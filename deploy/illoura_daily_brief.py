@@ -417,6 +417,15 @@ def find_sent(session, attempt):
     return None, searched
 
 
+def receipt_confirms_send(out):
+    """True only for a readable receipt saying sent is true; a damaged file proves nothing."""
+    try:
+        value = json.loads((out / 'send_receipt.json').read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(value, dict) and value.get('sent') is True
+
+
 def reconcile(out, mark_undelivered=False, session=None):
     original = Path(out).absolute()
     out = original.resolve()
@@ -424,7 +433,7 @@ def reconcile(out, mark_undelivered=False, session=None):
             or not out.name.startswith('daily_sweep_') or not out.is_dir()):
         raise SystemExit('Unexpected reconciliation run directory')
     with send_lock():
-        if (out / 'send_receipt.json').exists():
+        if receipt_confirms_send(out):
             print(json.dumps({'status': 'already_sent'}))
             return 0
         if not (out / 'send_attempt.json').exists():

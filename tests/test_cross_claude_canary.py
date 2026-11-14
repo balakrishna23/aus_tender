@@ -54,5 +54,19 @@ class CanaryResilience(unittest.TestCase):
         self.assertEqual((canaries, stats.get('crawl/nothing_due')), (1, 1))
 
 
+class PendingRowsWithBadDates(unittest.TestCase):
+    """Found by Codex on review: one damaged row in pending_notices must not stop every collection."""
+
+    def test_unreadable_first_seen_is_retried_not_fatal(self):
+        spider = contract_spider()
+        with spider.db_manager.get_connection(spider.name) as conn:
+            spider._pending_schema(conn)
+            conn.execute("INSERT INTO pending_notices (notice_id, page_url, first_seen, last_checked, attempts) "
+                         "VALUES ('CN-BAD', ?, 'not a date', '2026-11-01', 1)", (URL.format('bad'),))
+            conn.commit()
+        requests = start(spider, [])
+        self.assertIn('CN-BAD', [r.meta.get('notice_id') for r in requests])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -433,9 +433,13 @@ async def authenticate(request: Request, call_next):
             status_code=200 if ok else 503,
             headers={"Cache-Control": "no-store"},
         )
+    declared = request.headers.get("content-length")
     if (
-        request.headers.get("content-length", "").isdigit()
-        and int(request.headers["content-length"]) > 32768
+        # The size limit rests on the declared length, so a body whose length is not
+        # declared as a plain number (chunked uploads) is refused rather than trusted.
+        "transfer-encoding" in request.headers
+        or (declared is not None and not declared.isdigit())
+        or (declared is not None and int(declared) > 32768)
     ):
         return JSONResponse({"detail": "Request too large"}, status_code=413)
     if request.url.query:
@@ -468,6 +472,9 @@ async def authenticate(request: Request, call_next):
     try:
         records = json.loads(KEYS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return JSONResponse({"detail": "Authentication unavailable"}, status_code=503)
+    if not isinstance(records, list) or not all(isinstance(x, dict) for x in records):
+        # A key file of the wrong shape is an outage to report, not an exception to leak.
         return JSONResponse({"detail": "Authentication unavailable"}, status_code=503)
     forget_unknown_keys({x.get("sha256") for x in records if x.get("enabled")})
     key = next(
