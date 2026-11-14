@@ -47,7 +47,7 @@ def render(package, out):
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f2f4f2"><tr><td align="center" style="padding:24px 12px">
 <table role="presentation" width="640" cellspacing="0" cellpadding="0" style="width:100%;max-width:640px;background:white;border:1px solid #dce4de">
 <tr><td style="background:#183c38;color:white;padding:26px 28px"><div style="font-size:12px;letter-spacing:2px;color:#cfdecc">ILLOURA SERVICES</div><h1 style="font-size:27px;line-height:1.2;margin:8px 0 10px;color:white">Government IT opportunity brief</h1><div style="font-size:13px;color:#e4ece4">'''+escape(package['edition_label'])+'''</div></td></tr>
-<tr><td style="padding:12px 28px 24px">'''+body+'''</td></tr>
+<tr><td style="padding:12px 28px 24px;overflow-wrap:anywhere;word-break:break-word">'''+body+'''</td></tr>
 <tr><td style="padding:20px 28px;background:#edf2ed;font-size:12px;color:#45594b">'''+escape(package['footer'])+'''</td></tr></table></td></tr></table></body></html>'''
     text='\n'.join(plain)+'\n'
     out.mkdir(parents=True,exist_ok=True)
