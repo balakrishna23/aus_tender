@@ -83,6 +83,19 @@ previous day, so today's receipt read as `daily_brief: missed`. It would repeat 
 Fix: a receipt dated on or after the due day counts (`deploy/illoura_cloud_health.py`, test in
 `tests/test_cloud_health.py`). Install with `deploy-ops --yes`.
 
+## False-alarm review of 14 November
+After the 08:47 false alarm every path to the alarm was reviewed. Fixed in `deploy/illoura_cloud_health.py`:
+- Brief sent today read as missed until 09:00 (PR #9).
+- A late morning (retry, slow source) alarmed at 09:00 although the brief could still go out: now `pending`
+  while `illoura-daily-brief.service` is active, until the 12:00 cutoff.
+- The same late morning made the publication read as stale after 26 h: now `in_progress` up to 32 h while
+  the service works.
+- Two failed calls to Google in a row read as lost Gmail authorisation: network and Google-side errors are
+  tolerated for 6 h after the last confirmed check; a revoked or expired grant still fails at once.
+
+Reviewed and left as they are: the outside watcher (needs 30 minutes of mostly failing checks, so reboots and
+deploys do not alarm), the Lightsail status alarm (two 5-minute periods), certificate, disk and retention checks.
+
 ## Not done yet
 - Run-report retention (about 5 MB a day; reports are send evidence, keep for now).
 - Gmail OAuth app: Sirish keeps it in pilot/test for a week and confirms later. If it is

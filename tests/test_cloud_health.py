@@ -19,6 +19,13 @@ health = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(health)
 
 
+def setUpModule():
+    # Staged runs on the server must never read the real morning service.
+    patcher = patch.object(health, "brief_service_active", return_value=False)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 class CloudHealth(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -274,6 +281,105 @@ class CertificateExpiry(unittest.TestCase):
             )
         self.assertEqual(result["checks"]["certificate"]["status"], "expiring")
         self.assertEqual(result["status"], "attention")
+
+
+class NoFalseAlarms(unittest.TestCase):
+    """14 November 2026: the alarm must only email for conditions that need a person."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.work = Path(self.temp.name) / "work"
+        self.served = Path(self.temp.name) / "served"
+        (self.work / "reports").mkdir(parents=True)
+        (self.served / "current").mkdir(parents=True)
+
+    def sent_run(self, name, day):
+        run = self.work / "reports" / name
+        run.mkdir()
+        receipt = {"sent": True, "recorded_at_utc": sydney(day, 8, 15).isoformat()}
+        (run / "send_receipt.json").write_text(json.dumps(receipt))
+
+    def test_brief_is_pending_while_the_morning_service_still_works(self):
+        self.sent_run("daily_sweep_a", 13)
+        result = health.daily_brief(self.work, sydney(14, 10, 30), True, working=True)
+        self.assertEqual((result["status"], result["phase"]), ("ok", "pending"))
+
+    def test_brief_is_missed_when_the_service_has_stopped(self):
+        self.sent_run("daily_sweep_a", 13)
+        result = health.daily_brief(self.work, sydney(14, 10, 30), True, working=False)
+        self.assertEqual(result["status"], "missed")
+
+    def test_brief_is_missed_after_the_noon_cutoff_even_if_something_runs(self):
+        self.sent_run("daily_sweep_a", 13)
+        result = health.daily_brief(self.work, sydney(14, 12, 1), True, working=True)
+        self.assertEqual(result["status"], "missed")
+
+    def publication(self, hours_old, brief_active):
+        now = sydney(14, 10, 0)
+        (self.served / "current/manifest.json").write_text(
+            json.dumps({"snapshot_finished_utc": (now - timedelta(hours=hours_old)).isoformat()})
+        )
+        with patch.dict("os.environ", {}, clear=False):
+            os.environ.pop("ILLOURA_GMAIL_SENDER", None)
+            return health.check(
+                self.work, self.served, Path(self.temp.name) / "t.json", brief_enabled=False,
+                now=now, cert=None, brief_active=brief_active,
+            )["checks"]["publication"]
+
+    def test_late_publication_is_ok_while_the_morning_service_works(self):
+        result = self.publication(28, brief_active=True)
+        self.assertEqual((result["status"], result["phase"]), ("ok", "in_progress"))
+
+    def test_late_publication_is_stale_when_nothing_is_running(self):
+        self.assertEqual(self.publication(28, brief_active=False)["status"], "stale")
+
+    def test_very_old_publication_is_stale_even_while_working(self):
+        self.assertEqual(self.publication(40, brief_active=True)["status"], "stale")
+
+    def mail(self, error, verified_hours_ago):
+        now = sydney(14, 10, 0)
+        previous = None
+        if verified_hours_ago is not None:
+            stamp = (now - timedelta(hours=verified_hours_ago)).isoformat()
+            previous = {"checks": {"mail_authorization": {"status": "ok", "verified_at_utc": stamp}}}
+
+        def verify(token):
+            raise error
+
+        return health.mail_authorization("t.json", "a@example.com", now, previous, verify)
+
+    def test_one_network_error_after_a_recent_success_is_not_a_failure(self):
+        result = self.mail(ConnectionError("network"), verified_hours_ago=1)
+        self.assertEqual((result["status"], result["phase"]), ("ok", "unverified"))
+
+    def test_network_errors_fail_once_the_last_success_is_old(self):
+        self.assertEqual(self.mail(ConnectionError("network"), 7)["status"], "failed")
+
+    def test_network_error_without_any_earlier_success_fails(self):
+        self.assertEqual(self.mail(ConnectionError("network"), None)["status"], "failed")
+
+    def test_revoked_grant_fails_at_once(self):
+        class RefreshError(Exception):
+            pass
+
+        self.assertEqual(self.mail(RefreshError("invalid_grant"), 1)["status"], "failed")
+
+    def test_google_server_error_is_transient_but_forbidden_is_not(self):
+        class HTTPError(Exception):
+            def __init__(self, status):
+                self.response = type("Response", (), {"status_code": status})()
+
+        self.assertEqual(self.mail(HTTPError(503), 1)["status"], "ok")
+        self.assertEqual(self.mail(HTTPError(403), 1)["status"], "failed")
+
+    def test_verified_mailbox_records_when_it_was_confirmed(self):
+        now = sydney(14, 10, 0)
+        result = health.mail_authorization("t.json", "a@example.com", now, None, lambda token: "a@example.com")
+        self.assertEqual(result["status"], "ok")
+        self.assertIn("verified_at_utc", result)
+        other = health.mail_authorization("t.json", "a@example.com", now, None, lambda token: "b@example.com")
+        self.assertEqual(other["status"], "identity_mismatch")
 
 
 if __name__ == "__main__":
