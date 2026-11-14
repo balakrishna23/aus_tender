@@ -11,7 +11,18 @@ from illoura_cloud_ops import atomic_json, utc
 
 SYDNEY = ZoneInfo("Australia/Sydney")
 BRIEF_TIMER = "illoura-daily-brief.timer"
+BRIEF_SERVICE = "illoura-daily-brief.service"
 BRIEF_DUE = (9, 0)  # Sydney time; the brief is sent at 08:15
+BRIEF_CUTOFF = (12, 0)  # Sydney time; nothing is sent after this
+PUBLICATION_LIMIT_SECONDS = 26 * 3600
+# A morning that needed its one retry publishes later than usual; allow it while it works.
+PUBLICATION_WORKING_LIMIT_SECONDS = 32 * 3600
+# One failed call to Google must not read as lost authorisation.
+MAIL_GRACE_SECONDS = 6 * 3600
+TRANSIENT_MAIL_ERRORS = (
+    "TransportError", "ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout",
+    "ChunkedEncodingError", "TimeoutError",
+)
 RUN_LIMIT_SECONDS = 5 * 3600  # a morning run normally finishes in about two hours
 CERT = Path("/etc/letsencrypt/live/illoura-api/cert.pem")
 # The certificate lives about 6.7 days and certbot renews it with roughly 2 days left,
@@ -57,6 +68,18 @@ def brief_timer_enabled():
     return result.stdout.strip() == "enabled"
 
 
+def brief_service_active():
+    """True while the morning service is collecting, composing or waiting to send."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "is-active", BRIEF_SERVICE],
+            capture_output=True, text=True, timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.stdout.strip() in ("active", "activating")
+
+
 def run_in_progress(state, now):
     """A collection that is still within its normal running time is not a failure."""
     phase = str(state.get("status") or "")
@@ -83,8 +106,12 @@ def last_brief_sent(work):
     return newest
 
 
-def daily_brief(work, now, enabled):
-    """By 09:00 Sydney each day there must be a brief sent that Sydney day."""
+def daily_brief(work, now, enabled, working=False):
+    """By 09:00 Sydney each day there must be a brief sent that Sydney day.
+
+    While the morning service is still working (a retry, a slow source) the brief can
+    still go out until 12:00, so that is "pending", not a miss.
+    """
     if enabled is not True:
         return {"status": "ok", "schedule": "off" if enabled is False else "unknown"}
     local = now.astimezone(SYDNEY)
@@ -95,11 +122,66 @@ def daily_brief(work, now, enabled):
     # On or after the due day: between today's 08:15 send and 09:00 the due day is still
     # yesterday, and today's receipt must not read as a miss (false alarm of 14 Nov 2026).
     on_time = sent is not None and sent.astimezone(SYDNEY).date() >= due.date()
+    cutoff = due.replace(hour=BRIEF_CUTOFF[0], minute=BRIEF_CUTOFF[1])
+    if not on_time and working and due <= local < cutoff:
+        return {
+            "status": "ok",
+            "phase": "pending",
+            "due_by_sydney": due.isoformat(timespec="minutes"),
+            "cutoff_sydney": cutoff.isoformat(timespec="minutes"),
+            "last_sent_utc": sent.isoformat(timespec="seconds") if sent else None,
+        }
     return {
         "status": "ok" if on_time else "missed",
         "due_by_sydney": due.isoformat(timespec="minutes"),
         "last_sent_utc": sent.isoformat(timespec="seconds") if sent else None,
     }
+
+
+def transient_mail_error(error):
+    """Network trouble or a Google-side error, as opposed to a revoked or expired grant."""
+    if type(error).__name__ in TRANSIENT_MAIL_ERRORS:
+        return True
+    status = getattr(getattr(error, "response", None), "status_code", None)
+    return isinstance(status, int) and (status >= 500 or status == 429)
+
+
+def verify_mailbox(token):
+    """Address of the authorised sending mailbox, asked from Gmail."""
+    from google.oauth2.credentials import Credentials
+    from google.auth.transport.requests import AuthorizedSession, Request
+
+    creds = Credentials.from_authorized_user_file(str(token))
+    if not creds.valid:
+        creds.refresh(Request())
+    session = AuthorizedSession(creds)
+    try:
+        response = session.get(
+            "https://gmail.googleapis.com/gmail/v1/users/me/profile", timeout=30
+        )
+        response.raise_for_status()
+        return response.json()["emailAddress"].lower()
+    finally:
+        session.close()
+
+
+def mail_authorization(token, expected, now, previous=None, verify=verify_mailbox):
+    try:
+        address = verify(token)
+    except Exception as error:
+        result = {"status": "failed", "error_type": type(error).__name__}
+        try:
+            verified = previous["checks"]["mail_authorization"]["verified_at_utc"]
+            age = (now - datetime.fromisoformat(verified)).total_seconds()
+        except (KeyError, TypeError, ValueError):
+            return result
+        if transient_mail_error(error) and 0 <= age <= MAIL_GRACE_SECONDS:
+            # Authorisation was confirmed recently and this error is not about the grant.
+            return {**result, "status": "ok", "phase": "unverified", "verified_at_utc": verified}
+        return result
+    if address != expected:
+        return {"status": "identity_mismatch"}
+    return {"status": "ok", "verified_at_utc": now.isoformat(timespec="seconds")}
 
 
 def check(
@@ -110,10 +192,16 @@ def check(
     now=None,
     cert=CERT,
     read_cert_end=cert_not_after,
+    brief_active=None,
+    previous=None,
+    verify_mail=verify_mailbox,
 ):
     now = now or datetime.now(timezone.utc)
     if brief_enabled is None:
         brief_enabled = brief_timer_enabled()
+    if brief_active is None:
+        brief_active = brief_service_active()
+    working = bool(brief_active)
     checks = {}
     # The server always serves HTTPS, so a missing certificate is a failure, not "not
     # configured". cert=None switches the check off explicitly (tests only).
@@ -126,7 +214,7 @@ def check(
             stamp = value[field]
             age = (now - datetime.fromisoformat(stamp)).total_seconds()
             checks[name] = {
-                "status": "ok" if 0 <= age <= 26 * 3600 else "stale",
+                "status": "ok" if 0 <= age <= PUBLICATION_LIMIT_SECONDS else "stale",
                 "age_seconds": round(age),
                 "at_utc": stamp,
             }
@@ -139,6 +227,7 @@ def check(
         run = Path(state["run_dir"])
         if run.parent.resolve() != (work / "reports").resolve():
             raise ValueError("Unexpected run path")
+        working = working or run_in_progress(state, now)
         if run_in_progress(state, now):
             # Today's run has not produced evidence yet; publication freshness still
             # covers the age of the data being served.
@@ -159,7 +248,15 @@ def check(
         }
     except (OSError, ValueError, KeyError):
         checks["last_run"] = {"status": "unavailable"}
-    checks["daily_brief"] = daily_brief(work, now, brief_enabled)
+    publication = checks["publication"]
+    if (
+        publication["status"] == "stale"
+        and working
+        and 0 <= publication["age_seconds"] <= PUBLICATION_WORKING_LIMIT_SECONDS
+    ):
+        # Today's publication is late because the morning run is still working.
+        publication.update(status="ok", phase="in_progress")
+    checks["daily_brief"] = daily_brief(work, now, brief_enabled, working)
     coordinator = work / "coordinator_status.json"
     if coordinator.exists():
         try:
@@ -208,29 +305,9 @@ def check(
             "detail": "Set ILLOURA_GMAIL_SENDER in /etc/illoura-ops/health.env",
         }
     else:
-        try:
-            from google.oauth2.credentials import Credentials
-            from google.auth.transport.requests import AuthorizedSession, Request
-
-            creds = Credentials.from_authorized_user_file(str(token))
-            if not creds.valid:
-                creds.refresh(Request())
-            session = AuthorizedSession(creds)
-            response = session.get(
-                "https://gmail.googleapis.com/gmail/v1/users/me/profile", timeout=30
-            )
-            response.raise_for_status()
-            checks["mail_authorization"] = {
-                "status": "ok"
-                if response.json()["emailAddress"].lower() == expected
-                else "identity_mismatch"
-            }
-            session.close()
-        except Exception as error:
-            checks["mail_authorization"] = {
-                "status": "failed",
-                "error_type": type(error).__name__,
-            }
+        checks["mail_authorization"] = mail_authorization(
+            token, expected, now, previous, verify_mail
+        )
     ok = all(v["status"] == "ok" for v in checks.values())
     return {
         "status": "ok" if ok else "attention",
@@ -242,8 +319,12 @@ def check(
 
 
 if __name__ == "__main__":
-    result = check()
     path = Path("/var/lib/illoura-health/status.json")
+    try:
+        earlier = json.loads(path.read_text())
+    except (OSError, ValueError):
+        earlier = None
+    result = check(previous=earlier)
     atomic_json(path, result)
     shutil.chown(path, group="illoura-api")
     path.chmod(0o640)
