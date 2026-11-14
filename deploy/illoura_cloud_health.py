@@ -92,7 +92,9 @@ def daily_brief(work, now, enabled):
     if local < due:
         due -= timedelta(days=1)
     sent = last_brief_sent(work)
-    on_time = sent is not None and sent.astimezone(SYDNEY).date() == due.date()
+    # On or after the due day: between today's 08:15 send and 09:00 the due day is still
+    # yesterday, and today's receipt must not read as a miss (false alarm of 14 Nov 2026).
+    on_time = sent is not None and sent.astimezone(SYDNEY).date() >= due.date()
     return {
         "status": "ok" if on_time else "missed",
         "due_by_sydney": due.isoformat(timespec="minutes"),
