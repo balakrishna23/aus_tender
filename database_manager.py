@@ -628,13 +628,23 @@ class DatabaseManager:
                 if identity_column and filtered_data.get(identity_column):
                     lookup.insert(0, (identity_column, filtered_data[identity_column]))
                 existing = None
+                identity_select = identity_column if identity_column in columns else 'NULL'
                 for column, value in lookup:
                     if value and column in columns:
                         existing = conn.execute(
-                            f"SELECT id, {'content_hash' if 'content_hash' in columns else 'NULL'} "
-                            f"FROM {table_name} WHERE {column} = ?", (value,)).fetchone()
+                            f"SELECT id, {'content_hash' if 'content_hash' in columns else 'NULL'}, "
+                            f"{identity_select} FROM {table_name} WHERE {column} = ?", (value,)).fetchone()
                         if existing:
                             break
+                incoming = filtered_data.get(identity_column) if identity_column else None
+                if existing and incoming and existing[2] and existing[2] != incoming:
+                    # The page URL already belongs to a different notice. Overwriting would
+                    # silently replace that notice and give it this one's history (14 Nov
+                    # cross test). Refuse, so the run reports it instead.
+                    self.logger.error(
+                        f"{spider_name}: {incoming} has the page URL already stored for "
+                        f"{existing[2]}; not saved")
+                    return False
                 if existing and existing[1] is not None and existing[1] == filtered_data.get('content_hash'):
                     # Same content: only record that the notice was re-verified.
                     conn.execute(f"UPDATE {table_name} SET scraped_at = ? WHERE id = ?",

@@ -162,7 +162,9 @@ class EditionGuardWithDamagedHistory(unittest.TestCase):
             brief.check_edition(self.out)
 
     def test_damaged_receipt_for_the_same_edition_blocks(self):
+        # A damaged receipt is no proof either way: the attempt stays unsettled and blocks.
         brief.write_json(self.old / 'editorial_notes.json', {'edition_date': '2026-11-14'})
+        brief.write_json(self.old / 'send_attempt.json', {'subject': 'x'})
         (self.old / 'send_receipt.json').write_text('{"sent": tr', encoding='utf-8')
         with self.assertRaises((SystemExit, ValueError)):
             brief.check_edition(self.out)

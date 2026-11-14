@@ -234,6 +234,8 @@ def check(
     freshness("publication", served / "current/manifest.json", "snapshot_finished_utc")
     try:
         state = json.loads((work / "latest_run.json").read_text())
+        if not isinstance(state.get("status"), str):
+            raise ValueError("Run state without a readable status")
         run = Path(state["run_dir"])
         if run.parent.resolve() != (work / "reports").resolve():
             raise ValueError("Unexpected run path")

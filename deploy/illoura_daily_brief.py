@@ -114,7 +114,7 @@ def clean(text):
 
 
 def restricted_hint(record):
-    content = record.get('content') or {}
+    content = record.get('content') if isinstance(record, dict) else None
     if not isinstance(content, dict):
         return False
     text = json.dumps({k: content.get(k) for k in ('description', 'criteriaText', 'additionalRequirements',
@@ -124,10 +124,12 @@ def restricted_hint(record):
 
 def still_open(record, now, closing_time):
     # The record comes from the live site: an odd shape drops this listing, never the whole brief.
-    data = record.get('content') or {}
+    data = record.get('content') if isinstance(record, dict) else None
     if not isinstance(data, dict):
         return False
-    details = {x.get('label'): x.get('value') for x in data.get('mainDetails') or [] if isinstance(x, dict)}
+    rows = data.get('mainDetails')
+    details = {x['label']: x.get('value') for x in (rows if isinstance(rows, list) else [])
+               if isinstance(x, dict) and isinstance(x.get('label'), str)}
     end = closing_time(details.get('RFQ closing date') or details.get('RFI closing date'))
     return bool(end and end > now + timedelta(hours=2) and data.get('rfqOpen') and not data.get('is_cancelled'))
 
@@ -301,33 +303,61 @@ def send_lock():
         yield
 
 
+def _json_object(path):
+    """The JSON object in a file, or None when it is missing, unreadable or another type."""
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def send_state(folder):
+    """'sent', 'unresolved' or None, by the same rules as illoura_cloud_collect.unresolved_send_runs.
+
+    Only proof settles a send: a readable receipt saying sent is true, or a readable
+    operator decision saying delivered is false. Damaged files prove nothing.
+    """
+    if receipt_confirms_send(folder):
+        return 'sent'
+    if not (folder / 'send_attempt.json').exists():
+        return None
+    decision = _json_object(folder / 'send_reconciliation.json')
+    if decision is not None and decision.get('delivered') is False:
+        return None
+    return 'unresolved'
+
+
 def check_edition(out):
     edition = json.loads((out / 'editorial_notes.json').read_text())['edition_date']
     datetime.strptime(edition, '%Y-%m-%d')
     for other in (WORK / 'reports').iterdir():
         if other.resolve() == out or not other.is_dir():
             continue
-        notes = other / 'editorial_notes.json'
-        if not notes.exists():
-            continue
-        try:
-            other_edition = json.loads(notes.read_text())['edition_date']
-        except (OSError, ValueError, KeyError, TypeError):
-            # Run folders are kept for months. Damaged notes only matter when that folder
-            # shows a send: then its edition is unknown and sending again is not safe.
-            if (other / 'send_attempt.json').exists() or (other / 'send_receipt.json').exists():
-                raise SystemExit('A run with unreadable notes has a send record; check it before sending')
-            continue
+        state = send_state(other)
+        if state is None:
+            continue  # no send evidence: damaged or missing files there do not matter
+        notes = _json_object(other / 'editorial_notes.json')
+        other_edition = notes.get('edition_date') if notes else None
+        if not isinstance(other_edition, str):
+            # Edition unknown. A confirmed send counts when its own send time falls on this
+            # edition's India date (a receipt that cannot be dated cannot be attributed, and
+            # no command could ever clear it). An unsettled attempt always needs a person.
+            if state == 'sent':
+                receipt = _json_object(other / 'send_receipt.json') or {}
+                try:
+                    sent_day = datetime.fromisoformat(receipt['recorded_at_utc']).astimezone(INDIA).date()
+                except (KeyError, TypeError, ValueError):
+                    sent_day = None
+                if sent_day is None or sent_day.isoformat() != edition:
+                    continue
+                raise SystemExit('A run with unreadable notes was sent on this edition date; check it before sending')
+            raise SystemExit('A run with unreadable notes has an unresolved send attempt; reconcile it first')
         if other_edition != edition:
             continue
-        receipt = other / 'send_receipt.json'
-        if receipt.exists() and json.loads(receipt.read_text()).get('sent') is True:
+        if state == 'sent':
             raise SystemExit('This edition was already sent from another run')
-        reconciliation = other / 'send_reconciliation.json'
-        resolved = (reconciliation.exists()
-                    and json.loads(reconciliation.read_text()).get('delivered') is False)
-        if (other / 'send_attempt.json').exists() and not receipt.exists() and not resolved:
-            raise SystemExit('This edition has an unresolved send attempt in another run; reconcile first')
+        raise SystemExit('This edition has an unresolved send attempt in another run; reconcile first')
 
 
 def record_sent(out, receipt):
@@ -391,6 +421,7 @@ def find_sent(session, attempt):
         return response.json()
 
     sender, recipient, subject = (attempt[key] for key in ('sender', 'recipient', 'subject'))
+    sender, recipient = sender.strip(), recipient.strip()
     if get('/profile')['emailAddress'].lower() != sender.lower():
         raise ValueError('Gmail identity mismatch')
     queries = ['in:sent rfc822msgid:' + attempt['message_id_header'].strip('<>'),
@@ -439,7 +470,20 @@ def reconcile(out, mark_undelivered=False, session=None):
         if not (out / 'send_attempt.json').exists():
             print(json.dumps({'status': 'nothing_to_reconcile'}))
             return 0
-        attempt = json.loads((out / 'send_attempt.json').read_text())
+        attempt = _json_object(out / 'send_attempt.json')
+        if attempt is None or not all(isinstance(attempt.get(k), str)
+                                      for k in ('sender', 'recipient', 'subject', 'message_id_header')):
+            # A send killed while writing its attempt record: Gmail cannot be searched
+            # without it, so only an explicit operator decision can settle it.
+            if not mark_undelivered:
+                print(json.dumps({'status': 'attempt_unreadable', 'next': 'check the mailbox, then '
+                                  'reconcile-send --mark-undelivered if it did not arrive'}))
+                return 2
+            write_json(out / 'send_reconciliation.json', {
+                'delivered': False, 'checked_at_utc': utc_now().isoformat(), 'searched': [],
+                'attempt_unreadable': True, 'decided_by': 'operator'})
+            print(json.dumps({'status': 'marked_undelivered', 'attempt_unreadable': True}))
+            return 0
         owned_session = session is None
         session = gmail_session() if owned_session else session
         try:

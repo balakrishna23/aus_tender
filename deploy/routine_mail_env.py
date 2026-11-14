@@ -51,14 +51,19 @@ def write(target, text, group="scraper"):
     # temporary name can never be written through.
     temporary = target.with_name("." + target.name + "." + secrets.token_hex(8) + ".tmp")
     handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o640)
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        stream.write(text)
-    if group is not None:
-        import grp  # Linux only; tests pass group=None
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        if group is not None:
+            import grp  # Linux only; tests pass group=None
 
-        os.chown(temporary, 0, grp.getgrnam(group).gr_gid)
-    os.chmod(temporary, 0o640)
-    os.replace(temporary, target)
+            os.chown(temporary, 0, grp.getgrnam(group).gr_gid)
+        os.chmod(temporary, 0o640)
+        os.replace(temporary, target)
+    except BaseException:
+        # Never leave a private copy behind under a hidden name.
+        temporary.unlink(missing_ok=True)
+        raise
     return "written"
 
 

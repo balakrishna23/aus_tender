@@ -550,8 +550,9 @@ def deploy_ops(
 
 # The two sources run_spiders.py starts as standalone scripts (see its STANDALONE_SCRIPTS).
 STANDALONE_COLLECTORS = ("austender_api.py", "nsw_tender_fetch.py")
-# Scrapy item pipeline shared by every spider (validation, storage, field-loss check).
-COLLECTOR_SUPPORT = ("pipelines.py",)
+# Shared by every spider: the item pipeline (validation, field-loss check) and the database
+# layer that stores items (identity checks on save).
+COLLECTOR_SUPPORT = ("pipelines.py", "database_manager.py")
 
 
 def collector_files(repo=REPO):
@@ -588,8 +589,8 @@ def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
     stage = new_stage()
     try:
         stage_files(remote, stage, files)
-        # The staged runner and spiders package come first on the path; everything else they
-        # import (database_manager, pipelines, settings) is the installed project, read-only.
+        # The staged runner, pipeline, database layer and spiders come first on the path;
+        # everything else they import (settings, helpers) is the installed project, read-only.
         tests = run_tests(
             remote,
             [
