@@ -187,10 +187,11 @@ def parse_log_for_metrics(spider: str, log_text: str, gsheets_auto_sync: bool) -
 
     sync_status = "not_enabled" if not gsheets_auto_sync else "unknown"
     if gsheets_auto_sync:
-        if re.search(r"Synced \d+ rows to worksheet|Synced standing_offer into worksheets:", log_text):
-            sync_status = "success"
-        elif re.search(r"Failed to sync .* to Google Sheets:|Google Sheets auto-sync failed .*:|APIError:\s*\[400\]", log_text):
+        # Any failure outweighs an earlier success in the same log (partial syncs).
+        if re.search(r"Failed to sync .* to Google Sheets:|Google Sheets auto-sync failed .*:|APIError:\s*\[400\]", log_text):
             sync_status = "failed"
+        elif re.search(r"Synced \d+ rows to worksheet|Synced standing_offer into worksheets:", log_text):
+            sync_status = "success"
     return warnings_count, errors_count, sync_status
 
 
@@ -367,6 +368,15 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
     dbm = DatabaseManager()
     any_failed = False
     results = []
+    if not [spider for spider in args.spiders if spider in DEFAULT_SPIDERS]:
+        # Nothing to collect is never a successful refresh.
+        print("No known sources requested; nothing was collected.")
+        if args.report:
+            args.report.parent.mkdir(parents=True, exist_ok=True)
+            args.report.write_text(json.dumps({'success': False, 'results': [],
+                                               'error': 'no known sources requested'}, indent=2),
+                                   encoding='utf-8')
+        return 1
 
     for spider in args.spiders:
         if spider not in DEFAULT_SPIDERS:
@@ -427,6 +437,12 @@ def run_batch(args, gsheets_auto_sync: bool) -> int:
         if unchanged_match and int(unchanged_match.group(1)) > 0:
             no_items = False
         database_failed = bool(re.search(r"'database/items_failed':\s*[1-9]", log_text))
+        # Every item that reaches item_scraped_count has passed DatabasePipeline, which
+        # counts it as saved (new, updated or unchanged). Fewer saves than items means the
+        # database step did not run, so the source must not be reported as refreshed.
+        if spider not in STANDALONE_SCRIPTS and item_match and int(item_match.group(1)) > 0:
+            saved_count = int(saved_match.group(1)) if saved_match else 0
+            database_failed = database_failed or saved_count < int(item_match.group(1))
         # Ignored HTTP errors and exhausted retries may only appear in stats,
         # with Scrapy still exiting zero and reporting finish_reason=finished.
         crawl_failed = bool(re.search(

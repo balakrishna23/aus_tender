@@ -127,7 +127,7 @@ class Settings:
 
 def command_line(argv):
     """Quote a fixed argument list; reject anything that is not a plain token."""
-    if not argv or not all(isinstance(a, str) and SAFE_ARG.match(a) for a in argv):
+    if not argv or not all(isinstance(a, str) and SAFE_ARG.fullmatch(a) for a in argv):
         raise ValueError("Refusing an unsafe remote argument list")
     return " ".join(shlex.quote(a) for a in argv)
 
@@ -285,8 +285,13 @@ def new_stage():
 
 def stage_files(remote, stage, files):
     """Upload {relative path: bytes}; verify every SHA-256 on the server."""
-    if not STAGE_PATH.match(stage):
+    if not STAGE_PATH.fullmatch(stage):
         raise ValueError("Unexpected staging path")
+    for rel in files:
+        parts = str(rel).split("/")
+        if (not isinstance(rel, str) or not SAFE_ARG.fullmatch(rel) or rel.startswith("/")
+                or "\\" in rel or any(part in ("", ".", "..") for part in parts)):
+            raise ValueError("Staged file names must stay inside the staging folder")
     folders = sorted(
         {str(Path(rel).parent).replace("\\", "/") for rel in files} - {"."}
     )
@@ -313,7 +318,7 @@ def stage_files(remote, stage, files):
 
 
 def remove_stage(remote, stage):
-    if STAGE_PATH.match(stage):
+    if STAGE_PATH.fullmatch(stage):
         remote.run(["rm", "-rf", stage])
 
 
@@ -407,7 +412,7 @@ def ops_action(remote, action, *, dry_run=False, backup=None, yes=False):
             raise ValueError("--dry-run applies to prune only")
         argv.append("--dry-run")
     if action == "restore-drill":
-        if not backup or not BACKUP_PATH.match(backup):
+        if not backup or not BACKUP_PATH.fullmatch(backup):
             raise ValueError("--backup must be /var/backups/illoura/operations-<id>")
         argv += ["--backup", backup]
     code, out, err = remote.run(argv, timeout=3600)
@@ -545,8 +550,9 @@ def deploy_ops(
 
 # The two sources run_spiders.py starts as standalone scripts (see its STANDALONE_SCRIPTS).
 STANDALONE_COLLECTORS = ("austender_api.py", "nsw_tender_fetch.py")
-# Scrapy item pipeline shared by every spider (validation, storage, field-loss check).
-COLLECTOR_SUPPORT = ("pipelines.py",)
+# Shared by every spider: the item pipeline (validation, field-loss check) and the database
+# layer that stores items (identity checks on save).
+COLLECTOR_SUPPORT = ("pipelines.py", "database_manager.py")
 
 
 def collector_files(repo=REPO):
@@ -583,8 +589,8 @@ def deploy_collectors(remote, *, yes=False, repo=REPO, test_only=False):
     stage = new_stage()
     try:
         stage_files(remote, stage, files)
-        # The staged runner and spiders package come first on the path; everything else they
-        # import (database_manager, pipelines, settings) is the installed project, read-only.
+        # The staged runner, pipeline, database layer and spiders come first on the path;
+        # everything else they import (settings, helpers) is the installed project, read-only.
         tests = run_tests(
             remote,
             [
@@ -731,19 +737,21 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
         )
     finally:
         remove_stage(remote, stage)
-    must(remote, ["sudo", "systemctl", "restart", "illoura-api"], "restart API")
+    restart_code, _, _ = remote.run(["sudo", "systemctl", "restart", "illoura-api"])
     deadline = time.monotonic() + wait_seconds
     while True:
-        code, _, _ = remote.run(
-            ["curl", "-fsS", "--max-time", "5", "http://127.0.0.1:8000/healthz"]
-        )
+        code = 1
+        if restart_code == 0:
+            code, _, _ = remote.run(
+                ["curl", "-fsS", "--max-time", "5", "http://127.0.0.1:8000/healthz"]
+            )
         if code == 0:
             return {
                 "installed_sha256": sha256(files["app.py"]),
                 "previous_backup": backup,
             }
-        if time.monotonic() >= deadline:
-            remote.run(
+        if restart_code != 0 or time.monotonic() >= deadline:
+            put_back, _, _ = remote.run(
                 [
                     "sudo",
                     "install",
@@ -757,17 +765,24 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
                     API_DIR + "/app.py",
                 ]
             )
-            remote.run(["sudo", "systemctl", "restart", "illoura-api"])
+            started, _, _ = remote.run(["sudo", "systemctl", "restart", "illoura-api"])
+            reason = ("The restart command failed" if restart_code != 0
+                      else "New API did not become healthy")
+            if put_back != 0 or started != 0:
+                # Never claim a recovery that did not happen.
+                raise OperationError(
+                    reason + "; restoring the previous version ALSO FAILED. The API may be "
+                    "down: restore " + backup + " by hand and restart illoura-api."
+                )
             raise OperationError(
-                "New API did not become healthy; previous version restored from "
-                + backup
+                reason + "; previous version restored from " + backup
             )
         time.sleep(2)
 
 
 def api_key(remote, settings, action, name, *, host=None):
     """Create or revoke a named key. The key itself is written only to the private directory."""
-    if not KEY_NAME.match(name):
+    if not KEY_NAME.fullmatch(name):
         raise ValueError("Use a simple name: letters, digits, _ or -")
     keys = json.loads(must(remote, ["sudo", "cat", KEYS_FILE], "read key hashes"))
     existing = next((k for k in keys if k["name"] == name), None)
@@ -838,7 +853,7 @@ def set_health_sender(remote, email, *, yes=False):
     """Write the private expected-mailbox setting; the address is uploaded, never put in a command."""
     if not yes:
         raise OperationError("set-health-sender changes server configuration; rerun with --yes")
-    if not EMAIL.match(email or ""):
+    if not EMAIL.fullmatch(email or ""):
         raise ValueError("Use one plain email address")
     stage = new_stage()
     try:
@@ -870,7 +885,7 @@ def daily_brief_dry_run(remote):
                 pass
     folder = next((s["dry_run_dir"] for s in summaries if "dry_run_dir" in s), "")
     result = {"summaries": summaries, "sent": False}
-    if DRY_RUN_DIR.match(folder):
+    if DRY_RUN_DIR.fullmatch(folder):
         code, text, _ = remote.run(["sudo", "cat", folder + "/newsletter_preview.txt"])
         if code == 0:
             result["preview_text"] = text[:6000]
@@ -881,7 +896,7 @@ def readyz_url(settings):
     """The public /readyz URL, from the private API access file (never the repository)."""
     access = json.loads((settings.private_dir / "api-access.json").read_text(encoding="utf-8"))
     base = str(access.get("api_base_url", "")).rstrip("/")
-    if not re.match(r"^https://[A-Za-z0-9.-]+(:[0-9]+)?$", base):
+    if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]+)?", base):
         raise OperationError("api-access.json has no usable https api_base_url")
     return base + "/readyz"
 
@@ -889,7 +904,7 @@ def readyz_url(settings):
 def alert_email(settings, email=None):
     """--email if given, else the verified Lightsail alarm contact. Never printed."""
     if email:
-        if not EMAIL.match(email.strip()):
+        if not EMAIL.fullmatch(email.strip()):
             raise ValueError("Not a plain email address")
         return email.strip()
     methods = aws(settings, "lightsail", "get-contact-methods", "--protocols", "Email")
@@ -1096,6 +1111,8 @@ def os_update(remote, settings, *, yes=False, reboot=False, wait_seconds=600, wa
         if out.strip() in ("active", "activating", "deactivating", "reloading"):
             raise OperationError(f"{unit} is running; nothing was changed. Try after it finishes.")
     hhmm = must(remote, ["env", "TZ=Australia/Sydney", "date", "+%H%M"], "read Sydney time").strip()
+    if not re.fullmatch(r"([01][0-9]|2[0-3])[0-5][0-9]", hhmm):
+        raise OperationError("Could not read the Sydney time from the server; nothing was changed.")
     if BRIEF_WINDOW[0] <= hhmm < BRIEF_WINDOW[1]:
         raise OperationError("Inside the 05:30-09:30 Sydney brief window; nothing was changed.")
     out = must(remote, ["sudo", "unattended-upgrade", "-v"], "install security updates", timeout=1800)
@@ -1126,7 +1143,7 @@ def reconcile_send(remote, run, *, mark_undelivered=False, yes=False):
     """
     if not yes:
         raise OperationError("reconcile-send writes the run's send records; rerun with --yes")
-    if not RUN_NAME.match(run or ""):
+    if not RUN_NAME.fullmatch(run or ""):
         raise ValueError("Expected a run folder name such as daily_sweep_20261114_004500")
     argv = ["sudo", "runuser", "-u", "scraper", "--", "env", "-C", "/opt/illoura-routine",
             OPS_PYTHON, OPS_DIR + "/illoura_daily_brief.py", "reconcile",

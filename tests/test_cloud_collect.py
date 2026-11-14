@@ -27,7 +27,8 @@ class ReconcileBeforeCollection(unittest.TestCase):
         folder = self.reports / name
         folder.mkdir()
         for file in files:
-            (folder / file).write_text("{}")
+            # A receipt settles an attempt only when it says the brief was sent (14 Nov cross test).
+            (folder / file).write_text('{"sent": true}' if file == "send_receipt.json" else "{}")
         if decision is not None:
             (folder / "send_reconciliation.json").write_text(json.dumps(decision))
         return folder

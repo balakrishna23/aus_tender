@@ -19,6 +19,7 @@ PUBLICATION_LIMIT_SECONDS = 26 * 3600
 PUBLICATION_WORKING_LIMIT_SECONDS = 32 * 3600
 # One failed call to Google must not read as lost authorisation.
 MAIL_GRACE_SECONDS = 6 * 3600
+RECEIPT_CLOCK_SKEW = timedelta(minutes=5)
 TRANSIENT_MAIL_ERRORS = (
     "TransportError", "ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout",
     "ChunkedEncodingError", "TimeoutError",
@@ -87,20 +88,29 @@ def run_in_progress(state, now):
         return False
     try:
         started = datetime.fromisoformat(state["started_at_utc"])
+        return 0 <= (now - started).total_seconds() < RUN_LIMIT_SECONDS
     except (KeyError, TypeError, ValueError):
-        return False
-    return 0 <= (now - started).total_seconds() < RUN_LIMIT_SECONDS
+        return False  # includes a start time without a timezone
 
 
-def last_brief_sent(work):
-    """Newest successful send receipt across all runs (latest_run.json moves on at 06:15)."""
+def last_brief_sent(work, now=None):
+    """Newest successful send receipt across all runs (latest_run.json moves on at 06:15).
+
+    Only evidence that can be trusted counts: a receipt object with sent true and a time
+    that carries its timezone and is not in the future (a future-dated receipt would hide
+    missed briefs for days).
+    """
+    now = now or datetime.now(timezone.utc)
     newest = None
     for receipt in (work / "reports").glob("daily_sweep_*/send_receipt.json"):
         try:
             value = json.loads(receipt.read_text())
-            if value.get("sent") is True:
-                stamp = datetime.fromisoformat(value["recorded_at_utc"])
-                newest = stamp if newest is None or stamp > newest else newest
+            if not isinstance(value, dict) or value.get("sent") is not True:
+                continue
+            stamp = datetime.fromisoformat(value["recorded_at_utc"])
+            if stamp.tzinfo is None or stamp > now + RECEIPT_CLOCK_SKEW:
+                continue
+            newest = stamp if newest is None or stamp > newest else newest
         except (OSError, ValueError, KeyError, TypeError):
             continue
     return newest
@@ -118,7 +128,7 @@ def daily_brief(work, now, enabled, working=False):
     due = local.replace(hour=BRIEF_DUE[0], minute=BRIEF_DUE[1], second=0, microsecond=0)
     if local < due:
         due -= timedelta(days=1)
-    sent = last_brief_sent(work)
+    sent = last_brief_sent(work, now)
     # On or after the due day: between today's 08:15 send and 09:00 the due day is still
     # yesterday, and today's receipt must not read as a miss (false alarm of 14 Nov 2026).
     on_time = sent is not None and sent.astimezone(SYDNEY).date() >= due.date()
@@ -224,6 +234,8 @@ def check(
     freshness("publication", served / "current/manifest.json", "snapshot_finished_utc")
     try:
         state = json.loads((work / "latest_run.json").read_text())
+        if not isinstance(state.get("status"), str):
+            raise ValueError("Run state without a readable status")
         run = Path(state["run_dir"])
         if run.parent.resolve() != (work / "reports").resolve():
             raise ValueError("Unexpected run path")
@@ -246,7 +258,9 @@ def check(
             else "attention",
             "phase": state.get("status"),
         }
-    except (OSError, ValueError, KeyError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        # Unreadable or wrongly shaped state is reported, never allowed to stop the poll.
+        checks.setdefault("collection", {"status": "unavailable"})
         checks["last_run"] = {"status": "unavailable"}
     publication = checks["publication"]
     if (

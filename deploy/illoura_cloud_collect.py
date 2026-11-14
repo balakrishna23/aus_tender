@@ -20,18 +20,32 @@ def run(command):
     subprocess.run(command, check=True)
 
 
+def _json_object(path):
+    """The JSON object in a file, or None when it is missing, unreadable or another type."""
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def unresolved_send_runs(reports):
-    """Run folders with a send attempt but no receipt and no recorded not-delivered decision."""
+    """Run folders with a send attempt that nothing has settled.
+
+    Settled means proof, not the mere presence of a file: a readable receipt saying
+    sent is true, or a readable decision saying delivered is false. A truncated receipt
+    or one saying sent is false leaves the attempt unresolved.
+    """
     found = []
     for folder in sorted(reports.glob("daily_sweep_*")):
-        if not (folder / "send_attempt.json").exists() or (folder / "send_receipt.json").exists():
+        if not (folder / "send_attempt.json").exists():
             continue
-        decision = folder / "send_reconciliation.json"
-        try:
-            if decision.exists() and json.loads(decision.read_text()).get("delivered") is False:
-                continue
-        except ValueError:
-            pass  # unreadable decision: still unresolved
+        receipt = _json_object(folder / "send_receipt.json")
+        if receipt is not None and receipt.get("sent") is True:
+            continue
+        decision = _json_object(folder / "send_reconciliation.json")
+        if decision is not None and decision.get("delivered") is False:
+            continue
         found.append(folder)
     return found
 
@@ -44,7 +58,11 @@ def reconcile_confirmed_sends(reports=WORK / "reports", runner=subprocess.run):
     Never sends and never raises: a Gmail problem here leaves things as they were.
     """
     results = {}
-    for folder in unresolved_send_runs(reports):
+    try:
+        folders = unresolved_send_runs(reports)
+    except Exception as error:  # noqa: BLE001 - recorded, never fatal
+        return {"error": type(error).__name__}
+    for folder in folders:
         try:
             done = runner(
                 ["runuser", "-u", "scraper", "--", "/opt/aus_tender/.venv/bin/python",

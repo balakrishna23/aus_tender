@@ -61,11 +61,25 @@ def read_report(path):
         return {}  # A killed writer can leave a partial report; preserve the failure gate.
 
 
+def routine_deadline(env, monotonic, wall):
+    """Monotonic deadline: the routine budget, shortened by the coordinator's morning deadline.
+
+    The morning deadline is an epoch time in ILLOURA_MORNING_DEADLINE; an unreadable value
+    must not cancel the morning, so it falls back to the normal budget.
+    """
+    deadline = monotonic + ROUTINE_BUDGET_SECONDS
+    try:
+        morning = float(env.get('ILLOURA_MORNING_DEADLINE') or '')
+    except ValueError:
+        return deadline
+    if morning != morning or morning in (float('inf'), float('-inf')):
+        return deadline
+    return min(deadline, monotonic + morning - wall)
+
+
 def main():
     import fcntl
-    deadline = time.monotonic() + ROUTINE_BUDGET_SECONDS
-    if os.environ.get('ILLOURA_MORNING_DEADLINE'):
-        deadline = min(deadline, time.monotonic() + float(os.environ['ILLOURA_MORNING_DEADLINE']) - time.time())
+    deadline = routine_deadline(os.environ, time.monotonic(), time.time())
     os.environ.update(GSHEETS_AUTO_SYNC='False',AUSTENDER_DB_DIR=str(PROJECT/'databases'),PLAYWRIGHT_BROWSERS_PATH=str(PROJECT/'.browsers'),PYTHONDONTWRITEBYTECODE='1')
     with (WORK/'routine.lock').open('a+') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)

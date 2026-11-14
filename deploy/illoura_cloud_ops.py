@@ -424,7 +424,11 @@ def copy_database(source, target):
 def verify_generation(root):
     root = Path(root)
     meta = json.loads((root / "manifest.json").read_text())
-    for dataset, item in meta["datasets"].items():
+    datasets = meta.get("datasets") if isinstance(meta, dict) else None
+    if not isinstance(datasets, dict) or not datasets:
+        # An empty generation would serve nothing; it is never ready to go live.
+        raise ValueError("Generation manifest lists no datasets")
+    for dataset, item in datasets.items():
         if not dataset.replace("_", "").isalnum() or item["file"] != dataset + ".db":
             raise ValueError("Unsafe dataset in manifest")
         file = root / item["file"]
@@ -435,6 +439,12 @@ def verify_generation(root):
         ) as db:
             if db.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                 raise ValueError("Invalid snapshot: " + dataset)
+            declared = item.get("tables") or {}
+            present = {row[0] for row in db.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")}
+            missing = sorted(set(declared) - present)
+            if missing:
+                raise ValueError("Snapshot " + dataset + " lacks declared tables: " + ", ".join(missing))
     return meta
 
 

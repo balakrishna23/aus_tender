@@ -36,6 +36,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
     # that has nothing to save and is a normal day, up to this many; more than this at once
     # looks like the site itself changing, so the run still fails loudly.
     MAX_UNPUBLISHED_NOTICES = 25
+    CANARY_NOTICES = 3
 
     def __init__(self, since=None, refresh_existing=False, refetch=None, scope=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -87,13 +88,15 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
         # offline callers; only a running crawler can record a canary's health result.
         if todo and getattr(self, 'crawler', None) is not None:
             with self.db_manager.get_connection(self.name) as conn:
-                canary = conn.execute("SELECT cn_id, url FROM contracts WHERE COALESCE(url, '') != '' "
-                                      "ORDER BY id DESC LIMIT 1").fetchone()
-            self.canary_requested = bool(canary)
+                canaries = conn.execute("SELECT cn_id, url FROM contracts WHERE COALESCE(url, '') != '' "
+                                        "ORDER BY id DESC LIMIT ?", (self.CANARY_NOTICES,)).fetchall()
+            self.canary_requested = bool(canaries)
             self.crawler.stats.set_value('contract/canary_ok', 0)
-            if canary:
-                yield scrapy.Request(canary[1], callback=self.parse_contract, dont_filter=True,
-                                     meta={'contract_canary': True, 'notice_id': canary[0]})
+            # Several recent notices: one withdrawn page must not make a quiet day look like
+            # a broken site. The site is healthy when any of them opens correctly.
+            for notice, url in canaries:
+                yield scrapy.Request(url, callback=self.parse_contract, dont_filter=True,
+                                     meta={'contract_canary': True, 'notice_id': notice})
         for notice, url in todo.items():
             # dont_filter: unpublished notices all redirect to the same NotFound page, and each
             # must still reach parse_contract to be counted rather than dropped as a duplicate.
@@ -132,7 +135,9 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             for notice, url, first_seen in rows:
                 if notice in stored:
                     continue
-                if (self.today - parse_day(first_seen)).days >= 30:
+                # An unreadable first-seen date must not stop the whole collection: such a
+                # row is treated as first seen today and so keeps being retried.
+                if (self.today - (parse_day(first_seen) or self.today)).days >= 30:
                     expired.add(notice)
                     self.logger.warning('Giving up unpublished notice %s after 30 days', notice)
                 else:
@@ -210,8 +215,7 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             # In the API but not (or no longer) shown on the site, e.g. withdrawn: nothing to add.
             self.logger.info('No page on the site for %s', response.meta.get('notice_id') or response.url)
             if response.meta.get('contract_canary'):
-                self.crawler.stats.set_value('contract/canary_ok', 0)
-                return
+                return  # stays 0 unless another canary succeeds
             self.crawler.stats.inc_value('contract/page_not_found')
             self._remember_pending(response)
             return
@@ -238,7 +242,8 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             # Return before yielding: no database writes, activity events or scraped items.
             ok = (response.status == 200 and get_detail("CN ID") == response.meta.get('notice_id')
                   and bool(get_detail("Agency")))
-            self.crawler.stats.set_value('contract/canary_ok', int(ok))
+            if ok:
+                self.crawler.stats.set_value('contract/canary_ok', 1)
             return
 
         yield {

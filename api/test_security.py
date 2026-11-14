@@ -298,6 +298,38 @@ class SecurityTests(unittest.TestCase):
         )
         self.assertNotIn("f" * 64, api.rates)
 
+    def test_body_size_limit_cannot_be_bypassed_without_a_declared_length(self):
+        # 14 Nov cross test (Codex): a chunked body carries no Content-Length to check.
+        def chunks():
+            yield b'{"dataset": "contract_api", "sql": "SELECT 1", "padding": "'
+            yield b"x" * 40000
+            yield b'"}'
+
+        response = self.client.post("/v1/query", content=chunks(), headers=self.headers)
+        self.assertEqual(response.status_code, 413)
+        declared = self.client.post(
+            "/v1/query", content=b"x" * 40000, headers={**self.headers, "Content-Type": "application/json"}
+        )
+        self.assertEqual(declared.status_code, 413)
+        # Ordinary requests are unaffected: a GET without a body and a small JSON POST.
+        self.assertEqual(self.client.get("/v1/catalog", headers=self.headers).status_code, 200)
+        small = self.client.post(
+            "/v1/query", json={"dataset": "contract_api", "sql": "SELECT count(*) AS n FROM contracts"},
+            headers=self.headers,
+        )
+        self.assertEqual(small.status_code, 200)
+
+    def test_wrongly_shaped_key_file_is_an_outage_not_a_crash(self):
+        original = api.KEYS.read_text()
+        try:
+            for content in ('{"unexpected": true}', '["text"]', "null", "42"):
+                api.KEYS.write_text(content)
+                response = self.client.get("/v1/catalog", headers=self.headers)
+                self.assertEqual(response.status_code, 503, content)
+        finally:
+            api.KEYS.write_text(original)
+        self.assertEqual(self.client.get("/v1/catalog", headers=self.headers).status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

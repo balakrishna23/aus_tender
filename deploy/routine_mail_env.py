@@ -12,9 +12,13 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 
 SCRIPTS = Path("/opt/illoura-routine/scripts")
-ADDRESS = re.compile(r"[A-Za-z0-9.!#$%&*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+# Same rule as the runtime reader (routine/scripts/mail_config.py): a value this accepts
+# must be accepted there, or set-mail-config would report success and the send fail later.
+_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+ADDRESS = re.compile(r"[A-Za-z0-9.!#$%&*+/=?^_`{|}~-]+@" + _LABEL + r"(?:\." + _LABEL + r")+")
 LINK_ID = re.compile(r"[A-Za-z0-9_.:-]{4,200}")
 
 
@@ -43,16 +47,23 @@ def write(target, text, group="scraper"):
     target = Path(target)
     if target.exists():
         return "unchanged" if target.read_text(encoding="utf-8") == text else "differs_not_replaced"
-    temporary = target.with_name("." + target.name + ".tmp")
-    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
-    with os.fdopen(handle, "w", encoding="utf-8") as stream:
-        stream.write(text)
-    if group is not None:
-        import grp  # Linux only; tests pass group=None
+    # A fresh, unpredictable name opened exclusively: a file or link planted at a fixed
+    # temporary name can never be written through.
+    temporary = target.with_name("." + target.name + "." + secrets.token_hex(8) + ".tmp")
+    handle = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o640)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        if group is not None:
+            import grp  # Linux only; tests pass group=None
 
-        os.chown(temporary, 0, grp.getgrnam(group).gr_gid)
-    os.chmod(temporary, 0o640)
-    os.replace(temporary, target)
+            os.chown(temporary, 0, grp.getgrnam(group).gr_gid)
+        os.chmod(temporary, 0o640)
+        os.replace(temporary, target)
+    except BaseException:
+        # Never leave a private copy behind under a hidden name.
+        temporary.unlink(missing_ok=True)
+        raise
     return "written"
 
 
