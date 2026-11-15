@@ -253,6 +253,8 @@ Only one agent edits the branch at a time.
   deployed three collector files hash verified. No further collector edits were needed.
 - Restored SSH by moving the existing single-address restriction to this PC's current
   address; the lightsail-connect alias and HTTP/HTTPS rules were preserved and verified.
+- Read-only AWS resume checks: Free plan ACTIVE; Illoura SNS email subscription confirmed
+  after following pagination; Lightsail email contact remains PendingVerification.
 - API/nginx active; certificate, publication, collection, coordinator, disk, retention and
   Gmail authorization OK. Health still flags the missed 15 Nov brief; it was not resent.
   Timer states unchanged. No pushes or merges. Check the 16 Nov 00:45 IST collection and
