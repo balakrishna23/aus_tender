@@ -17,6 +17,29 @@ Below, `illoura_aws.py <command>` means that full line. If AWS says the session 
 2. `illoura_aws.py watch status`: the external alarm's state and recent checks.
 3. Find the row below for the failing check.
 
+The authenticated `/v1/operations` response includes `checks.last_run.sources`,
+`failed_sources` and `missing_sources`. These name source failures without exposing logs,
+contacts or server paths. An unreadable source report is shown as `source_report: unavailable`.
+
+### Access from another computer
+
+Lightsail browser SSH is enabled through the restricted `lightsail-connect` firewall alias.
+The existing administrator address rule is retained. Sign into the AWS Management Console,
+select Sydney (`ap-southeast-2`), open Lightsail > `illoura-hosting-trial` > Connect >
+Connect using SSH. This uses the console's authenticated connection and needs neither this
+PC's private key nor its current public address. The firewall configuration was verified;
+an interactive sign-in from a second device has not been tested.
+
+In that private browser terminal, inspect health and the morning job:
+
+```sh
+sudo cat /var/lib/illoura-health/status.json
+sudo systemctl status illoura-daily-brief.service --no-pager
+sudo journalctl -u illoura-daily-brief.service -n 80 --no-pager
+```
+
+Do not enable timers, run a send, or paste credentials into that terminal as part of diagnosis.
+
 Never send or re-send a brief by hand without Sirish's OK, and never re-send an edition that
 already has a receipt.
 
@@ -26,8 +49,8 @@ already has a receipt.
 |---|---|---|
 | `daily_brief: missed` and `last_run: source_failure` | BuyICT failed or reported a gap, or the collection was cut short or incomplete (a problem in another source alone no longer stops the day: it is named in the brief and in `last_run.source_gaps`) | Read the run folder's `source_refresh.json` (statuses per source) and the source's log under `/opt/aus_tender/logs/`. A quiet day must not fail; if it did, that is a bug to fix. Today is lost by design (no late send after 12:00). |
 | `daily_brief: missed`, coordinator `failed` with "Unresolved sends require reconciliation" | An earlier send attempt has no receipt | `illoura_aws.py reconcile-send --run daily_sweep_<time> --yes`. Found in Sent: receipt written, next morning runs normally. Not found (exit 2): check the mailbox; if it truly did not arrive, add `--mark-undelivered`. |
-| A source fails with `crawl/field_loss_failed` (after wave 6 is deployed) | Most records of that source came back without a key field: the site's page layout probably changed | Open the source's log under `/opt/aus_tender/logs/` and read the `crawl/field_loss_missing/<field>` counts; fix the selector for that field in the source's spider, then `verify-collectors` and `deploy-collectors --yes`. |
-| A stage stopped with a timeout; the brief was retried once (after wave 5 is deployed) | A website or step hung past its time limit | If the retry sent the brief, nothing to do. If not, read `latest_run.json` in `/opt/illoura-routine` for the stage that timed out and that source's log. Never send by hand after 12:00. |
+| A source fails with `crawl/field_loss_failed` | Most checked rows lost a key field that was previously present or have no stored baseline | Read `crawl/field_loss_missing/<field>` in the source log. A matching omission in the same stored URL is counted separately as `crawl/field_loss_known_omissions`; it does not conceal a newly missing value. Check the live source before any collector deployment. |
+| A stage stopped with a timeout | A website or step hung past its time limit | Collection retries wait 5, 20, 40 and 60 minutes; composition retries once after 5 minutes. The latest retry start is 09:30 Sydney and the cutoff is noon. If retries fail, inspect `latest_run.json` and that source's log. Never send by hand after noon. |
 | `reconcile-send` prints `attempt_unreadable` (exit 2) | The send was stopped while writing its attempt record, so Gmail cannot be searched | Check the team mailbox for that morning's brief. If it did not arrive: `illoura_aws.py reconcile-send --run daily_sweep_<time> --mark-undelivered --yes`. If it did, leave it and tell Claude (the receipt must be written by hand). |
 | Brief composed but not sent; output says "timer is not enabled" | The schedule was switched off | Intended? Leave it. If not: `illoura_aws.py schedule enable --yes` (needs Sirish's OK). |
 | Compose stopped: "More than half of shortlisted live checks failed" | BuyICT listing pages failing (outage or change) | Check BuyICT in a browser. If it is an outage, wait; if pages changed, fix `routine/scripts/refresh_daily_shortlist.py`. |

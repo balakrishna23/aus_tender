@@ -218,3 +218,26 @@ Only one agent edits the branch at a time.
 - Codex: full details and the remaining list are in the private workspace file
   `CODEX_HANDOFF_20261115.md`. Next: read audit job task-mwhkxsy0-w9685x, fix findings (BuyICT
   first), live-site check before every collector deploy, rehearse, check the 16 Nov run.
+
+## 15 Nov 14:40 IST, Codex: validated collector hardening deployed; NSW remains blocked
+- Continued Claude's handoff on the same branch. Normalized BuyICT labels, safe stored-ID
+  fallback, bootstrap quotes/widget binding, formatted totals and validated empty results;
+  malformed details still fail. Federal fields/IDs tolerate nesting and CSS classes; one
+  fresh walk handles count changes. Field-loss checks compare with pre-run stored omissions.
+  Planned titles include descendants but exclude old change notes; ACT checks structural
+  empty tables, enabled forward links, and rechecks changed totals with robots obeyed.
+- Live checks on isolated DB copies: BuyICT 117/117 pages, 7,259 IDs, 135 details; plans
+  676; ATMs 130 listed + four departed checked; contracts canary OK, nothing due; SONs
+  449; ACT 62. Installed eight changed collector files with SHA-256 verification, backup
+  `/var/backups/illoura/collectors-20261115T090910Z`.
+- Windows 712 tests OK (23 skips). Server collectors 92, operations 125, routine 39 OK.
+- Deployed safe per-source health diagnostics and verified authenticated `/v1/operations`.
+  Enabled restricted Lightsail browser SSH alias; original administrator CIDR retained.
+- No-send dry run composed eight live listings from an existing complete run. No new full
+  collection rehearsal: NSW robots.txt returned HTTP 403 from PC and server, and existing
+  NSW code uses legacy stealth that the handoff forbids. NSW extraction edits held privately
+  in `reports/scraper_hardening_20261115/nsw-unvalidated.patch`; not installed or invoked.
+  Missing BuyICT totals without explicit paging remain a strict failure, not a guessed pass.
+- No emails sent or timers changed. Both Bala alert confirmations still pending. Existing
+  PR #13 CI green; new work committed locally, not pushed. Check 16 Nov collection 00:45
+  IST and send 02:45 IST. Gmail remains in pilot/testing; expiry risk around 19 Nov unchanged.

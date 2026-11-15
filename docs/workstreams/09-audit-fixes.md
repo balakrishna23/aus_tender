@@ -145,3 +145,40 @@ unrelated source timing out counts as a problem in that source. Publication, com
 also require that the run script approved exactly these gaps (`cloud_run.json`). Codex reviewed the
 change; its three findings (second failure hidden behind a named gap, missing success flag, later
 gates not tied to the run script's decision) were fixed before deployment.
+
+## Scraper format audit and independent access on 15 November
+
+Codex continued the handoff on the same branch. BuyICT now normalizes display labels,
+recovers an existing RFQ identifier only through the same stable sys_id, accepts formatted
+integer totals, validates true zero-result responses, accepts either JavaScript quote style,
+and finds a detail widget's own instance in decoded bootstrap objects. Missing pagination
+evidence still fails: historical IDs alone cannot prove that newly added pages were collected.
+
+Federal fields and listing IDs tolerate nested labels and extra CSS classes. A count shortfall
+gets one fresh walk; an unresolved shortfall still fails. Missing fields already absent at the
+same stored URL are counted as known omissions, while new losses retain the failure gate.
+Planned titles include descendant text and exclude old-value change notes. ACT recognizes
+structural table-empty markers, ignores disabled pagination links, and rechecks changed totals.
+ACT's live check used ordinary browser automation with robots checking enabled.
+
+NSW returned HTTP 403 for robots.txt from both this PC and the server. Proposed extraction
+changes are preserved privately in `reports/scraper_hardening_20261115/nsw-unvalidated.patch`
+and are not installed. The current NSW implementation still contains legacy stealth code;
+the handoff forbids anti-bot evasion. A fresh full collection rehearsal is therefore deferred.
+Resolve a permitted access route before changing or live-testing NSW. This is an open item,
+not a claim that all ten audit findings are cleared.
+
+The operations health file now includes bounded source statuses and failed/missing source
+names, exposed through the authenticated `/v1/operations` endpoint. Browser SSH is enabled
+through Lightsail's `lightsail-connect` alias, retaining the existing restricted administrator
+rule. No new public SSH rule, resource, timer or email route was created. The endpoint and
+firewall configuration were checked; a second-device interactive login remains untested.
+
+Validated collectors were deployed on 15 Nov with installed SHA-256 verification; originals
+are in `/var/backups/illoura/collectors-20261115T090910Z`. Six changed collectors passed live
+checks on isolated SQLite copies: BuyICT 117/117 pages and 135 details; plans 676 rows;
+ATMs 130 listed plus four departed notices; contracts canary OK with nothing due; standing
+offers 449 rows; ACT 62 rows. Windows: 712 tests OK (23 skips); staged server collectors 92,
+operations 125, routine 39 OK. A brief dry run composed eight live listings without sending.
+This dry run used an existing complete publication, not a new full collection. The new code
+is committed locally but has not been pushed; PR #13 remains Sirish's merge.

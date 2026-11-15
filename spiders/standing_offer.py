@@ -77,7 +77,8 @@ class StandingOfferSpider(AusTenderListingMixin, scrapy.Spider):
 
     def parse_son(self, response):
         def get_detail(label):
-            return response.xpath(f'string(//div[@class="list-desc"][span/text()="{label}:"]/div[@class="list-desc-inner"])').get(default="").strip()
+            from spiders.austender_common import field_value
+            return field_value(response, label)
 
         def get_contact_detail(label):
             return response.xpath(f'//div[@class="contact-long"]//p[normalize-space(span) = "{label}:"]/text()[last()]').get(default="").strip()

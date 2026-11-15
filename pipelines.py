@@ -22,6 +22,7 @@ class DatabasePipeline:
         self.logger = logging.getLogger(__name__)
         self.stats = {}
         self.field_counts = {}
+        self.field_baselines = {}
         self.events = []  # new/changed records, written to activity.db at the end
     
     def open_spider(self, spider):
@@ -32,6 +33,11 @@ class DatabasePipeline:
         try:
             # Initialize database schema
             self.db_manager.initialize_database(spider_name)
+            if spider_name in self.KEY_FIELDS:
+                self.field_baselines[spider_name] = {
+                    field: self.db_manager.load_column_map(
+                        spider_name, 'url', self.db_manager._convert_to_snake_case(field))
+                    for field in self.KEY_FIELDS[spider_name]}
             
             # Initialize stats tracking
             self.stats[spider_name] = {
@@ -143,7 +149,16 @@ class DatabasePipeline:
         missing = [field for field in fields if adapter.get(field) is None or
                    not str(adapter.get(field)).strip()]
         # Zero is a value; count missing items once even if several fields disappeared.
-        counts['missing'] += bool(missing)
+        url = adapter.get('URL') or adapter.get('url')
+        baseline = self.field_baselines.get(spider.name, {})
+        known_omission = bool(missing and url) and all(
+            url in baseline.get(field, {}) and
+            (baseline[field][url] is None or not str(baseline[field][url]).strip())
+            for field in missing)
+        counts['missing'] += bool(missing) and not known_omission
+        if known_omission:
+            counts['known_omissions'] = counts.get('known_omissions', 0) + 1
+            spider.crawler.stats.inc_value('crawl/field_loss_known_omissions')
         spider.crawler.stats.inc_value('crawl/field_loss_items_checked')
         for field in missing:
             spider.crawler.stats.inc_value('crawl/field_loss_missing/' + field)
@@ -152,6 +167,9 @@ class DatabasePipeline:
 
     def _finish_field_checks(self, spider):
         counts = self.field_counts.get(spider.name, {})
+        known = counts.get('known_omissions', 0)
+        if known:
+            self.logger.warning('%s key-field omissions match stored rows for %s', known, spider.name)
         total, missing = counts.get('total', 0), counts.get('missing', 0)
         if total >= 10 and missing > total / 2:
             spider.crawler.stats.set_value('crawl/field_loss_failed', 1)
