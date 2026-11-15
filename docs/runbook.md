@@ -40,6 +40,19 @@ sudo journalctl -u illoura-daily-brief.service -n 80 --no-pager
 
 Do not enable timers, run a send, or paste credentials into that terminal as part of diagnosis.
 
+### Browser collectors
+
+The user authorized stealth initialization for procurement browser collectors on 15 November.
+NSW and ACT share `spiders.browser_support.stealth_async`; it runs before navigation. New
+browser collectors must use the same helper. HTTP/API collectors keep their native transports.
+
+A plain HTTP 403 from NSW's robots.txt does not establish failure of its browser collector.
+Check with the configured browser: on 15 November this returned HTTP 200 from both the PC
+and server, with opportunity and notice routes allowed. Respect robots rules and rate limits.
+NSW notice collection is bounded to five pages per notice type; if an enabled next link remains,
+`crawl/nsw_notice_coverage_failed` marks the source partial. Open-opportunity coverage is checked
+separately against its reported total. A partial NSW source is named in the brief coverage note.
+
 Never send or re-send a brief by hand without Sirish's OK, and never re-send an edition that
 already has a receipt.
 

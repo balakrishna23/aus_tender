@@ -182,3 +182,19 @@ offers 449 rows; ACT 62 rows. Windows: 712 tests OK (23 skips); staged server co
 operations 125, routine 39 OK. A brief dry run composed eight live listings without sending.
 This dry run used an existing complete publication, not a new full collection. The new code
 is committed locally but has not been pushed; PR #13 remains Sirish's merge.
+
+## NSW access correction and shared stealth on 15 November
+
+The earlier NSW blocker was based on a plain HTTP robots request, not a failed browser crawl.
+The user explicitly authorized stealth for procurement browser bots. With the configured
+browser, robots.txt returned HTTP 200 from both PC and server; the opportunity, notice and
+detail route prefixes were allowed. NSW's isolated live run collected 149 open opportunities
+plus 31 schemes of 180 reported, refreshed 20 details without errors, and saved 50 CAN and 50
+SON notices. ACT collected 62 rows with the shared pre-navigation callback.
+
+NSW and ACT now share `spiders.browser_support.stealth_async`. Direct HTTP/API sources retain
+their native transports. NSW's held pagination fix now finds enabled forward links rather than
+checking only the first direction link. This exposed additional notice history beyond the
+five-page cap: notice coverage is correctly reported partial. Typed empty lists, scheme-only
+results and count capitalization are handled; incomplete or unexplained walks still fail.
+The earlier no-stealth restriction is superseded by the user's explicit instruction.

@@ -85,6 +85,7 @@ def is_relevant(text):
 PW_META = {
     'playwright': True,
     'playwright_include_page': True,
+    'playwright_page_init_callback': 'spiders.browser_support.stealth_async',
     'playwright_page_methods': [
         # 'load' fires after HTML + subresources, NOT waiting for XHR polling
         # (networkidle never fires: Cloudflare jsd + /serverTime XHR keep going)

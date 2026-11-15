@@ -21,7 +21,7 @@ import activity_log
 from project_paths import database_directory
 
 from playwright.async_api import async_playwright
-from undetected_playwright import stealth_async
+from spiders.browser_support import stealth_async
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 BASE        = 'https://buy.nsw.gov.au'
@@ -63,10 +63,13 @@ EXTRACT_NOTICES_JS = """
 }
 """
 
-NEXT_PAGE_JS = """
+NEXT_PAGE_JS = r"""
 () => {
-    const nextBtn = document.querySelector('a.nsw-direction-link:not(.disabled)[href*="page="]');
-    if (nextBtn && nextBtn.innerText.includes('Next')) return nextBtn.href;
+    const nextBtn = Array.from(document.querySelectorAll('a.nsw-direction-link, a[rel="next"]')).find(a =>
+        !a.closest('.disabled, [aria-disabled="true"]') &&
+        (a.rel === 'next' || /\bnext\b/i.test(a.textContent + ' ' + (a.getAttribute('aria-label') || ''))) &&
+        a.getAttribute('href') && a.getAttribute('href') !== '#');
+    if (nextBtn) return nextBtn.href;
     return null;
 }
 """
@@ -266,6 +269,10 @@ async def fetch_notices(notice_type: str, max_pages: int, con: sqlite3.Connectio
 
                 notices = await page.evaluate(EXTRACT_NOTICES_JS)
                 if not notices:
+                    text = await page.inner_text('body')
+                    if re.search(r'(?im)^\s*0\s+results\s*$', text):
+                        log.info('Validated empty NSW notice search')
+                        break
                     raise RuntimeError('No notices extracted; verify the listing page and selectors')
                 log.info(f"    {len(notices)} notices on page {page_num}")
 
@@ -490,7 +497,7 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
                 except Exception:
                     pass
                 if reported is None:
-                    count = re.search(r'([\d,]+)\s+results', await page.inner_text('body'))
+                    count = re.search(r'([\d,]+)\s+results\b', await page.inner_text('body'), re.I)
                     reported = int(count.group(1).replace(',', '')) if count else None
                 cards = await page.evaluate(EXTRACT_OPPORTUNITIES_JS)
                 # Prequalification schemes share the list but are standing registers, not tenders.
@@ -552,7 +559,7 @@ async def fetch_opportunities(con: sqlite3.Connection, max_pages: int = 60):
     if reported is not None and len(seen) + len(schemes) < reported:
         raise RuntimeError(f'NSW opportunities incomplete: listed {len(seen)} tenders + '
                            f'{len(schemes)} schemes of {reported}')
-    if not seen:
+    if not seen and not (ended_normally and reported is not None and len(schemes) == reported):
         raise RuntimeError('No NSW opportunities extracted; verify the listing page and selectors')
     # Only after a complete walk: anything no longer listed has closed.
     closed = 0

@@ -241,3 +241,19 @@ Only one agent edits the branch at a time.
 - No emails sent or timers changed. Both Bala alert confirmations still pending. Existing
   PR #13 CI green; new work committed locally, not pushed. Check 16 Nov collection 00:45
   IST and send 02:45 IST. Gmail remains in pilot/testing; expiry risk around 19 Nov unchanged.
+
+## 15 Nov 20:30 IST, Codex: resumed rehearsal verification and completed shared-browser follow-up
+- The rehearsal started at 09:23 UTC completed: all eight sources reported, seven OK and
+  NSW PARTIAL because notice history extends beyond the five-page cap. BuyICT saved 135,
+  plans 676, ATMs 130, ACT 62 and NSW 249. No missing sources. The approved NSW gap did
+  not cancel publication: generation-20261115T093528Z-d49e51ac, finished 09:36:44 UTC.
+- Fresh server dry run at 14:52 UTC passed: eight open requests selected, none dropped;
+  composition/layout checks passed and no email sent. This used the new rehearsal.
+- Existing validation evidence: Windows 719 tests OK (23 skips), server collectors 99 OK;
+  deployed three collector files hash verified. No further collector edits were needed.
+- Restored SSH by moving the existing single-address restriction to this PC's current
+  address; the lightsail-connect alias and HTTP/HTTPS rules were preserved and verified.
+- API/nginx active; certificate, publication, collection, coordinator, disk, retention and
+  Gmail authorization OK. Health still flags the missed 15 Nov brief; it was not resent.
+  Timer states unchanged. No pushes or merges. Check the 16 Nov 00:45 IST collection and
+  02:45 IST send separately; a dry run cannot establish unattended delivery.

@@ -164,6 +164,20 @@ class NSWCoverageTests(unittest.IsolatedAsyncioTestCase):
         await self.fetch([listing_html(total='2 results', scheme=True), listing_html(card=False)])
         self.assertEqual(self.absent_status(), 'Closed')
 
+    async def test_formatted_case_insensitive_total_reconciles(self):
+        await self.fetch([listing_html(total='1 RESULTS'), listing_html(card=False)])
+        self.assertEqual(self.absent_status(), 'Closed')
+
+    async def test_scheme_only_and_validated_zero_are_complete(self):
+        for total, scheme in [('1 results', True), ('0 results', False)]:
+            result, _ = await self.fetch([listing_html(total=total, card=False, scheme=scheme)])
+            self.assertEqual(result, 0)
+            self.assertEqual(self.absent_status(), 'Closed')
+
+    async def test_unexplained_empty_still_fails(self):
+        with self.assertRaisesRegex(RuntimeError, 'No NSW opportunities'):
+            await self.fetch([listing_html(total='Changed count', card=False)])
+
     async def test_under_count_fails_without_closing(self):
         with self.assertRaisesRegex(RuntimeError, 'opportunities incomplete'):
             await self.fetch([listing_html(total='2 results'), listing_html(card=False)])
