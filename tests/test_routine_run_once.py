@@ -32,7 +32,7 @@ class RunOnceTests(unittest.TestCase):
                     raise __import__('subprocess').TimeoutExpired(args, kwargs['timeout'])
                 out = next((work/'reports').iterdir())
                 if 'run_spiders.py' in args:
-                    report = {'success': success, 'results': results if results is not None else [{}]*count}
+                    report = {'success': success, 'results': results if results is not None else self.results()[:count]}
                     if feed:
                         report['feed'] = feed_text
                     if drop_success:

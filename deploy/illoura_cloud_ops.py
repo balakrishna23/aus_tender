@@ -377,7 +377,9 @@ def validate_run(run):
         len(results) != 8
         or not all(isinstance(r, dict) for r in results)
         or {r.get("spider") for r in results} != EXPECTED
-        or not report.get("feed")
+        or not isinstance(report.get("feed"), str)
+        or not report["feed"].strip()
+        or "FAILED" in report["feed"]
     ):
         raise ValueError("Complete eight-source report required")
     gaps = sorted(

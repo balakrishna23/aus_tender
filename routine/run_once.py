@@ -25,17 +25,21 @@ def source_gate(report, exit_code):
     and no source the brief depends on is among them: one unrelated site must not cancel the
     day. A single unrelated source that timed out is such a problem. Anything unclear stays closed.
     """
-    results = report.get('results', [])
-    if len(results) != 8 or 'feed' not in report:
+    if not isinstance(report, dict):
         return False, []
-    if exit_code == 0 and report.get('success'):
-        return True, []
-    if exit_code not in (0, 1) or not all(isinstance(r, dict) for r in results) or {r.get('spider') for r in results} != SOURCES:
+    results = report.get('results', [])
+    feed = report.get('feed')
+    if (not isinstance(results, list) or len(results) != 8
+            or not all(isinstance(r, dict) for r in results)
+            or {r.get('spider') for r in results} != SOURCES
+            or not isinstance(feed, str) or not feed.strip() or 'FAILED' in feed):
         return False, []
     gaps = sorted(r['spider'] for r in results if r.get('status') != 'OK' or r.get('crawl_failed') or r.get('errors'))
-    feed = report['feed']
-    unexplained = report.get('success') is not False or not isinstance(feed, str) or 'FAILED' in feed
-    return bool(gaps) and not unexplained and not BRIEF_SOURCES & set(gaps), gaps
+    if not gaps:
+        return exit_code == 0 and report.get('success') is True, []
+    if exit_code not in (0, 1) or report.get('success') is not False or BRIEF_SOURCES & set(gaps):
+        return False, []
+    return True, gaps
 
 
 def bounded_process(command, timeout, **kwargs):

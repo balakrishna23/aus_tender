@@ -58,7 +58,7 @@ class CoverageTests(unittest.TestCase):
         if run_state is not None:
             self.write('cloud_run.json', run_state)
         self.write('source_refresh.json', {'success': success, 'feed': feed,
-            'results': results or [{'spider': str(i), 'status': 'OK'} for i in range(8)]})
+            'results': results if results is not None else self.named()})
         self.write('finalization.json', {'steps': [{'step': name, 'exit_code': 0} for name in
             ('intelligence', 'data_quality', 'newsletter_evidence')]})
         self.write('official_source_collection.json', [{'organisation': 'Example organisation', 'status': 'unavailable'}])
@@ -121,3 +121,10 @@ class CoverageTests(unittest.TestCase):
     def test_mandatory_gate_unchanged(self):
         with self.assertRaisesRegex(ValueError, 'Source sweep'):
             self.compose(success=False)
+
+    def test_success_flag_does_not_override_broken_report(self):
+        for kwargs in ({'results': [dict(spider='buy_ict', status='OK')] * 8},
+                       {'feed': 'releases feed: FAILED (disk error)'},
+                       {'feed': ''}, {'feed': True}):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(ValueError, 'Source sweep'):
+                self.compose(**kwargs)

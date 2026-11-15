@@ -259,3 +259,20 @@ Only one agent edits the branch at a time.
   Gmail authorization OK. Health still flags the missed 15 Nov brief; it was not resent.
   Timer states unchanged. No pushes or merges. Check the 16 Nov 00:45 IST collection and
   02:45 IST send separately; a dry run cannot establish unattended delivery.
+
+## 15 Nov 20:59 IST, Codex: project reliability audit and graduate guide
+
+- User requested automatic operation, a broad malfunction audit and detailed graduate documentation.
+- Reproduced and corrected claimed-success source reports bypassing identities/feed checks, and
+  ambiguous low-level Gmail Sent address matching. Deployed routine and operations after staging;
+  independent hash comparison found all 20 checked installed files matched local source.
+- Main Windows suite 725 OK (23 skips), local assistant 114 OK. Linux: ops 126, routine 44,
+  collectors 99, API 15 OK. All 17 working databases passed quick_check; core/API pip check OK.
+- Full rehearsal `daily_sweep_20261115_204537` completed and published generation `generation-20261115T152714Z-d469f577`. All eight sources reported: seven OK and NSW PARTIAL for its bounded notice history; the exact NSW gap was approved. Essential evidence completed with exit zero. Saved rows included 131 ATMs, 676 plans, 135 BuyICT requests, 62 ACT rows and 249 NSW rows. A fresh no-send composition selected 8 requests and dropped 0; composition and desktop/mobile layout checks passed. No email was sent. The coordinator also completed its normal isolated operations restore drill before publication.
+- Daily brief/health/certificate timers retained their enabled state; standalone collection disabled.
+  External five-minute watcher active and emitting metrics. Lightsail email contact now Valid.
+- Current API authentication/schema/aggregate smoke checks pass. Readiness still flags the earlier
+  missed 15 Nov edition, which was not resent. Next actual delivery and OAuth testing expiry remain.
+- Added docs/graduate-guide.md (26 chapters, about 7,800 words) and dated audit report; refreshed
+  stale retry/sender/field-loss reference statements. Private evidence retained in the workspace.
+- No extra email, buyer/partner outreach, model activation, timer enablement changes, pushes or merges.

@@ -62,6 +62,14 @@ class CloudOperations(unittest.TestCase):
     def write(self, name, value):
         ops.atomic_json(self.run / name, value)
 
+    def test_success_flag_does_not_override_failed_feed(self):
+        report = json.loads((self.run/'source_refresh.json').read_text())
+        for feed in ('releases feed: FAILED (disk error)', True, ''):
+            with self.subTest(feed=feed):
+                self.write('source_refresh.json', dict(report, feed=feed))
+                with self.assertRaises(ValueError):
+                    ops.validate_run(self.run)
+
     def publish(self):
         return ops.publish(self.data, self.served, self.run, self.policy)
 
