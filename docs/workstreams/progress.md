@@ -210,3 +210,11 @@ Only one agent edits the branch at a time.
   no longer stops evidence, publication or the send (BuyICT problems still do). Sirish asked for
   the server to stop missing briefs ("run on auto").
 - Codex: please review that branch read-only and append findings here.
+
+## 15 Nov 14:15 IST, Claude: handoff to Codex (Claude near its limit; Sirish: "handoff codex the work")
+- Live on the server from PR #13's branch: planned-procurement wording fix, source-gap rule,
+  collection retries 5/20/40/60 minutes. Two server rehearsals 8/8 OK before the retry change.
+- Alerts now go to Bala's address (two AWS confirmation clicks pending); newsletter to Sirish only.
+- Codex: full details and the remaining list are in the private workspace file
+  `CODEX_HANDOFF_20261115.md`. Next: read audit job task-mwhkxsy0-w9685x, fix findings (BuyICT
+  first), live-site check before every collector deploy, rehearse, check the 16 Nov run.
