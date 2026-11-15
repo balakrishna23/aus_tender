@@ -52,11 +52,11 @@ class CoverageTests(unittest.TestCase):
             ('official_sources', 'buyict_news', 'curated_source_checks', 'wa_contracts')])
         self.assertEqual(self.composer.supplemental_failures(self.out), [])
 
-    def compose(self, success=True):
+    def compose(self, success=True, results=None):
         self.write('editorial_notes.json', {'edition_date': str(datetime.now(ZoneInfo('Asia/Kolkata')).date()),
             'opportunities': {}, 'subject': 'Example brief', 'preheader': 'Example', 'introduction': 'Example'})
         self.write('source_refresh.json', {'success': success, 'feed': 'rebuilt',
-            'results': [{'spider': str(i), 'status': 'OK'} for i in range(8)]})
+            'results': results or [{'spider': str(i), 'status': 'OK'} for i in range(8)]})
         self.write('finalization.json', {'steps': [{'step': name, 'exit_code': 0} for name in
             ('intelligence', 'data_quality', 'newsletter_evidence')]})
         self.write('official_source_collection.json', [{'organisation': 'Example organisation', 'status': 'unavailable'}])
@@ -84,6 +84,20 @@ class CoverageTests(unittest.TestCase):
         self.assertIn('Additional research pages unavailable: Example organisation.', paragraphs[1])
         self.assertIn('Supplemental research failures (separate from the eight procurement collectors): wa_contracts.', paragraphs[1])
         self.assertEqual(package['from'], 'sender@example.com')
+
+    def named(self, **problems):
+        names = ('contract_api', 'aus_contract', 'aus_tender', 'planned_procurement', 'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender')
+        return [dict({'spider': name, 'status': 'OK'}, **problems.get(name, {})) for name in names]
+
+    def test_problem_in_another_source_is_named_in_the_brief(self):
+        package = self.compose(success=False, results=self.named(planned_procurement={'status': 'PARTIAL', 'crawl_failed': True}))
+        text = package['sections'][-1]['items'][0]['paragraphs'][0]
+        self.assertIn('Source stages with a problem today: planned_procurement.', text)
+        self.assertIn('BuyICT, which this brief is built from, completed normally.', text)
+
+    def test_buyict_problem_stops_the_brief(self):
+        with self.assertRaisesRegex(ValueError, 'Source sweep'):
+            self.compose(success=False, results=self.named(buy_ict={'status': 'FAIL(1)'}))
 
     def test_mandatory_gate_unchanged(self):
         with self.assertRaisesRegex(ValueError, 'Source sweep'):

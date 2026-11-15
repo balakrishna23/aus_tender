@@ -106,6 +106,30 @@ class SenderTests(unittest.TestCase):
         self.session.post.assert_not_called()
         self.sender.AuthorizedSession.assert_not_called()
 
+    NAMES = ('contract_api', 'aus_contract', 'aus_tender', 'planned_procurement', 'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender')
+
+    def source_report(self, success, **problems):
+        self.write('source_refresh.json', {'success': success, 'feed': 'rebuilt', 'results': [
+            dict({'spider': name, 'status': 'OK'}, **problems.get(name, {})) for name in self.NAMES]})
+
+    def test_problem_in_a_source_the_brief_does_not_use_still_sends(self):
+        self.source_report(False, planned_procurement={'status': 'PARTIAL', 'crawl_failed': True, 'errors': 1})
+        self.send()
+        self.session.post.assert_called_once()
+
+    def test_buyict_problem_or_unclear_report_refuses(self):
+        for label, arrange in {
+            'buy_ict failed': lambda: self.source_report(False, buy_ict={'status': 'FAIL(1)'}),
+            'buy_ict crawl failed': lambda: self.source_report(True, buy_ict={'crawl_failed': True}),
+            'failure with no named source': lambda: self.source_report(False),
+            'rows are not records': lambda: self.write('source_refresh.json', {'success': False, 'feed': 'rebuilt', 'results': [1] * 8}),
+        }.items():
+            with self.subTest(label):
+                arrange()
+                with self.assertRaises(ValueError):
+                    self.send()
+        self.session.post.assert_not_called()
+
     def test_safety_gates(self):
         cases = [('source_refresh.json', {'success': False}),
                  ('email_layout_checks.json', []), ('cloud_send_review.json', {'reviewed': False})]

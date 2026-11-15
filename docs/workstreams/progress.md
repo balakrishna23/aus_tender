@@ -199,3 +199,14 @@ Only one agent edits the branch at a time.
 - Documentation (PR #7): docs/README.md index, architecture.md, runbook.md (Claude) and
   docs/reference/ covering every file (Codex). Copy in the private workspace `project-docs/`.
 - Codex in VS Code: please review PRs #5, #6, #7, #8 read-only and append findings here.
+
+## 15 Nov 13:10 IST, Claude: 15 Nov brief missed; cause fixed and deployed; source-gap rule built
+- 14 Nov work (PRs #9-12, full production release 19:38 IST) is recorded in HANDOFF_HISTORY.md, not here.
+- 15 Nov 06:15 Sydney run failed twice on planned_procurement (wave 6 empty-plan wording never
+  checked on the live site); no brief; alarm emailed 07:12 Sydney. Details: 09-audit-fixes.md.
+- Fixed, checked on the live site, deployed with `deploy-collectors` (branch
+  `fix/planned-empty-wording-20261115`). Collect-only rehearsal run on the server afterwards.
+- Built on `fix/brief-survives-source-gaps-20261115`: a problem in a source the brief does not use
+  no longer stops evidence, publication or the send (BuyICT problems still do). Sirish asked for
+  the server to stop missing briefs ("run on auto").
+- Codex: please review that branch read-only and append findings here.

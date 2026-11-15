@@ -12,6 +12,28 @@ SOURCE_TIMEOUT_SECONDS = 3600  # Sequential sources must leave time for evidence
 ROUTINE_BUDGET_SECONDS = 6300  # Sources/research plus evidence fit in 105 minutes.
 
 
+SOURCES = {'contract_api', 'aus_contract', 'aus_tender', 'planned_procurement', 'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender'}
+BRIEF_SOURCES = {'buy_ict'}  # The daily brief is built from BuyICT only.
+
+
+def source_gate(report, exit_code):
+    """(may continue, sources with a problem).
+
+    A clean report passes. A report with failed sources passes only when all eight sources
+    reported, the run was not cut short, and no source the brief depends on is among them:
+    one unrelated site must not cancel the day. Anything unclear stays closed.
+    """
+    results = report.get('results', [])
+    if len(results) != 8 or 'feed' not in report:
+        return False, []
+    if exit_code == 0 and report.get('success'):
+        return True, []
+    if exit_code not in (0, 1) or not all(isinstance(r, dict) for r in results) or {r.get('spider') for r in results} != SOURCES:
+        return False, []
+    gaps = sorted(r['spider'] for r in results if r.get('status') != 'OK' or r.get('crawl_failed') or r.get('errors'))
+    return bool(gaps) and not BRIEF_SOURCES & set(gaps), gaps
+
+
 def bounded_process(command, timeout, **kwargs):
     process = subprocess.Popen(command, start_new_session=os.name != 'nt', **kwargs)
     try:
@@ -111,7 +133,9 @@ def main():
             research=pool.submit(run,'research',[str(WORK/'scripts/newsletter_research_sweep.py'),'--out',str(out)],WORK,RESEARCH_TIMEOUT_SECONDS)
             state['source_exit_code']=source.result();state['research_exit_code']=research.result()
         report=read_report(out/'source_refresh.json')
-        if state['source_exit_code'] or not report.get('success') or len(report.get('results',[]))!=8 or 'feed' not in report:
+        proceed,gaps=source_gate(report,state['source_exit_code'])
+        if gaps:state['source_gaps']=gaps
+        if not proceed:
             state['status']='source_failure';save();raise SystemExit(1)
         state['status']='building_evidence';save()
         state['finalization_exit_code']=run('finalization',[str(WORK/'scripts/finalize_daily_sweep.py'),'--out',str(out)],WORK,FINALIZATION_TIMEOUT_SECONDS)

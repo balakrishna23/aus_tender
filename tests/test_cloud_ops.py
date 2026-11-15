@@ -133,6 +133,31 @@ class CloudOperations(unittest.TestCase):
         with self.assertRaises(ValueError):
             ops.restore_drill(backup)
 
+    def source_report(self, success=True, **problems):
+        self.write("source_refresh.json", {"success": success, "feed": "rebuilt", "results": [
+            dict({"spider": s, "status": "OK", "errors": 0}, **problems.get(s, {})) for s in sorted(ops.EXPECTED)]})
+
+    def test_problem_in_a_source_the_brief_does_not_use_still_validates(self):
+        self.source_report(False, planned_procurement={"status": "PARTIAL", "crawl_failed": True, "errors": 1})
+        self.assertEqual(ops.validate_run(self.run)["source_gaps"], ["planned_procurement"])
+
+    def test_clean_run_has_no_gaps(self):
+        self.assertEqual(ops.validate_run(self.run)["source_gaps"], [])
+
+    def test_buyict_problem_or_unclear_report_is_rejected(self):
+        cases = [
+            lambda: self.source_report(False, buy_ict={"status": "FAIL(1)"}),
+            lambda: self.source_report(True, buy_ict={"errors": 2}),
+            lambda: self.source_report(False),
+            lambda: self.write("source_refresh.json", {"success": False, "feed": "rebuilt", "results": [{}] * 8}),
+            lambda: self.write("source_refresh.json", {"success": False, "results": []}),
+        ]
+        for number, arrange in enumerate(cases):
+            with self.subTest(number):
+                arrange()
+                with self.assertRaises(ValueError):
+                    ops.validate_run(self.run)
+
     def test_evidence_without_build_timestamp_is_rejected(self):
         self.write("newsletter_evidence.json", {"generated_at_utc": ops.utc()})
         with self.assertRaises(ValueError):

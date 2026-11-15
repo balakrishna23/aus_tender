@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RunOnceTests(unittest.TestCase):
-    def run_case(self, source_exit=0, success=True, count=8, feed=True, final_exit=0, steps=None, research_exit=0, timeout_stage=None, expired_budget=False):
+    def run_case(self, source_exit=0, success=True, count=8, feed=True, final_exit=0, steps=None, research_exit=0, timeout_stage=None, expired_budget=False, results=None):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             project, work = base/'project', base/'work'
@@ -32,7 +32,7 @@ class RunOnceTests(unittest.TestCase):
                     raise __import__('subprocess').TimeoutExpired(args, kwargs['timeout'])
                 out = next((work/'reports').iterdir())
                 if 'run_spiders.py' in args:
-                    report = {'success': success, 'results': [{}]*count}
+                    report = {'success': success, 'results': results if results is not None else [{}]*count}
                     if feed:
                         report['feed'] = 'rebuilt'
                     (out/'source_refresh.json').write_text(json.dumps(report))
@@ -69,6 +69,38 @@ class RunOnceTests(unittest.TestCase):
             with self.subTest(kwargs=kwargs):
                 code, state = self.run_case(**kwargs)
                 self.assertEqual((code, state['status']), (1, 'source_failure'))
+
+    NAMES = ('contract_api', 'aus_contract', 'aus_tender', 'planned_procurement', 'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender')
+
+    def results(self, **problems):
+        return [dict({'spider': name, 'status': 'OK'}, **problems.get(name, {})) for name in self.NAMES]
+
+    def test_problem_in_a_source_the_brief_does_not_use_continues(self):
+        # 15 Nov 2026: planned_procurement PARTIAL cancelled the brief although BuyICT was fine.
+        failed = self.results(planned_procurement={'status': 'PARTIAL', 'crawl_failed': True, 'errors': 1})
+        code, state = self.run_case(source_exit=1, success=False, results=failed)
+        self.assertEqual((code, state['status']), (0, 'ready_for_editorial_review'))
+        self.assertEqual(state['source_gaps'], ['planned_procurement'])
+
+    def test_buyict_problem_or_unclear_run_still_stops(self):
+        cases = {
+            'buy_ict failed': dict(source_exit=1, success=False, results=self.results(buy_ict={'status': 'FAIL(1)'})),
+            'buy_ict among several': dict(source_exit=1, success=False, results=self.results(
+                buy_ict={'status': 'PARTIAL', 'crawl_failed': True}, nsw_tender={'status': 'FAIL(1)'})),
+            'failure with no named source': dict(source_exit=1, success=False, results=self.results()),
+            'cut short': dict(source_exit=124, success=False, results=self.results(nsw_tender={'status': 'FAIL(124)'})),
+            'unknown source names': dict(source_exit=1, success=False, results=[{'spider': str(i), 'status': 'FAIL(1)'} for i in range(8)]),
+            'seven sources': dict(source_exit=1, success=False, results=self.results(nsw_tender={'status': 'FAIL(1)'})[:7]),
+        }
+        for label, kwargs in cases.items():
+            with self.subTest(label):
+                code, state = self.run_case(**kwargs)
+                self.assertEqual((code, state['status']), (1, 'source_failure'))
+
+    def test_clean_run_records_no_gaps(self):
+        code, state = self.run_case(results=self.results())
+        self.assertEqual(code, 0)
+        self.assertNotIn('source_gaps', state)
 
     def test_evidence_gates(self):
         for kwargs in ({'final_exit': 1}, {'steps': []}, {'steps': [{'step': 'intelligence', 'exit_code': 1}]}):

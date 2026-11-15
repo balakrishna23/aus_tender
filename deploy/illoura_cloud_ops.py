@@ -311,6 +311,7 @@ EXPECTED = {
     "act_tender",
     "nsw_tender",
 }
+BRIEF_SOURCES = {"buy_ict"}  # The daily brief is built from BuyICT only.
 
 
 def utc():
@@ -364,15 +365,20 @@ def validate_run(run):
     report = json.loads((run / "source_refresh.json").read_text())
     results = report.get("results", [])
     if (
-        report.get("success") is not True
-        or len(results) != 8
-        or {r["spider"] for r in results} != EXPECTED
+        len(results) != 8
+        or not all(isinstance(r, dict) for r in results)
+        or {r.get("spider") for r in results} != EXPECTED
         or not report.get("feed")
-        or any(
-            r.get("status") != "OK" or r.get("crawl_failed") or r.get("errors", 0)
-            for r in results
-        )
     ):
+        raise ValueError("Complete eight-source report required")
+    gaps = sorted(
+        r["spider"]
+        for r in results
+        if r.get("status") != "OK" or r.get("crawl_failed") or r.get("errors", 0)
+    )
+    # A clean report, or one whose only problems are in sources the brief does not use.
+    # Their databases keep the last good rows (raw data is never overwritten).
+    if BRIEF_SOURCES & set(gaps) or (report.get("success") is not True and not gaps):
         raise ValueError("Complete successful eight-source report required")
     final = json.loads((run / "finalization.json").read_text())
     passed = {s["step"] for s in final.get("steps", []) if s.get("exit_code") == 0}
@@ -388,6 +394,7 @@ def validate_run(run):
         raise ValueError("Exactly one intelligence build timestamp required")
     return {
         "run_id": run.name,
+        "source_gaps": gaps,
         "source_results": [
             {
                 k: r.get(k)

@@ -258,6 +258,9 @@ def check(
             else "attention",
             "phase": state.get("status"),
         }
+        if isinstance(state.get("source_gaps"), list) and state["source_gaps"]:
+            # Sources that had a problem while the run still completed (the brief uses BuyICT only).
+            checks["last_run"]["source_gaps"] = [str(name)[:40] for name in state["source_gaps"][:8]]
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         # Unreadable or wrongly shaped state is reported, never allowed to stop the poll.
         checks.setdefault("collection", {"status": "unavailable"})

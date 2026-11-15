@@ -96,7 +96,7 @@ collection timer, which stays disabled so collection never runs twice.
 3. Records an automated review (content hashes, layout result, selection) and waits for 08:15.
 4. Just before sending, re-checks that the timer is still enabled and that it is before
    12:00 Sydney on the edition's day; otherwise keeps the brief for review. Sends once
-   through the existing helper, which refuses source gaps, stale edition dates, changed
+   through the existing helper, which refuses a BuyICT gap or an unclear source report, stale edition dates, changed
    content, identity mismatch and duplicates (Gmail Sent is checked by subject). Since
    13 November one edition date can be sent only once across all run folders, under a
    server-wide `send.lock`, and an unresolved attempt in another folder blocks the send
@@ -129,7 +129,8 @@ or send a newsletter. Collection, operations and source locks prevent overlappin
 supported writers; do not launch individual source CLIs independently on this host.
 Independent per-database SQLite backups are not one cross-database transaction.
 
-Publication requires all eight successful source results and essential evidence
+Publication requires a report from all eight sources with no problem in BuyICT (other
+sources with a problem are recorded as `source_gaps` and keep their last good rows) and essential evidence
 steps, plus an intelligence build timestamp matching the evidence. Missing tables,
 failed checks, inadequate free disk space and invalid evidence prevent switching
 the served generation. Files and directories are flushed before the atomic symlink
