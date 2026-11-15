@@ -20,8 +20,10 @@ def source_gate(report, exit_code):
     """(may continue, sources with a problem).
 
     A clean report passes. A report with failed sources passes only when all eight sources
-    reported, the run was not cut short, and no source the brief depends on is among them:
-    one unrelated site must not cancel the day. Anything unclear stays closed.
+    reported, the collection as a whole was not cut short, the runner itself says the batch
+    failed (success is false, not missing), nothing else failed (the feed and view rebuild)
+    and no source the brief depends on is among them: one unrelated site must not cancel the
+    day. A single unrelated source that timed out is such a problem. Anything unclear stays closed.
     """
     results = report.get('results', [])
     if len(results) != 8 or 'feed' not in report:
@@ -31,7 +33,9 @@ def source_gate(report, exit_code):
     if exit_code not in (0, 1) or not all(isinstance(r, dict) for r in results) or {r.get('spider') for r in results} != SOURCES:
         return False, []
     gaps = sorted(r['spider'] for r in results if r.get('status') != 'OK' or r.get('crawl_failed') or r.get('errors'))
-    return bool(gaps) and not BRIEF_SOURCES & set(gaps), gaps
+    feed = report['feed']
+    unexplained = report.get('success') is not False or not isinstance(feed, str) or 'FAILED' in feed
+    return bool(gaps) and not unexplained and not BRIEF_SOURCES & set(gaps), gaps
 
 
 def bounded_process(command, timeout, **kwargs):

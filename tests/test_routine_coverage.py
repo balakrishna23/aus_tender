@@ -52,10 +52,12 @@ class CoverageTests(unittest.TestCase):
             ('official_sources', 'buyict_news', 'curated_source_checks', 'wa_contracts')])
         self.assertEqual(self.composer.supplemental_failures(self.out), [])
 
-    def compose(self, success=True, results=None):
+    def compose(self, success=True, results=None, run_state=None, feed='rebuilt'):
         self.write('editorial_notes.json', {'edition_date': str(datetime.now(ZoneInfo('Asia/Kolkata')).date()),
             'opportunities': {}, 'subject': 'Example brief', 'preheader': 'Example', 'introduction': 'Example'})
-        self.write('source_refresh.json', {'success': success, 'feed': 'rebuilt',
+        if run_state is not None:
+            self.write('cloud_run.json', run_state)
+        self.write('source_refresh.json', {'success': success, 'feed': feed,
             'results': results or [{'spider': str(i), 'status': 'OK'} for i in range(8)]})
         self.write('finalization.json', {'steps': [{'step': name, 'exit_code': 0} for name in
             ('intelligence', 'data_quality', 'newsletter_evidence')]})
@@ -90,10 +92,27 @@ class CoverageTests(unittest.TestCase):
         return [dict({'spider': name, 'status': 'OK'}, **problems.get(name, {})) for name in names]
 
     def test_problem_in_another_source_is_named_in_the_brief(self):
-        package = self.compose(success=False, results=self.named(planned_procurement={'status': 'PARTIAL', 'crawl_failed': True}))
+        package = self.compose(success=False, results=self.named(planned_procurement={'status': 'PARTIAL', 'crawl_failed': True}),
+                               run_state={'source_exit_code': 1, 'source_gaps': ['planned_procurement']})
         text = package['sections'][-1]['items'][0]['paragraphs'][0]
         self.assertIn('Source stages with a problem today: planned_procurement.', text)
         self.assertIn('BuyICT, which this brief is built from, completed normally.', text)
+
+    def test_gap_without_approval_or_with_another_failure_stops_the_brief(self):
+        gap = self.named(planned_procurement={'status': 'PARTIAL'})
+        ok = {'source_exit_code': 1, 'source_gaps': ['planned_procurement']}
+        for label, kwargs in {
+            'no run state': dict(success=False, results=gap),
+            'run cut short': dict(success=False, results=gap, run_state={'source_exit_code': 124, 'source_gaps': ['planned_procurement']}),
+            'other gaps approved': dict(success=False, results=gap, run_state={'source_exit_code': 1, 'source_gaps': ['nsw_tender']}),
+            'feed failed as well': dict(success=False, results=gap, run_state=ok, feed='releases feed: FAILED (x)'),
+            'runner says success': dict(success=True, results=gap, run_state=ok),
+            'success flag missing': dict(success=None, results=gap, run_state=ok),
+        }.items():
+            with self.subTest(label):
+                (self.out/'cloud_run.json').unlink(missing_ok=True)
+                with self.assertRaisesRegex(ValueError, 'Source sweep'):
+                    self.compose(**kwargs)
 
     def test_buyict_problem_stops_the_brief(self):
         with self.assertRaisesRegex(ValueError, 'Source sweep'):

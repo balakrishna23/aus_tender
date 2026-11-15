@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class RunOnceTests(unittest.TestCase):
-    def run_case(self, source_exit=0, success=True, count=8, feed=True, final_exit=0, steps=None, research_exit=0, timeout_stage=None, expired_budget=False, results=None):
+    def run_case(self, source_exit=0, success=True, count=8, feed=True, final_exit=0, steps=None, research_exit=0, timeout_stage=None, expired_budget=False, results=None, feed_text='rebuilt', drop_success=False):
         with tempfile.TemporaryDirectory() as temp:
             base = Path(temp)
             project, work = base/'project', base/'work'
@@ -34,7 +34,9 @@ class RunOnceTests(unittest.TestCase):
                 if 'run_spiders.py' in args:
                     report = {'success': success, 'results': results if results is not None else [{}]*count}
                     if feed:
-                        report['feed'] = 'rebuilt'
+                        report['feed'] = feed_text
+                    if drop_success:
+                        del report['success']
                     (out/'source_refresh.json').write_text(json.dumps(report))
                     return SimpleNamespace(returncode=source_exit)
                 if any('finalize_daily_sweep.py' in a for a in args):
@@ -89,6 +91,12 @@ class RunOnceTests(unittest.TestCase):
                 buy_ict={'status': 'PARTIAL', 'crawl_failed': True}, nsw_tender={'status': 'FAIL(1)'})),
             'failure with no named source': dict(source_exit=1, success=False, results=self.results()),
             'cut short': dict(source_exit=124, success=False, results=self.results(nsw_tender={'status': 'FAIL(124)'})),
+            'feed failed as well': dict(source_exit=1, success=False, feed_text='releases feed: FAILED (disk error); intelligence views rebuilt',
+                                        results=self.results(planned_procurement={'status': 'PARTIAL'})),
+            'views failed as well': dict(source_exit=1, success=False, feed_text='releases feed: 0 new; intelligence views FAILED (x)',
+                                         results=self.results(planned_procurement={'status': 'PARTIAL'})),
+            'success flag missing': dict(source_exit=1, drop_success=True, results=self.results(planned_procurement={'status': 'PARTIAL'})),
+            'gap but runner says success': dict(source_exit=1, success=True, results=self.results(planned_procurement={'status': 'PARTIAL'})),
             'unknown source names': dict(source_exit=1, success=False, results=[{'spider': str(i), 'status': 'FAIL(1)'} for i in range(8)]),
             'seven sources': dict(source_exit=1, success=False, results=self.results(nsw_tender={'status': 'FAIL(1)'})[:7]),
         }
@@ -96,6 +104,10 @@ class RunOnceTests(unittest.TestCase):
             with self.subTest(label):
                 code, state = self.run_case(**kwargs)
                 self.assertEqual((code, state['status']), (1, 'source_failure'))
+
+    def test_one_unrelated_source_timing_out_continues(self):
+        code, state = self.run_case(source_exit=1, success=False, results=self.results(nsw_tender={'status': 'FAIL(124)', 'exit_code': 124}))
+        self.assertEqual((code, state['status'], state['source_gaps']), (0, 'ready_for_editorial_review', ['nsw_tender']))
 
     def test_clean_run_records_no_gaps(self):
         code, state = self.run_case(results=self.results())

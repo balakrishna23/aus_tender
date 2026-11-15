@@ -139,5 +139,9 @@ the send. Now (`source_gate` in `routine/run_once.py`, `validate_run` in
 `routine/scripts/send_gmail.py`): when all eight sources report, the run was not cut short and
 BuyICT has no problem, the day continues; the sources with a problem are named in the brief's
 coverage note, in the run state and publication record (`source_gaps`) and in health
-(`last_run.source_gaps`). A BuyICT problem, a timeout, a missing source or a failure with no named
-source still stops everything.
+(`last_run.source_gaps`). A BuyICT problem, a collection that was cut short as a whole, a missing
+source, a failed feed or view rebuild, or a failure with no named source still stops everything; one
+unrelated source timing out counts as a problem in that source. Publication, composition and the send
+also require that the run script approved exactly these gaps (`cloud_run.json`). Codex reviewed the
+change; its three findings (second failure hidden behind a named gap, missing success flag, later
+gates not tied to the run script's decision) were fixed before deployment.

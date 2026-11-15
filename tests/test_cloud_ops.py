@@ -93,6 +93,7 @@ class CloudOperations(unittest.TestCase):
             status="PARTIAL", crawl_failed=True, errors=1
         )
         self.write("source_refresh.json", report)
+        self.write("cloud_run.json", {"source_exit_code": 1, "source_gaps": ["planned_procurement"]})
         self.publish()
         self.assertNotEqual((self.served / "current").resolve(), old)
 
@@ -154,9 +155,44 @@ class CloudOperations(unittest.TestCase):
         self.write("source_refresh.json", {"success": success, "feed": "rebuilt", "results": [
             dict({"spider": s, "status": "OK", "errors": 0}, **problems.get(s, {})) for s in sorted(ops.EXPECTED)]})
 
+    GAP = {"planned_procurement": {"status": "PARTIAL", "crawl_failed": True, "errors": 1}}
+
+    def approve(self, gaps=("planned_procurement",), exit_code=1):
+        self.write("cloud_run.json", {"source_exit_code": exit_code, "source_gaps": list(gaps)})
+
     def test_problem_in_a_source_the_brief_does_not_use_still_validates(self):
-        self.source_report(False, planned_procurement={"status": "PARTIAL", "crawl_failed": True, "errors": 1})
+        self.source_report(False, **self.GAP)
+        self.approve()
         self.assertEqual(ops.validate_run(self.run)["source_gaps"], ["planned_procurement"])
+
+    def test_gap_needs_the_run_scripts_approval_and_nothing_else_failed(self):
+        def feed(text):
+            report = json.loads((self.run / "source_refresh.json").read_text())
+            report["feed"] = text
+            self.write("source_refresh.json", report)
+
+        def no_success():
+            report = json.loads((self.run / "source_refresh.json").read_text())
+            del report["success"]
+            self.write("source_refresh.json", report)
+
+        cases = {
+            "no run state": lambda: (self.run / "cloud_run.json").unlink(),
+            "run cut short": lambda: self.approve(exit_code=124),
+            "run approved other gaps": lambda: self.approve(gaps=("nsw_tender",)),
+            "run recorded no gaps": lambda: self.write("cloud_run.json", {"source_exit_code": 1}),
+            "feed failed as well": lambda: feed("releases feed: FAILED (disk error); intelligence views rebuilt"),
+            "success flag missing": no_success,
+            "runner says success": lambda: self.source_report(True, **self.GAP),
+        }
+        for label, spoil in cases.items():
+            with self.subTest(label):
+                self.source_report(False, **self.GAP)
+                self.approve()
+                ops.validate_run(self.run)
+                spoil()
+                with self.assertRaises(ValueError):
+                    ops.validate_run(self.run)
 
     def test_clean_run_has_no_gaps(self):
         self.assertEqual(ops.validate_run(self.run)["source_gaps"], [])

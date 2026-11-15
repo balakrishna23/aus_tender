@@ -360,6 +360,15 @@ def exclusive(path):
         yield
 
 
+def gaps_approved_by_run(run, gaps):
+    """The run script itself let this run continue with exactly these source gaps."""
+    try:
+        state = json.loads((Path(run) / "cloud_run.json").read_text())
+        return state.get("source_exit_code") in (0, 1) and state.get("source_gaps") == gaps
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def validate_run(run):
     run = Path(run)
     report = json.loads((run / "source_refresh.json").read_text())
@@ -378,7 +387,16 @@ def validate_run(run):
     )
     # A clean report, or one whose only problems are in sources the brief does not use.
     # Their databases keep the last good rows (raw data is never overwritten).
-    if BRIEF_SOURCES & set(gaps) or (report.get("success") is not True and not gaps):
+    if not gaps:
+        if report.get("success") is not True:
+            raise ValueError("Complete successful eight-source report required")
+    elif (
+        BRIEF_SOURCES & set(gaps)
+        or report.get("success") is not False
+        or not isinstance(report["feed"], str)
+        or "FAILED" in report["feed"]
+        or not gaps_approved_by_run(run, gaps)
+    ):
         raise ValueError("Complete successful eight-source report required")
     final = json.loads((run / "finalization.json").read_text())
     passed = {s["step"] for s in final.get("steps", []) if s.get("exit_code") == 0}

@@ -61,8 +61,19 @@ def main():
     final = json.loads((out/'finalization.json').read_text(encoding='utf-8'))
     passed = {x['step'] for x in final['steps'] if x.get('exit_code') == 0}
     problems = {x.get('spider') for x in report['results'] if x.get('status') != 'OK' or x.get('crawl_failed') or x.get('errors')}
-    # BuyICT is the brief's only source: a problem there, or a failed run with no named source, stops the brief.
-    if len(report['results']) != 8 or 'feed' not in report or 'buy_ict' in problems or (report.get('success') is not True and not problems) or not {'intelligence', 'data_quality', 'newsletter_evidence'} <= passed:
+    # BuyICT is the brief's only source: a problem there, any failure that is not a named source
+    # (the feed, a missing success flag) or a run the run script did not approve stops the brief.
+    if problems:
+        try:
+            run_state = json.loads((out/'cloud_run.json').read_text(encoding='utf-8'))
+            approved = run_state.get('source_exit_code') in (0, 1) and run_state.get('source_gaps') == sorted(problems, key=str)
+        except (OSError, ValueError, AttributeError, TypeError):
+            approved = False
+        sources_ok = (approved and 'buy_ict' not in problems and report.get('success') is False
+                      and isinstance(report.get('feed'), str) and 'FAILED' not in report['feed'])
+    else:
+        sources_ok = report.get('success') is True
+    if len(report['results']) != 8 or 'feed' not in report or not sources_ok or not {'intelligence', 'data_quality', 'newsletter_evidence'} <= passed:
         raise ValueError('Source sweep and essential evidence builds must finish first')
 
     def deadline(moment):
