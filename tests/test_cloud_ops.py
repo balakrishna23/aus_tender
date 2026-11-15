@@ -73,11 +73,28 @@ class CloudOperations(unittest.TestCase):
         self.publish()
         old = (self.served / "current").resolve()
         report = json.loads((self.run / "source_refresh.json").read_text())
-        report["results"][0]["status"] = "FAILED"
+        report["success"] = False
+        next(r for r in report["results"] if r["spider"] == "buy_ict")["status"] = "FAILED"
         self.write("source_refresh.json", report)
         with self.assertRaises(ValueError):
             self.publish()
         self.assertEqual((self.served / "current").resolve(), old)
+
+    @unittest.skipIf(
+        os.name == "nt",
+        "Atomic symlink publication is verified on the Linux deployment",
+    )
+    def test_problem_in_a_source_the_brief_does_not_use_still_publishes(self):
+        self.publish()
+        old = (self.served / "current").resolve()
+        report = json.loads((self.run / "source_refresh.json").read_text())
+        report["success"] = False
+        next(r for r in report["results"] if r["spider"] == "planned_procurement").update(
+            status="PARTIAL", crawl_failed=True, errors=1
+        )
+        self.write("source_refresh.json", report)
+        self.publish()
+        self.assertNotEqual((self.served / "current").resolve(), old)
 
     @unittest.skipIf(
         os.name == "nt",
