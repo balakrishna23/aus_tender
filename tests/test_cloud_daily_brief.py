@@ -451,8 +451,8 @@ class RetryTests(unittest.TestCase):
         output = io.StringIO()
         clock = Mock(return_value=now)
         def sleep(seconds):
-            self.assertEqual(seconds, 300)
-            clock.return_value = after_pause or now + timedelta(seconds=300)
+            self.assertIn(seconds, brief.RETRY_PAUSES[stage])
+            clock.return_value = after_pause or clock.return_value + timedelta(seconds=seconds)
         with (patch.object(brief, 'utc_now', clock), patch.object(brief.time, 'sleep', side_effect=sleep),
               redirect_stdout(output)):
             brief.run_stage(stage, action, brief.send_window(now)[1])
@@ -496,13 +496,41 @@ class RetryTests(unittest.TestCase):
         self.assertFalse(brief.unresolved_guard(self.failure('another RuntimeError')))
 
     def test_two_failures_propagate_nonzero(self):
-        for stage in ('collect', 'compose'):
-            action = Mock(side_effect=[self.failure(), self.failure()])
+        for stage, attempts in (('collect', 5), ('compose', 2)):
+            action = Mock(side_effect=[self.failure() for _ in range(attempts + 3)])
             with (patch.object(brief, 'utc_now', return_value=NOW), patch.object(brief.time, 'sleep'),
                   redirect_stdout(io.StringIO()), self.assertRaises(brief.subprocess.CalledProcessError) as raised):
                 brief.run_stage(stage, action, brief.send_window(NOW)[1])
-            self.assertEqual(action.call_count, 2)
+            self.assertEqual(action.call_count, attempts)
             self.assertNotEqual(raised.exception.returncode, 0)
+
+    def test_collect_outage_recovers_on_a_later_attempt_with_growing_pauses(self):
+        # BuyICT timed out for about 90 minutes on 6 Nov 2026; one retry after 5 minutes would lose the day.
+        slept = []
+        clock = Mock(return_value=NOW)
+        def sleep(seconds):
+            slept.append(seconds)
+            clock.return_value = clock.return_value + timedelta(seconds=seconds + 900)  # each attempt takes 15 minutes
+        action = Mock(side_effect=[self.failure(), self.failure(), self.failure(), None])
+        with (patch.object(brief, 'utc_now', clock), patch.object(brief.time, 'sleep', side_effect=sleep),
+              redirect_stdout(io.StringIO())):
+            brief.run_stage('collect', action, brief.send_window(NOW)[1])
+        self.assertEqual(action.call_count, 4)
+        self.assertEqual(slept, [300, 1200, 2400])
+
+    def test_later_retries_stop_at_the_latest_start(self):
+        slept = []
+        clock = Mock(return_value=NOW + timedelta(hours=2))  # two hours into the morning
+        def sleep(seconds):
+            slept.append(seconds)
+            clock.return_value = clock.return_value + timedelta(seconds=seconds)
+        action = Mock(side_effect=[self.failure() for _ in range(6)])
+        with (patch.object(brief, 'utc_now', clock), patch.object(brief.time, 'sleep', side_effect=sleep),
+              redirect_stdout(io.StringIO()), self.assertRaises(brief.subprocess.CalledProcessError)):
+            brief.run_stage('collect', action, brief.send_window(NOW)[1])
+        self.assertLess(action.call_count, 5)
+        latest = brief.send_window(NOW)[1].replace(hour=9, minute=30)
+        self.assertLessEqual(clock.return_value, latest + timedelta(seconds=1))
 
     def test_send_failure_never_retried(self):
         scraper = Mock(side_effect=[None, self.failure('uncertain send')])
