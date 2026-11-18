@@ -73,11 +73,29 @@ class CloudOperations(unittest.TestCase):
         self.publish()
         old = (self.served / "current").resolve()
         report = json.loads((self.run / "source_refresh.json").read_text())
-        report["results"][0]["status"] = "FAILED"
+        report["success"] = False
+        next(r for r in report["results"] if r["spider"] == "buy_ict")["status"] = "FAILED"
         self.write("source_refresh.json", report)
         with self.assertRaises(ValueError):
             self.publish()
         self.assertEqual((self.served / "current").resolve(), old)
+
+    @unittest.skipIf(
+        os.name == "nt",
+        "Atomic symlink publication is verified on the Linux deployment",
+    )
+    def test_problem_in_a_source_the_brief_does_not_use_still_publishes(self):
+        self.publish()
+        old = (self.served / "current").resolve()
+        report = json.loads((self.run / "source_refresh.json").read_text())
+        report["success"] = False
+        next(r for r in report["results"] if r["spider"] == "planned_procurement").update(
+            status="PARTIAL", crawl_failed=True, errors=1
+        )
+        self.write("source_refresh.json", report)
+        self.write("cloud_run.json", {"source_exit_code": 1, "source_gaps": ["planned_procurement"]})
+        self.publish()
+        self.assertNotEqual((self.served / "current").resolve(), old)
 
     @unittest.skipIf(
         os.name == "nt",
@@ -132,6 +150,66 @@ class CloudOperations(unittest.TestCase):
         (backup / "reports" / self.run.name / "send_receipt.json").write_text("{}")
         with self.assertRaises(ValueError):
             ops.restore_drill(backup)
+
+    def source_report(self, success=True, **problems):
+        self.write("source_refresh.json", {"success": success, "feed": "rebuilt", "results": [
+            dict({"spider": s, "status": "OK", "errors": 0}, **problems.get(s, {})) for s in sorted(ops.EXPECTED)]})
+
+    GAP = {"planned_procurement": {"status": "PARTIAL", "crawl_failed": True, "errors": 1}}
+
+    def approve(self, gaps=("planned_procurement",), exit_code=1):
+        self.write("cloud_run.json", {"source_exit_code": exit_code, "source_gaps": list(gaps)})
+
+    def test_problem_in_a_source_the_brief_does_not_use_still_validates(self):
+        self.source_report(False, **self.GAP)
+        self.approve()
+        self.assertEqual(ops.validate_run(self.run)["source_gaps"], ["planned_procurement"])
+
+    def test_gap_needs_the_run_scripts_approval_and_nothing_else_failed(self):
+        def feed(text):
+            report = json.loads((self.run / "source_refresh.json").read_text())
+            report["feed"] = text
+            self.write("source_refresh.json", report)
+
+        def no_success():
+            report = json.loads((self.run / "source_refresh.json").read_text())
+            del report["success"]
+            self.write("source_refresh.json", report)
+
+        cases = {
+            "no run state": lambda: (self.run / "cloud_run.json").unlink(),
+            "run cut short": lambda: self.approve(exit_code=124),
+            "run approved other gaps": lambda: self.approve(gaps=("nsw_tender",)),
+            "run recorded no gaps": lambda: self.write("cloud_run.json", {"source_exit_code": 1}),
+            "feed failed as well": lambda: feed("releases feed: FAILED (disk error); intelligence views rebuilt"),
+            "success flag missing": no_success,
+            "runner says success": lambda: self.source_report(True, **self.GAP),
+        }
+        for label, spoil in cases.items():
+            with self.subTest(label):
+                self.source_report(False, **self.GAP)
+                self.approve()
+                ops.validate_run(self.run)
+                spoil()
+                with self.assertRaises(ValueError):
+                    ops.validate_run(self.run)
+
+    def test_clean_run_has_no_gaps(self):
+        self.assertEqual(ops.validate_run(self.run)["source_gaps"], [])
+
+    def test_buyict_problem_or_unclear_report_is_rejected(self):
+        cases = [
+            lambda: self.source_report(False, buy_ict={"status": "FAIL(1)"}),
+            lambda: self.source_report(True, buy_ict={"errors": 2}),
+            lambda: self.source_report(False),
+            lambda: self.write("source_refresh.json", {"success": False, "feed": "rebuilt", "results": [{}] * 8}),
+            lambda: self.write("source_refresh.json", {"success": False, "results": []}),
+        ]
+        for number, arrange in enumerate(cases):
+            with self.subTest(number):
+                arrange()
+                with self.assertRaises(ValueError):
+                    ops.validate_run(self.run)
 
     def test_evidence_without_build_timestamp_is_rejected(self):
         self.write("newsletter_evidence.json", {"generated_at_utc": ops.utc()})

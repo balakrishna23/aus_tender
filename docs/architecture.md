@@ -97,9 +97,14 @@ email's edition date is the India date; at 08:15 Sydney both calendars show the 
 - **Send once.** One send per edition date across all run folders under a server-wide lock; an
   attempt without a receipt blocks further sends and publication until it is reconciled
   against Gmail Sent (`reconcile-send`). Nothing ever re-sends blindly.
-- **Fail closed, loudly.** A source gap, failed live checks for most listings, a stale edition,
-  changed content after review, a wrong Gmail identity or a missed cutoff stops the send; health
-  turns the failure into a `/readyz` 503 and the external alarm emails.
+- **Fail closed, loudly.** A BuyICT problem, an incomplete or cut-short collection, failed live
+  checks for most listings, a stale edition, changed content after review, a wrong Gmail identity
+  or a missed cutoff stops the send; health turns the failure into a `/readyz` 503 and the
+  external alarm emails.
+- **One unrelated site does not cancel the day** (since 15 November). The brief is built from
+  BuyICT only. When all eight sources report and only other sources have a problem, evidence is
+  still built, data is still published and the brief is still sent; the brief's coverage note and
+  the health record (`last_run.source_gaps`) name the sources, whose data stays at the last good run.
 - **Immutable data.** Raw data is never overwritten; published generations are immutable and
   switched atomically; retention never deletes the served or previous generation.
 - **Fixed operations.** The operator CLI (`deploy/aws/illoura_aws.py`) runs only fixed

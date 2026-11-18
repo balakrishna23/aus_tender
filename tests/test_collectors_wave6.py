@@ -47,6 +47,15 @@ class PlanTests(unittest.TestCase):
         self.parse('<p>No planned procurements available.</p>', 'two')
         self.finish()
         self.assertFalse(failed(self.spider))
+    def test_live_site_empty_wording_is_a_normal_empty_plan(self):
+        # 15 Nov 2026: 89 of 144 real plans had no rows and this sentence; the run failed.
+        for plan in ('one', 'two', 'three'):
+            self.parse('<h2>Search Results</h2><div>\n  There are no results that match\n your selection.\n</div>', plan)
+        self.parse('<h2>Search Results</h2><p>The agency has no planned procurements.</p>', 'four')
+        self.finish()
+        self.assertFalse(failed(self.spider))
+        self.assertEqual(self.spider.crawler.stats.values['crawl/planned_unexplained_empty_plans'], 0)
+        self.assertNotIn('crawl/planned_unexplained_empty_pages', self.spider.crawler.stats.values)
     def test_one_empty_out_of_two_only_warns(self):
         self.parse('<p>Changed markup</p>')
         self.parse('<p>No planned procurements found</p>', 'two')

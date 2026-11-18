@@ -106,6 +106,59 @@ class SenderTests(unittest.TestCase):
         self.session.post.assert_not_called()
         self.sender.AuthorizedSession.assert_not_called()
 
+    NAMES = ('contract_api', 'aus_contract', 'aus_tender', 'planned_procurement', 'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender')
+
+    def source_report(self, success, **problems):
+        self.write('source_refresh.json', {'success': success, 'feed': 'rebuilt', 'results': [
+            dict({'spider': name, 'status': 'OK'}, **problems.get(name, {})) for name in self.NAMES]})
+
+    GAP = {'planned_procurement': {'status': 'PARTIAL', 'crawl_failed': True, 'errors': 1}}
+
+    def test_problem_in_a_source_the_brief_does_not_use_still_sends(self):
+        self.source_report(False, **self.GAP)
+        self.write('cloud_run.json', {'source_exit_code': 1, 'source_gaps': ['planned_procurement']})
+        self.send()
+        self.session.post.assert_called_once()
+
+    def test_gap_needs_the_run_scripts_approval_and_nothing_else_failed(self):
+        def report(**changes):
+            data = json.loads((self.out/'source_refresh.json').read_text())
+            data.update(changes)
+            self.write('source_refresh.json', data)
+        def no_success():
+            data = json.loads((self.out/'source_refresh.json').read_text())
+            del data['success']
+            self.write('source_refresh.json', data)
+        cases = {
+            'no run state': lambda: (self.out/'cloud_run.json').unlink(),
+            'run cut short': lambda: self.write('cloud_run.json', {'source_exit_code': 124, 'source_gaps': ['planned_procurement']}),
+            'run approved other gaps': lambda: self.write('cloud_run.json', {'source_exit_code': 1, 'source_gaps': ['nsw_tender']}),
+            'feed failed as well': lambda: report(feed='releases feed: FAILED (disk error); intelligence views rebuilt'),
+            'success flag missing': no_success,
+            'runner says success': lambda: report(success=True),
+        }
+        for label, spoil in cases.items():
+            with self.subTest(label):
+                self.source_report(False, **self.GAP)
+                self.write('cloud_run.json', {'source_exit_code': 1, 'source_gaps': ['planned_procurement']})
+                spoil()
+                with self.assertRaises(ValueError):
+                    self.send()
+        self.session.post.assert_not_called()
+
+    def test_buyict_problem_or_unclear_report_refuses(self):
+        for label, arrange in {
+            'buy_ict failed': lambda: self.source_report(False, buy_ict={'status': 'FAIL(1)'}),
+            'buy_ict crawl failed': lambda: self.source_report(True, buy_ict={'crawl_failed': True}),
+            'failure with no named source': lambda: self.source_report(False),
+            'rows are not records': lambda: self.write('source_refresh.json', {'success': False, 'feed': 'rebuilt', 'results': [1] * 8}),
+        }.items():
+            with self.subTest(label):
+                arrange()
+                with self.assertRaises(ValueError):
+                    self.send()
+        self.session.post.assert_not_called()
+
     def test_safety_gates(self):
         cases = [('source_refresh.json', {'success': False}),
                  ('email_layout_checks.json', []), ('cloud_send_review.json', {'reviewed': False})]

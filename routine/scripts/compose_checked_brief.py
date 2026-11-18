@@ -60,7 +60,20 @@ def main():
     report = json.loads((out/'source_refresh.json').read_text(encoding='utf-8'))
     final = json.loads((out/'finalization.json').read_text(encoding='utf-8'))
     passed = {x['step'] for x in final['steps'] if x.get('exit_code') == 0}
-    if len(report['results']) != 8 or 'feed' not in report or report.get('success') is not True or not {'intelligence', 'data_quality', 'newsletter_evidence'} <= passed:
+    problems = {x.get('spider') for x in report['results'] if x.get('status') != 'OK' or x.get('crawl_failed') or x.get('errors')}
+    # BuyICT is the brief's only source: a problem there, any failure that is not a named source
+    # (the feed, a missing success flag) or a run the run script did not approve stops the brief.
+    if problems:
+        try:
+            run_state = json.loads((out/'cloud_run.json').read_text(encoding='utf-8'))
+            approved = run_state.get('source_exit_code') in (0, 1) and run_state.get('source_gaps') == sorted(problems, key=str)
+        except (OSError, ValueError, AttributeError, TypeError):
+            approved = False
+        sources_ok = (approved and 'buy_ict' not in problems and report.get('success') is False
+                      and isinstance(report.get('feed'), str) and 'FAILED' not in report['feed'])
+    else:
+        sources_ok = report.get('success') is True
+    if len(report['results']) != 8 or 'feed' not in report or not sources_ok or not {'intelligence', 'data_quality', 'newsletter_evidence'} <= passed:
         raise ValueError('Source sweep and essential evidence builds must finish first')
 
     def deadline(moment):
@@ -97,7 +110,7 @@ def main():
     if upcoming:
         sections.append({'title':'Prepare the next responses', 'items':upcoming})
     sections.extend(config.get('additional_sections', []))
-    gaps = [x['spider'] for x in report['results'] if x['status'] != 'OK' or x.get('crawl_failed')]
+    gaps = sorted(problems)
     research = json.loads((out/'official_source_collection.json').read_text(encoding='utf-8'))
     research_gaps = sorted({x['organisation'] for x in research if x['status'] != 'collected'})
     supplemental_gaps = supplemental_failures(out)
@@ -105,7 +118,7 @@ def main():
     with sqlite3.connect(r'/opt/aus_tender/databases/contract_api.db') as db:
         contracts = db.execute('SELECT count(*) FROM contracts').fetchone()[0]
         versions = db.execute('SELECT count(*) FROM contract_versions').fetchone()[0]
-    health = 'All eight procurement source stages completed successfully.' if not gaps else 'Source stages with gaps: '+', '.join(gaps)+'.'
+    health = 'All eight procurement source stages completed successfully.' if not gaps else 'Source stages with a problem today: '+', '.join(gaps)+'. Their data is from the last good run; BuyICT, which this brief is built from, completed normally.'
     warnings = sum(x.get('warnings', 0) for x in report['results'])
     if warnings:
         health += f' {warnings} source warning(s) were recorded; see the source gaps below.'

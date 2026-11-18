@@ -50,9 +50,15 @@ class PlannedProcurementSpider(scrapy.Spider):
         plan_contact = self._plan_contact(response)
         items = response.xpath('//div[starts-with(@id, "pp-")]')
         text = '\n'.join(response.css('body ::text').getall())
+        # The live site (checked 15 Nov 2026) uses two sentences on a plan with no rows:
+        # "There are no results that match your selection." and
+        # "The agency has no planned procurements."; the first pattern covers other wordings.
         explicit_empty = any(re.fullmatch(
-            r'no planned procurements(?: found| available| to display)?[.!]?', line.strip(), re.I)
-            for line in text.splitlines())
+            r'no planned procurements(?: found| available| to display)?[.!]?'
+            r'|there are no results that match your selection[.!]?'
+            r'|the agency has no planned procurements[.!]?',
+            ' '.join(node.split()), re.I)
+            for node in [*text.splitlines(), *response.css('body ::text').getall()])
         check = self.plan_checks.setdefault(plan_url, {'ids': set(), 'empty': False, 'total': None})
         check['empty'] |= explicit_empty
         check['ids'].update(item.attrib['id'] for item in items)

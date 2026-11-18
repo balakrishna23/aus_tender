@@ -21,8 +21,17 @@ def _send_locked(out,token_path):
     if (out/'send_receipt.json').exists():raise ValueError('Edition already has a send receipt')
     report=json.loads((out/'source_refresh.json').read_text())
     expected={'contract_api','aus_contract','aus_tender','planned_procurement','standing_offer','buy_ict','act_tender','nsw_tender'}
-    if not report.get('success') or len(report['results'])!=8 or {r['spider'] for r in report['results']}!=expected or 'feed' not in report:raise ValueError('Source completion checks failed')
-    if any(r['status']!='OK' or r.get('crawl_failed') for r in report['results']):raise ValueError('Source gaps require resolution before sending')
+    results=report.get('results') or []
+    if len(results)!=8 or not all(isinstance(r,dict) for r in results) or {r.get('spider') for r in results}!=expected or 'feed' not in report:raise ValueError('Source completion checks failed')
+    gaps={r['spider'] for r in results if r.get('status')!='OK' or r.get('crawl_failed') or r.get('errors')}
+    # The brief is built from BuyICT only: a problem there, any failure that is not a named source
+    # (the feed, a missing success flag) or a run the run script did not approve blocks the send.
+    if gaps:
+        try:
+            state=json.loads((out/'cloud_run.json').read_text());approved=state.get('source_exit_code') in (0,1) and state.get('source_gaps')==sorted(gaps)
+        except (OSError,ValueError,AttributeError):approved=False
+        if 'buy_ict' in gaps or report.get('success') is not False or not isinstance(report['feed'],str) or 'FAILED' in report['feed'] or not approved:raise ValueError('Source gaps require resolution before sending')
+    elif not report.get('success'):raise ValueError('Source gaps require resolution before sending')
     layout=json.loads((out/'email_layout_checks.json').read_text())
     if {x['viewport'] for x in layout if x.get('passed')}!={'desktop','mobile'}:raise ValueError('Layout checks missing')
     approved=json.loads((out/'cloud_send_review.json').read_text())

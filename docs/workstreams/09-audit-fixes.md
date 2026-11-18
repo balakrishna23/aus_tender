@@ -119,3 +119,29 @@ picked three areas nobody had tested. Failing tests were kept failing until the 
 - Gmail OAuth app: Sirish keeps it in pilot/test for a week and confirms later. If it is
   "Testing", the token authorised 12 Nov about 15:16 UTC expires about 19 Nov 15:16 UTC
   (20:46 IST): the 19 Nov brief still sends, the 20 Nov one would fail and the alarm emails.
+
+## Missed brief of 15 November (fixed and deployed the same day)
+The first run on the wave 6 collectors failed twice (06:15 and the 06:36 retry) and no brief was
+sent. Cause: the empty-plan check in `spiders/planned_procurement.py` only accepted "No planned
+procurements..."; the live site says "There are no results that match your selection." or "The
+agency has no planned procurements." 89 of 144 plans counted as unexplained, over the one-half
+limit, although all 676 rows were collected. The wording had been listed as "check on the live
+site first" and was not checked before the 14 November release.
+- Fix: both live sentences count as an explicit empty plan. Checked against the live site before
+  deploying (676 rows, 0 unexplained plans). `deploy-collectors`, backup
+  `collectors-20261115T072854Z`.
+- Rule for later changes: a collector check is run against the live site before it is deployed.
+
+## One unrelated source no longer cancels the day (15 November)
+The brief uses BuyICT only, yet any of the eight sources failing stopped evidence, publication and
+the send. Now (`source_gate` in `routine/run_once.py`, `validate_run` in
+`deploy/illoura_cloud_ops.py`, `routine/scripts/compose_checked_brief.py`,
+`routine/scripts/send_gmail.py`): when all eight sources report, the run was not cut short and
+BuyICT has no problem, the day continues; the sources with a problem are named in the brief's
+coverage note, in the run state and publication record (`source_gaps`) and in health
+(`last_run.source_gaps`). A BuyICT problem, a collection that was cut short as a whole, a missing
+source, a failed feed or view rebuild, or a failure with no named source still stops everything; one
+unrelated source timing out counts as a problem in that source. Publication, composition and the send
+also require that the run script approved exactly these gaps (`cloud_run.json`). Codex reviewed the
+change; its three findings (second failure hidden behind a named gap, missing success flag, later
+gates not tied to the run script's decision) were fixed before deployment.

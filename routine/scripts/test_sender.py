@@ -51,7 +51,7 @@ class Tests(unittest.TestCase):
         with self.assertRaises(ValueError):sender.send(self.out,Path('/not-a-real-token'))
         self.assertEqual(self.session.posts,0)
     def test_source_gap_is_blocked(self):
-        data=json.loads((self.out/'source_refresh.json').read_text());data['results'][0]['status']='FAILED';(self.out/'source_refresh.json').write_text(json.dumps(data))
+        data=json.loads((self.out/'source_refresh.json').read_text());next(r for r in data['results'] if r['spider']=='buy_ict')['status']='FAILED';(self.out/'source_refresh.json').write_text(json.dumps(data))
         with self.assertRaises(ValueError):sender.send(self.out,Path('/not-a-real-token'))
         self.assertEqual(self.session.posts,0)
 if __name__=='__main__':unittest.main()

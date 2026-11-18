@@ -42,6 +42,10 @@ SEND_AT = (8, 15)            # local Sydney time
 LATEST_SEND = (12, 0)        # after this, skip the day instead of sending a stale brief
 LATEST_RETRY_START = (9, 30)  # A full collect retry must still fit before noon.
 RETRY_PAUSE_SECONDS = 300  # Give transient upstream failures five minutes to recover.
+# Pauses before each further attempt. Collection gets four retries with growing pauses so an
+# upstream outage of up to about three hours (BuyICT timed out for 90 minutes on 6 Nov 2026)
+# does not cost the day; the 09:30 latest start and the noon cutoff still bound every retry.
+RETRY_PAUSES = {'collect': (RETRY_PAUSE_SECONDS, 1200, 2400, 3600), 'compose': (RETRY_PAUSE_SECONDS,)}
 COLLECT_TIMEOUT_SECONDS = 7200  # Include the 105-minute routine and publication overhead.
 COMPOSE_TIMEOUT_SECONDS = 900  # Bound live checks, composition and browser layout checks.
 SEND_MARGIN_SECONDS = 900  # Leave 15 minutes before noon for the single send attempt.
@@ -536,10 +540,11 @@ def unresolved_guard(error):
 
 
 def run_stage(stage, action, cutoff):
-    """One retry for collection/composition; always retain the original morning cutoff."""
+    """Retries for collection (four) and composition (one); always retain the original morning cutoff."""
     limit = COLLECT_TIMEOUT_SECONDS if stage == 'collect' else COMPOSE_TIMEOUT_SECONDS
     reserve = COMPOSE_TIMEOUT_SECONDS if stage == 'collect' else 0
-    for attempt in range(2):
+    pauses = RETRY_PAUSES[stage]
+    for attempt in range(len(pauses) + 1):
         try:
             remaining = (cutoff - utc_now()).total_seconds() - SEND_MARGIN_SECONDS - reserve
             if remaining <= 0:
@@ -548,20 +553,22 @@ def run_stage(stage, action, cutoff):
             return
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as error:
             now = utc_now()
-            retry_at = now + timedelta(seconds=RETRY_PAUSE_SECONDS)
+            last = attempt >= len(pauses)
+            pause = pauses[-1] if last else pauses[attempt]
+            retry_at = now + timedelta(seconds=pause)
             latest = cutoff.replace(hour=LATEST_RETRY_START[0], minute=LATEST_RETRY_START[1])
             guard = stage == 'collect' and unresolved_guard(error)
             enough = retry_at <= latest and retry_at + timedelta(
                 seconds=limit + reserve + SEND_MARGIN_SECONDS) <= cutoff
-            retry = attempt == 0 and not guard and enough
-            reason = ('unresolved_sends' if guard else 'retry_exhausted' if attempt else
+            retry = not last and not guard and enough
+            reason = ('unresolved_sends' if guard else 'retry_exhausted' if last else
                       'within_budget' if enough else 'insufficient_time')
             print(json.dumps({'event': 'retry_decision', 'stage': stage, 'retry': retry,
                               'reason': reason, 'attempt': attempt + 1,
                               'at_utc': now.isoformat(), 'retry_at_utc': retry_at.isoformat()}), flush=True)
             if not retry:
                 raise
-            time.sleep(RETRY_PAUSE_SECONDS)
+            time.sleep(pause)
             # Sleep or clock movement can consume the allowance: check again at retry time.
             now = utc_now()
             if now > latest or now + timedelta(seconds=limit + reserve + SEND_MARGIN_SECONDS) > cutoff:

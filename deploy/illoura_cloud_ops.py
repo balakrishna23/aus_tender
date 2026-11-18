@@ -311,6 +311,7 @@ EXPECTED = {
     "act_tender",
     "nsw_tender",
 }
+BRIEF_SOURCES = {"buy_ict"}  # The daily brief is built from BuyICT only.
 
 
 def utc():
@@ -359,19 +360,42 @@ def exclusive(path):
         yield
 
 
+def gaps_approved_by_run(run, gaps):
+    """The run script itself let this run continue with exactly these source gaps."""
+    try:
+        state = json.loads((Path(run) / "cloud_run.json").read_text())
+        return state.get("source_exit_code") in (0, 1) and state.get("source_gaps") == gaps
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 def validate_run(run):
     run = Path(run)
     report = json.loads((run / "source_refresh.json").read_text())
     results = report.get("results", [])
     if (
-        report.get("success") is not True
-        or len(results) != 8
-        or {r["spider"] for r in results} != EXPECTED
+        len(results) != 8
+        or not all(isinstance(r, dict) for r in results)
+        or {r.get("spider") for r in results} != EXPECTED
         or not report.get("feed")
-        or any(
-            r.get("status") != "OK" or r.get("crawl_failed") or r.get("errors", 0)
-            for r in results
-        )
+    ):
+        raise ValueError("Complete eight-source report required")
+    gaps = sorted(
+        r["spider"]
+        for r in results
+        if r.get("status") != "OK" or r.get("crawl_failed") or r.get("errors", 0)
+    )
+    # A clean report, or one whose only problems are in sources the brief does not use.
+    # Their databases keep the last good rows (raw data is never overwritten).
+    if not gaps:
+        if report.get("success") is not True:
+            raise ValueError("Complete successful eight-source report required")
+    elif (
+        BRIEF_SOURCES & set(gaps)
+        or report.get("success") is not False
+        or not isinstance(report["feed"], str)
+        or "FAILED" in report["feed"]
+        or not gaps_approved_by_run(run, gaps)
     ):
         raise ValueError("Complete successful eight-source report required")
     final = json.loads((run / "finalization.json").read_text())
@@ -388,6 +412,7 @@ def validate_run(run):
         raise ValueError("Exactly one intelligence build timestamp required")
     return {
         "run_id": run.name,
+        "source_gaps": gaps,
         "source_results": [
             {
                 k: r.get(k)
