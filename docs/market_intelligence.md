@@ -121,6 +121,7 @@ python market_intelligence/extract_procurement.py --directory /collector/databas
 python -m market_intelligence import-procurement --database /private/procurement.db
 python -m market_intelligence quality --as-of 2026-11-19
 python -m market_intelligence buyer-report --as-of 2026-11-19 --output /private/reports/20261119
+python -m market_intelligence panel-worklist --as-of 2026-11-19 --output /private/reports/20261119-panels
 python -m market_intelligence review-queue
 ```
 
@@ -146,6 +147,16 @@ python -m market_intelligence review --buyer-key BUYER_HASH --decision rejected 
 Review decisions require an HTTPS evidence URL and reviewer identifier. The CLI
 does not send outreach or trigger a newsletter. This pipeline is for internal
 research; subsequent outreach must comply with the Spam Act and Privacy Act.
+
+The panel worklist groups observed standing offer IDs across source buyer labels
+and retains associated buyer ranks, identity review states and source provenance.
+Repeated route rows do not inflate counts. Conflicting expiry claims remain
+unresolved. A recorded expiry is not an application deadline or evidence of an
+open or closed intake; membership, eligibility and invitations remain unknown.
+Counts across different panels may overlap. Check the current official notice,
+category relevance and Illoura's documentary evidence before assessing access.
+The JSON includes the source buyer-report code hash and a separate hash of the
+worklist implementation. This command creates internal artifacts only.
 
 ## Tests and operations
 

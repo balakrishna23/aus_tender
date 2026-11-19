@@ -9,6 +9,7 @@ from .matching import bridge_buyers
 from .review import decide
 from .procurement import import_procurement
 from .analytics import build_report,write_report
+from .panels import worklist,write_worklist
 from .quality import report as quality_report
 
 
@@ -26,6 +27,9 @@ def main(argv=None):
     report.add_argument('--as-of',required=True,type=date.fromisoformat)
     report.add_argument('--output',required=True)
     report.add_argument('--scoring-config')
+    panels=commands.add_parser('panel-worklist')
+    panels.add_argument('--as-of',required=True,type=date.fromisoformat)
+    panels.add_argument('--output',required=True)
     review=commands.add_parser('review')
     review.add_argument('--buyer-key',required=True)
     review.add_argument('--decision',required=True,choices=['approved','rejected'])
@@ -54,6 +58,8 @@ def main(argv=None):
             result=import_procurement(db,args.database)
         elif args.command=='buyer-report':
             result=write_report(build_report(db,args.as_of,args.scoring_config),args.output)
+        elif args.command=='panel-worklist':
+            result=write_worklist(worklist(build_report(db,args.as_of)),args.output)
         elif args.command=='quality':
             result=quality_report(db,args.as_of)
         elif args.command=='review-queue':
