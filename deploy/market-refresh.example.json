@@ -1,0 +1,5 @@
+{
+  "data_root": "/home/ubuntu/illoura-market-data",
+  "build": "/home/ubuntu/illoura-market-data/builds/VALIDATED_BUILD",
+  "tools": "/opt/illoura-market-tools"
+}
