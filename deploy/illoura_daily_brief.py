@@ -586,6 +586,22 @@ def run_stage(stage, action, cutoff):
                 raise
 
 
+def refresh_market_research(cutoff):
+    """An optional research failure is recorded; it never prevents the RFQ composition stage."""
+    helper=OPS/'illoura_market_refresh.py'
+    if not helper.is_file() or not Path('/etc/illoura-market/refresh.json').is_file():
+        return {'status':'disabled'}
+    remaining=(cutoff-utc_now()).total_seconds()-SEND_MARGIN_SECONDS-COMPOSE_TIMEOUT_SECONDS
+    if remaining<35:
+        return {'status':'skipped','reason':'morning budget reserved for live RFQs'}
+    limit=min(210,int(remaining)-5)
+    try:
+        bounded_command([str(PYTHON),str(helper),'--timeout',str(limit)],limit+5,cwd=str(PROJECT))
+        return {'status':'completed'}
+    except (subprocess.CalledProcessError,subprocess.TimeoutExpired,OSError):
+        return {'status':'failed','reason':'research refresh unavailable; existing dated package may still be used'}
+
+
 def run(systemctl=None):
     """Root, from the timer: collect + publish, compose as scraper, wait for 08:15, send as scraper."""
     _, morning_cutoff = send_window(utc_now())
@@ -594,6 +610,7 @@ def run(systemctl=None):
     run_stage('collect', lambda timeout: bounded_command(
         [str(PYTHON), str(OPS / 'illoura_cloud_collect.py')], timeout, cwd=str(PROJECT), env=env), morning_cutoff)
     out = json.loads((WORK / 'latest_run.json').read_text())['run_dir']
+    print(json.dumps({'event':'market_research_refresh',**refresh_market_research(morning_cutoff)}),flush=True)
     run_stage('compose', lambda timeout: scraper(
         str(OPS / 'illoura_daily_brief.py'), 'compose', '--out', out, timeout=timeout), morning_cutoff)
     target, cutoff = send_window(utc_now())
