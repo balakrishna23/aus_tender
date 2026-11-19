@@ -1,0 +1,193 @@
+{
+  "_about": "Category tags for contracts. Rules run in order; the first match wins. A rule's scope is the collector's category_family OR a UNSPSC prefix (either matches); when a rule names a keyword list, the description must also contain one of those words. Keywords match whole words, ignoring case, except a keyword starting with '=' (such as =IT), which must match exactly. Descriptions are read during export and never stored. Check the 'other' share in the category summary and tune the keywords.",
+  "tags": [
+    "ict_labour",
+    "ict_services",
+    "labour_hire_general",
+    "recruitment",
+    "healthcare_staffing",
+    "nursing_agency",
+    "other"
+  ],
+  "keywords": {
+    "nursing": [
+      "nurse",
+      "nurses",
+      "nursing",
+      "midwife",
+      "midwives",
+      "midwifery"
+    ],
+    "healthcare": [
+      "medical officer",
+      "medical officers",
+      "locum",
+      "locums",
+      "doctor",
+      "doctors",
+      "clinician",
+      "clinicians",
+      "clinical",
+      "allied health",
+      "aged care",
+      "disability support",
+      "support worker",
+      "support workers",
+      "personal care",
+      "psychologist",
+      "psychologists",
+      "pharmacist",
+      "pharmacists",
+      "radiographer",
+      "paramedic",
+      "paramedics",
+      "physiotherapist",
+      "occupational therapist",
+      "health professional",
+      "health professionals",
+      "health workforce",
+      "pharmacy"
+    ],
+    "recruitment": [
+      "recruitment",
+      "recruiting",
+      "executive search",
+      "talent acquisition",
+      "candidate search",
+      "placement fee",
+      "placement fees"
+    ],
+    "ict": [
+      "ict",
+      "=IT",
+      "information technology",
+      "software",
+      "developer",
+      "developers",
+      "data",
+      "cyber",
+      "cybersecurity",
+      "security analyst",
+      "digital",
+      "cloud",
+      "network",
+      "infrastructure engineer",
+      "architect",
+      "solution architect",
+      "business analyst",
+      "test analyst",
+      "tester",
+      "devops",
+      "sap",
+      "salesforce",
+      "servicenow",
+      "dynamics",
+      "erp",
+      "database",
+      "service desk",
+      "help desk"
+    ],
+    "labour": [
+      "contractor",
+      "contractors",
+      "labour hire",
+      "labour-hire",
+      "temporary",
+      "temp",
+      "personnel",
+      "secondment",
+      "specified personnel",
+      "staff augmentation",
+      "resource",
+      "resources"
+    ]
+  },
+  "rules": [
+    {
+      "tag": "nursing_agency",
+      "when": {
+        "families": [
+          "labour hire and recruitment"
+        ],
+        "unspsc_prefixes": [
+          "8011",
+          "851"
+        ],
+        "keywords": "nursing"
+      }
+    },
+    {
+      "tag": "healthcare_staffing",
+      "when": {
+        "families": [
+          "labour hire and recruitment"
+        ],
+        "unspsc_prefixes": [
+          "8011",
+          "851"
+        ],
+        "keywords": "healthcare"
+      }
+    },
+    {
+      "tag": "recruitment",
+      "when": {
+        "unspsc_prefixes": [
+          "801117"
+        ]
+      }
+    },
+    {
+      "tag": "recruitment",
+      "when": {
+        "families": [
+          "labour hire and recruitment"
+        ],
+        "keywords": "recruitment"
+      }
+    },
+    {
+      "tag": "ict_labour",
+      "when": {
+        "families": [
+          "labour hire and recruitment"
+        ],
+        "keywords": "ict"
+      }
+    },
+    {
+      "tag": "ict_labour",
+      "when": {
+        "families": [
+          "ICT services"
+        ],
+        "keywords": "labour"
+      }
+    },
+    {
+      "tag": "labour_hire_general",
+      "when": {
+        "families": [
+          "labour hire and recruitment"
+        ]
+      }
+    },
+    {
+      "tag": "ict_services",
+      "when": {
+        "families": [
+          "ICT services"
+        ]
+      }
+    },
+    {
+      "tag": "ict_services",
+      "when": {
+        "unspsc_prefixes": [
+          "8111"
+        ]
+      }
+    }
+  ],
+  "default": "other"
+}

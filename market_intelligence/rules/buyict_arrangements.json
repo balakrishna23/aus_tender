@@ -1,0 +1,22 @@
+{
+  "_about": "Whole-of-government ICT and people arrangements reached through BuyICT. Standing offer IDs and names come from the collected AusTender standing offer notices; the marketplace list from the BuyICT marketplaces page. Edit when DTA or Finance add or replace an arrangement.",
+  "retrieved": "2026-11-19",
+  "sources": {
+    "buyict_marketplaces": "https://www.buyict.gov.au/public/en/marketplaces?id=public_marketplaces&topic_id=c5a1bc6c1bf62a50f421db96b04bcb5e",
+    "austender_standing_offers": "https://www.tenders.gov.au/"
+  },
+  "arrangements": [
+    {"son_id": "SON4102906", "name": "Digital Marketplace Panel 2", "marketplace": "Digital Marketplace", "owner": "Digital Transformation Agency", "relevant": true},
+    {"son_id": "SON3413842", "name": "Digital Marketplace Panel 1.0", "marketplace": "Digital Marketplace", "owner": "Digital Transformation Agency", "relevant": true},
+    {"son_id": "SON3364729", "name": "Digital Services Professionals (gov.au/marketplace)", "marketplace": "Digital Marketplace (earlier)", "owner": "Digital Transformation Agency", "relevant": true},
+    {"son_id": "SON3965020", "name": "People Panel Phase 2 - Labour Hire Services", "marketplace": "People Panel", "owner": "Department of Finance", "relevant": true},
+    {"son_id": "SON3897769", "name": "People Panel - Phase 1: Recruitment and Search Services Panel", "marketplace": "People Panel", "owner": "Department of Finance", "relevant": true},
+    {"son_id": "SON4241474", "name": "People Panel - Professional Contractor Services", "marketplace": "People Panel", "owner": "Department of Finance", "relevant": true},
+    {"son_id": "SON3668352", "name": "Cloud Marketplace", "marketplace": "Cloud Marketplace", "owner": "Digital Transformation Agency", "relevant": false},
+    {"son_id": "SON3541738", "name": "Hardware Marketplace Panel", "marketplace": "Hardware Marketplace", "owner": "Digital Transformation Agency", "relevant": false},
+    {"son_id": "SON3490955", "name": "Software and ERP Marketplace Panel", "marketplace": "Software and ERP Marketplace", "owner": "Digital Transformation Agency", "relevant": false},
+    {"son_id": "SON3713272", "name": "Telecommunications Marketplace Panel", "marketplace": "Telecommunications Marketplace", "owner": "Digital Transformation Agency", "relevant": false},
+    {"son_id": "SON3945937", "name": "Data Centre Panel 3", "marketplace": "Data Centre", "owner": "Digital Transformation Agency", "relevant": false}
+  ],
+  "notes": "Whether the People Panel arrangements are ordered through BuyICT itself is still to be confirmed on the BuyICT site; they are whole-of-government labour hire and recruitment arrangements either way. 'relevant' marks Illoura's categories (ICT labour, recruitment, labour hire)."
+}
