@@ -14,6 +14,8 @@ from sqlalchemy import text
 
 RULES = Path(__file__).parent/'rules'/'buyict_arrangements.json'
 OUR_TAGS = ('ict_labour', 'ict_services', 'recruitment', 'labour_hire_general')
+# AGOR 'Type of Body' values carry a letter prefix, e.g. 'A. Non-corporate Commonwealth entity'.
+NON_CORPORATE_PATTERN = r'^([A-Z]\.\s*)?non-corporate commonwealth entit'
 
 
 def load_arrangements(path=RULES):
@@ -45,13 +47,16 @@ def build_buyict(engine, as_of, path=RULES):
         identity = {r['buyer_key']: dict(r) for r in conn.execute(text('''
             SELECT r.buyer_key, r.match_status, r.review_status,
                    COALESCE(r.confirmed_organisation_id, r.organisation_id) AS organisation_id,
-                   o.name AS register_name, o.payload->>'Type of Body' AS body_type, o.portfolio
+                   o.name AS register_name, a.payload->>'Type of Body' AS body_type, a.portfolio
             FROM market.buyer_resolution r
-            LEFT JOIN market.organisations o ON o.organisation_id=COALESCE(r.confirmed_organisation_id, r.organisation_id)''')).mappings()}
+            LEFT JOIN market.organisations o ON o.organisation_id=COALESCE(r.confirmed_organisation_id, r.organisation_id)
+            -- Body type and portfolio come from AGOR only; market.organisations usually shows the newer
+            -- Government Directory row for the same body, so read the AGOR observation directly.
+            LEFT JOIN market.organisation_observations a ON a.organisation_id=o.organisation_id AND a.source='agor' ''')).mappings()}
         potential = [dict(r) for r in conn.execute(text('''
-            SELECT organisation_id, name, payload->>'Type of Body' AS body_type, portfolio FROM market.organisations
-            WHERE source='agor' AND payload->>'Type of Body' ILIKE '%non-corporate commonwealth entit%'
-            ORDER BY name''')).mappings()]
+            SELECT organisation_id, name, payload->>'Type of Body' AS body_type, portfolio FROM market.organisation_observations
+            WHERE source='agor' AND payload->>'Type of Body' ~* :pattern
+            ORDER BY name'''), {'pattern': NON_CORPORATE_PATTERN}).mappings()]
         snapshot = conn.execute(text('''SELECT p.id, p.exported_at FROM market.procurement_snapshots p
             JOIN market.current_procurement_snapshot c ON c.snapshot_id=p.id''')).mappings().first()
     buyers = defaultdict(list)

@@ -104,6 +104,18 @@ class RulesTests(unittest.TestCase):
         ids = [a['son_id'] for a in load_arrangements()['arrangements']]
         self.assertIn('SON4102906', ids)
 
+    def test_agor_portfolio_names_reach_niaa_names(self):
+        """AGOR (19 Nov 2026) spells portfolios differently from NIAA's 2024-25 results."""
+        from market_intelligence.levers import _portfolio_key
+        renames = load_ipp_rules()['portfolio_renames']['names']
+        niaa = {_portfolio_key(r['portfolio'], renames) for r in load_portfolio_results() if r['year'] == '2024-25'}
+        agor = ['Health, Disability and Ageing', 'Infrastructure, Transport, Regional Development, Communications, Sport & Arts',
+                'Parliamentary Departments (not a portfolio)', "Veterans' Affairs (part of the Defence Portfolio)", "Attorney-General's",
+                'Climate Change, Energy, the Environment and Water', 'Agriculture, Fisheries and Forestry', 'Defence', 'Education',
+                'Employment and Workplace Relations', 'Finance', 'Foreign Affairs and Trade', 'Home Affairs',
+                'Industry, Science and Resources', 'Prime Minister and Cabinet', 'Social Services', 'Treasury']
+        self.assertEqual({_portfolio_key(a, renames) for a in agor}, niaa)
+
 
 class MatchingAndNamesTests(unittest.TestCase):
     def test_common_name_variants_match(self):
@@ -176,6 +188,7 @@ class Phase2DatabaseTests(unittest.TestCase):
         export = root/'export.db'
         extract(inputs, export)
         import_procurement(self.engine, export)
+        self.export = export
         import_snapshot(self.engine, manifest(root, [dict(zip(['Id', 'Title', 'Portfolio', 'ABN', 'Type of Body'],
                         ['O-000009', 'Unseen Agency', 'Finance', '', 'Non-corporate Commonwealth entity']))]), 'agor')
 
@@ -198,6 +211,42 @@ class Phase2DatabaseTests(unittest.TestCase):
         band = report['set_aside_band_by_buyer'][0]
         self.assertEqual(band['contracts'], 1)  # CN3 only: CN1 is bought through a BuyICT arrangement
         self.assertEqual([p['supplier'] for p in report['mmr_primes']], ['Big Prime Ltd'])
+
+    def test_agor_fields_survive_newer_directory_rows(self):
+        """On the server every AGOR body also appears in the newer Government Directory export, which
+        market.organisations prefers. Body type and portfolio exist only in AGOR and must still show."""
+        from market_intelligence.ingest import import_snapshot
+        from market_intelligence.matching import bridge_buyers
+        from market_intelligence.buyict import build_buyict
+        from market_intelligence.levers import build_levers
+        from test_market_intelligence import manifest, directory_manifest
+        root = Path(self.tmp.name)
+        nce = 'A. Non-corporate Commonwealth entity'
+        bodies = [('O-000001', 'Example Federal Agency', 'Finance', ABN, nce), ('O-000009', 'Unseen Agency', 'Finance', '', nce),
+                  ('O-000010', 'Example Company', 'Finance', '', 'C. Commonwealth company')]
+        import_snapshot(self.engine, manifest(root, [dict(zip(['Id', 'Title', 'Portfolio', 'ABN', 'Type of Body'], b)) for b in bodies],
+                                              effective='2026-10-31'), 'agor')
+        xml = '<response>' + ''.join('<item><unique_record_id>' + i + '</unique_record_id><content_id>' + str(n) + '</content_id><title>' + t
+                                     + '</title><type>organisation</type>' + ('<abn>' + a + '</abn>' if a else '') + '</item>'
+                                     for n, (i, t, _, a, _) in enumerate(bodies, 1)) + '</response>'
+        import_snapshot(self.engine, directory_manifest(root, xml), 'government_directory')
+        bridge_buyers(self.engine, self.export)
+        report = build_buyict(self.engine, date(2026, 11, 19))
+        buyer = report['buyers'][0]
+        self.assertEqual((buyer['body_type'], buyer['portfolio']), (nce, 'Finance'))
+        self.assertEqual(report['summary']['non_corporate_entities'], 2)
+        self.assertEqual([p['name'] for p in report['potential_buyers_without_relevant_spend']], ['Unseen Agency'])
+        finance = [r for r in build_levers(self.engine, date(2026, 11, 19))['portfolio_results'] if r['portfolio'] == 'Finance'][0]
+        self.assertGreater(finance['our_category_value_12m'], 0)
+
+    def test_category_summary_reports_catch_all_share(self):
+        from market_intelligence.watchlist import category_summary
+        summary = category_summary(self.engine)
+        self.assertEqual(summary['catch_all_rules'], ['rule_7', 'rule_8'])
+        self.assertEqual(summary['other_share_of_our_family_value'], 0.0)
+        self.assertEqual(summary['untagged_contracts'], 0)
+        self.assertIsNotNone(summary['catch_all_share_of_our_family_value'])
+        self.assertNotIn(SECRET, json.dumps(summary, default=str))
 
     def test_watchlist_seed_mark_and_audit(self):
         from sqlalchemy import text

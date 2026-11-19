@@ -43,7 +43,15 @@
       "93": "Politics and civic affairs services",
       "94": "Organisations and Clubs"
     },
-    "sub_category_exemptions": ["80131500", "80131501", "80131503", "84130000", "84131800", "92110000", "92111700"],
+    "sub_category_exemptions": [
+      "80131500",
+      "80131501",
+      "80131503",
+      "84130000",
+      "84131800",
+      "92110000",
+      "92111700"
+    ],
     "source": "ipp_guidelines"
   },
   "eligibility": {
@@ -60,5 +68,13 @@
     "rule": "Non-corporate Commonwealth entities must use coordinated procurements (whole-of-government arrangements).",
     "source": "ipp_guidelines"
   },
-  "austender_value_basis": "AusTender contract values are treated as GST inclusive for these bands; not yet confirmed against the AusTender reporting guidance."
+  "austender_value_basis": "AusTender contract values are treated as GST inclusive for these bands; not yet confirmed against the AusTender reporting guidance.",
+  "portfolio_renames": {
+    "_about": "Portfolios renamed by the Administrative Arrangements Order of May 2025. NIAA reports 2024-25 results under the old names and 2025-26 targets under the new ones; AGOR uses the new ones.",
+    "source": "ipp_page",
+    "names": {
+      "Health and Aged Care": "Health, Disability and Ageing",
+      "Infrastructure, Transport, Regional Development, Communications and the Arts": "Infrastructure, Transport, Regional Development, Communications, Sport and the Arts"
+    }
+  }
 }

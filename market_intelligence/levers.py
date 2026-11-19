@@ -4,7 +4,7 @@ Thresholds come only from rules/ipp_rules.json (each with its NIAA source); port
 rules/ipp_portfolio_results.csv (NIAA, data current at September 2025). Nothing here is a legal test:
 a contract in the set-aside band is a signal to look at, not proof the set-aside applied.
 """
-from collections import Counter, defaultdict
+from collections import defaultdict
 import csv
 from datetime import date, timedelta
 import html
@@ -26,7 +26,7 @@ def load_ipp_rules(path=RULES_DIR/'ipp_rules.json'):
     msa, mmr = rules['mandatory_set_aside'], rules['mandatory_minimum_requirements']
     if not (0 < msa['min_value_gst_inclusive'] < msa['max_value_gst_inclusive'] < mmr['threshold_gst_inclusive']):
         raise ValueError('IPP thresholds are inconsistent')
-    for section in [msa, mmr, rules['eligibility'], rules['exemption_16']]:
+    for section in [msa, mmr, rules['eligibility'], rules['exemption_16'], rules['portfolio_renames']]:
         if section['source'] not in rules['sources']:
             raise ValueError('Every IPP rule needs a listed source')
     if not all(re.fullmatch(r'[0-9]{2}', s) for s in mmr['segments']):
@@ -43,9 +43,15 @@ def load_portfolio_results(path=RULES_DIR/'ipp_portfolio_results.csv'):
     return rows
 
 
-def _portfolio_key(value):
-    key = name_key((value or '').replace("'", ''))
-    return re.sub(r'\b(portfolio|the)\b', ' ', key).split()
+def _portfolio_key(value, renames=None):
+    """Compare portfolio names across AGOR and NIAA: AGOR adds notes in brackets and writes '&';
+    portfolios renamed by the Administrative Arrangements Order map to their current name."""
+    value = re.sub(r'\([^)]*\)', ' ', value or '').replace('&', ' and ').replace("'", '')
+    key = ' '.join(re.sub(r'\b(portfolio|the)\b', ' ', name_key(value)).split())
+    for old, new in (renames or {}).items():
+        if key == _portfolio_key(old):
+            return _portfolio_key(new)
+    return key
 
 
 def build_levers(engine, as_of, rules_dir=RULES_DIR):
@@ -90,7 +96,10 @@ def build_levers(engine, as_of, rules_dir=RULES_DIR):
             SELECT o.portfolio, count(*) AS contracts, sum(c.original_value) AS value
             FROM market.current_analytical_contracts c
             JOIN market.buyer_resolution r ON r.buyer_key=c.buyer_key
-            JOIN market.organisations o ON o.organisation_id=COALESCE(r.confirmed_organisation_id, r.organisation_id)
+            -- Portfolio comes from AGOR only. market.organisations keeps the newest observation per body,
+            -- which is usually the Government Directory row, so read the AGOR observation directly.
+            JOIN market.organisation_observations o ON o.organisation_id=COALESCE(r.confirmed_organisation_id, r.organisation_id)
+                 AND o.source='agor'
             WHERE c.first_published > :d12 AND c.first_published <= :asof AND c.payload->>'category_tag' = ANY(:tags)
               AND o.portfolio IS NOT NULL
             GROUP BY o.portfolio'''), params).mappings()]
@@ -105,12 +114,17 @@ def build_levers(engine, as_of, rules_dir=RULES_DIR):
     prime_rows = sorted(({'supplier_abn': k if k and k.isdigit() else None, 'supplier': sorted(v['names'])[0],
                           'active_high_value_contracts': v['contracts'], 'value': v['value'], 'buyers': len(v['buyers']),
                           'latest_end_date': v['latest_end']} for k, v in primes.items()), key=lambda r: -r['value'])
-    spend_by_key = {tuple(_portfolio_key(r['portfolio'])): r for r in portfolio_spend}
+    renames = rules['portfolio_renames']['names']
+    spend_by_key = defaultdict(lambda: dict(contracts=0, value=0))
+    for r in portfolio_spend:
+        merged = spend_by_key[_portfolio_key(r['portfolio'], renames)]
+        merged['contracts'] += r['contracts']
+        merged['value'] += r['value'] or 0
     portfolio_rows = []
     for r in results:
         if r['year'] != max(x['year'] for x in results if x['volume_actual'] is not None):
             continue
-        spend = spend_by_key.get(tuple(_portfolio_key(r['portfolio'])))
+        spend = spend_by_key.get(_portfolio_key(r['portfolio'], renames))
         portfolio_rows.append(dict(r, volume_ratio=round(r['volume_actual'] / r['volume_target'], 2) if r['volume_target'] else None,
                                    value_ratio=round(r['value_actual'] / r['value_target'], 2) if r['value_target'] else None,
                                    our_category_contracts_12m=spend['contracts'] if spend else None,

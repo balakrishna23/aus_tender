@@ -142,14 +142,25 @@ def show_profile(engine):
             'SELECT key, value, evidence_url, updated_by, updated_at, note FROM market.illoura_profile ORDER BY key')).mappings()]}
 
 
-def category_summary(engine):
-    """How contracts in the current snapshot are tagged; the spec asks to watch the 'other' share."""
+def category_summary(engine, rules_path=None):
+    """How contracts in the current snapshot are tagged.
+
+    Inside our two families the last rules catch every leftover contract, so 'other' never appears there.
+    The share to watch is the catch-all share: contracts tagged only because of their family, with no
+    keyword or UNSPSC evidence. A high share means the keyword lists need work."""
+    from .categories import RULES_PATH, load_rules
+    data, _ = load_rules(str(rules_path or RULES_PATH))
+    catch_all = {'rule_%d' % i for i, r in enumerate(data['rules'], 1)
+                 if not r['when'].get('keywords') and not r['when'].get('unspsc_prefixes')}
     with engine.connect() as conn:
         rows = [dict(r) for r in conn.execute(text('''
             SELECT coalesce(payload->>'category_tag','untagged') AS tag, payload->>'category_family' AS family,
-                   count(*) AS contracts, sum(original_value) AS value
-            FROM market.current_analytical_contracts GROUP BY 1,2 ORDER BY 3 DESC''')).mappings()]
+                   coalesce(payload->>'category_rule','none') AS rule, count(*) AS contracts, sum(original_value) AS value
+            FROM market.current_analytical_contracts GROUP BY 1,2,3 ORDER BY 4 DESC''')).mappings()]
     ours = [r for r in rows if r['family'] in ('labour hire and recruitment', 'ICT services')]
-    other = sum(float(r['value'] or 0) for r in ours if r['tag'] == 'other')
     total = sum(float(r['value'] or 0) for r in ours)
-    return {'by_tag_and_family': rows, 'other_share_of_our_family_value': round(other / total, 4) if total else None}
+    share = lambda keep: round(sum(float(r['value'] or 0) for r in ours if keep(r)) / total, 4) if total else None
+    return {'by_tag_family_rule': rows, 'catch_all_rules': sorted(catch_all),
+            'catch_all_share_of_our_family_value': share(lambda r: r['rule'] in catch_all),
+            'other_share_of_our_family_value': share(lambda r: r['tag'] == 'other'),
+            'untagged_contracts': sum(r['contracts'] for r in rows if r['tag'] == 'untagged')}
