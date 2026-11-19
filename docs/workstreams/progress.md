@@ -300,3 +300,10 @@ Only one agent edits the branch at a time.
 - Seven focused tests cover date boundaries, conflicting observations, deduplication, input immutability, provenance and escaped HTML/unsafe links. Full Windows suite: 777 tests, 42 environment-dependent skips, no failures. Desktop/mobile render checks passed with 105 cards and no horizontal overflow.
 - Inspected retained official OCDS release identifiers: the Defence and AFP buyer ABNs disagree with Directory evidence but are present in the upstream AU-ABN fields. Preserve these as source conflicts rather than silently changing collector values.
 - AWS session expired. Authorized CLI login opened the browser but timed out awaiting completion; AWS connector and browser-control helper are unavailable. Continued locally; new work is not cloud-deployed. Claude panel code review also timed out; no independent signoff is claimed.
+
+### Read-only identity review packets
+
+- Extended review-queue with optional --output HTML/JSON packets. Includes published buyer ABN, proposal state, candidate register observations/source links, snapshot IDs and proposal-generation/source hashes from one consistent read transaction.
+- Changed identity evidence and stale register context appear first, followed by source conflicts. Packet generation records no approvals or rejections. Saved packets explicitly require a current-queue check before recording a decision.
+- Four focused tests verify review ordering, evidence retention, escaping, unsafe URLs and missing candidates. Added a PostgreSQL integration test for generation provenance, approval exclusion and identity-change rechecking; this new database test awaits restored cloud access.
+- Full Windows suite: 782 tests, 43 environment-dependent skips, no failures. Desktop/mobile rendering verified with explicitly synthetic review fixtures; no live review packet was claimed or fabricated. Existing 105-panel research artifact uses the previously validated cloud export.

@@ -392,6 +392,32 @@ class PostgreSQLTests(unittest.TestCase):
         self.assertEqual(self.scalar('SELECT count(*) FROM market.snapshots'),2)
         self.assertEqual(str(self.scalar('SELECT snapshot_id FROM market.current_snapshots')),second['snapshot_id'])
 
+    def test_identity_review_packet_tracks_generation_and_preserves_decisions(self):
+        import sqlite3
+        from market_intelligence.ingest import import_snapshot
+        from market_intelligence.matching import bridge_buyers
+        from market_intelligence.review_report import read_queue
+        from market_intelligence.review import decide
+        first=import_snapshot(self.engine,manifest(self.root,[row()]),'agor')
+        source=self.root/'buyers.db'
+        with closing(sqlite3.connect(source)) as c,c:
+            c.execute('CREATE TABLE contracts(buyer,buyer_abn)')
+            c.execute('INSERT INTO contracts VALUES(?,?)',('Example Federal Agency',ABN))
+        generation=bridge_buyers(self.engine,source)
+        packet=read_queue(self.engine)
+        self.assertEqual(str(packet['proposal_generation']['id']),generation['run_id'])
+        self.assertEqual(str(packet['register_sources'][0]['id']),first['snapshot_id'])
+        self.assertEqual(packet['rows'][0]['buyer_abn'],ABN)
+        self.assertEqual(self.scalar('SELECT count(*) FROM market.review_events'),0)
+        key=packet['rows'][0]['buyer_key']
+        decide(self.engine,key,'approved','gov:O-000001','reviewer','https://example.invalid/evidence')
+        self.assertEqual(read_queue(self.engine)['rows'],[])
+        import_snapshot(self.engine,manifest(self.root,[row(name='Updated Agency')],'2026-12-31'),'agor')
+        packet=read_queue(self.engine)
+        self.assertEqual(packet['rows'][0]['review_status'],'needs_recheck')
+        self.assertTrue(packet['rows'][0]['register_context_stale'])
+        self.assertEqual(self.scalar('SELECT count(*) FROM market.review_events'),1)
+
     def test_procurement_copy_idempotency_and_evidence_report(self):
         from datetime import date
         from market_intelligence.procurement import import_procurement

@@ -123,6 +123,7 @@ python -m market_intelligence quality --as-of 2026-11-19
 python -m market_intelligence buyer-report --as-of 2026-11-19 --output /private/reports/20261119
 python -m market_intelligence panel-worklist --as-of 2026-11-19 --output /private/reports/20261119-panels
 python -m market_intelligence review-queue
+python -m market_intelligence review-queue --output /private/reports/20261119-identities
 ```
 
 The export commands need read permission on collector files. The operator can run
@@ -157,6 +158,13 @@ Counts across different panels may overlap. Check the current official notice,
 category relevance and Illoura's documentary evidence before assessing access.
 The JSON includes the source buyer-report code hash and a separate hash of the
 worklist implementation. This command creates internal artifacts only.
+
+The optional review-queue output is a read-only HTML/JSON packet with the source
+buyer name/ABN, candidate register observations, snapshot IDs and source hashes.
+Register sources and the proposal generation are read in one consistent database
+transaction. Changed identity evidence, stale proposal context and source conflicts
+appear before straightforward proposals. Exporting a packet records no decisions.
+Saved packets can become stale; recheck the current queue before recording a review.
 
 ## Tests and operations
 

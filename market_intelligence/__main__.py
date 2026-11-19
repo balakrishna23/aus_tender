@@ -7,6 +7,7 @@ from .db import engine, migrate
 from .ingest import import_snapshot
 from .matching import bridge_buyers
 from .review import decide
+from .review_report import read_queue,write_queue
 from .procurement import import_procurement
 from .analytics import build_report,write_report
 from .panels import worklist,write_worklist
@@ -20,7 +21,8 @@ def main(argv=None):
     commands.add_parser('status')
     quality=commands.add_parser('quality')
     quality.add_argument('--as-of',required=True,type=date.fromisoformat)
-    commands.add_parser('review-queue')
+    queue=commands.add_parser('review-queue')
+    queue.add_argument('--output',help='Save a read-only HTML/JSON review packet')
     procurement=commands.add_parser('import-procurement')
     procurement.add_argument('--database',required=True)
     report=commands.add_parser('buyer-report')
@@ -63,10 +65,9 @@ def main(argv=None):
         elif args.command=='quality':
             result=quality_report(db,args.as_of)
         elif args.command=='review-queue':
-            with db.connect() as conn:
-                result={'rows':[dict(r) for r in conn.execute(text("""SELECT buyer_key,buyer_name,match_status,review_status,
-                    register_context_stale,candidate_evidence,evidence FROM market.buyer_resolution
-                    WHERE review_status IN ('unreviewed','needs_recheck') ORDER BY buyer_name""")).mappings()]}
+            result=read_queue(db)
+            if args.output:
+                result=write_queue(result,args.output)
         else:
             with db.connect() as conn:
                 result={'sources':[dict(r) for r in conn.execute(text('''SELECT s.source,s.effective_date,s.effective_date_basis,
