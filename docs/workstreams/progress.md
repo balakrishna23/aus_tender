@@ -276,3 +276,18 @@ Only one agent edits the branch at a time.
 - Added docs/graduate-guide.md (26 chapters, about 7,800 words) and dated audit report; refreshed
   stale retry/sender/field-loss reference statements. Private evidence retained in the workspace.
 - No extra email, buyer/partner outreach, model activation, timer enablement changes, pushes or merges.
+
+
+## 19 Nov 2026, Codex: isolated federal market intelligence milestone
+
+- User approved a smaller federal-buyer/panel MVP and one hour of autonomous work, with Claude opinions and testing. Implemented on feature/federal-intelligence-20261119 without changing existing collectors, publication or brief schedules.
+- Added market_intelligence package, eight Alembic migrations, pinned isolated dependencies, optional localhost Docker Compose setup, and a PostgreSQL CI integration job. Native PostgreSQL 16 on the existing cloud VM uses a separate database, non-superuser role and localhost binding.
+- Manifest-verified AGOR (1,372 rows) and Directory (5,252 body/portfolio/unit rows) imported. Directory excludes 37,227 people/role/other records. Publisher identities remain separate where ABNs are shared; source conflicts are review cases. Hierarchy links resolve 3,603 units; 146 remain unresolved.
+- Imported a contact-free read-only procurement snapshot: 430,565 stored contracts, 26,093 panel links and 5,345 panels. Six legacy amendment-only identities are retained and excluded from analytics. No source database is modified. New exports refuse to replace existing snapshots.
+- Buyer proposals: 59 exact ABN, 49 combined exact ABN/name, three exact-name proposals, 26 ambiguous, four conflicts and 14 unmatched. No human decisions were fabricated. Draft research report covers 127 active/relevant source buyer labels, with a top-25 HTML view. It is not a production qualification or invitation list.
+- Independent SQLite comparison matches report award/end-date counts and awarded values exactly. Repeat imports are unchanged. Snapshot/parser history, rollback, human review audit/rechecking and missing-value scoring are tested.
+- Privacy audit caught contact strings embedded in website fields. Fixed parser filtering, migrated eight historical derived row copies, and verified zero register email patterns/contact fields. Original raw files remain restricted and intact.
+- Windows full suite: 770 tests, 42 skips, no failures. Dedicated cloud PostgreSQL suite: all 45 tests pass with no skips. Server source hashes match the staged bundle; existing API/nginx active and timer enable states retained.
+- Full final dump/restore drill passed, including procurement row counts and source hashes. Existing automatic instance snapshots show successful daily snapshots. Desktop/mobile HTML layout checks passed without horizontal overflow.
+- Claude reviewed the design, original matching logic and report logic. Incorporated concrete provenance, ambiguity, evidence-count, panel-window and freshness findings; rejected unsupported claims that contradicted tests/definitions. Larger final identity review timed out, so no claim of a full independent approval.
+- Private reports/evidence are retained in the workspace reports/federal_mvp_20261119 and cloud private market-data directory. No new externally accessible service, buyer outreach, email send, timer change, push or merge. Next: review unresolved identities and Illoura eligibility inputs; then panel intake workflows, broader supplier spine and additional demand/RAP signals.

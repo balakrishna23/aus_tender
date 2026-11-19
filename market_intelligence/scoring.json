@@ -1,0 +1,9 @@
+{
+  "method": "relative_percentiles",
+  "weights": {
+    "awarded_value_365d": 0.45,
+    "recent_awards_count": 0.25,
+    "expiry_count_365d": 0.30
+  },
+  "note": "Draft research priorities, relative to buyers in this source snapshot. Access, eligibility, invitations and bench readiness are assessed separately and do not receive assumed scores."
+}
