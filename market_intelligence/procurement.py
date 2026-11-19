@@ -11,9 +11,10 @@ import uuid
 
 from sqlalchemy import text
 
-from .extract_procurement import CONTRACT_FIELDS, PANEL_FIELDS
+from .extract_procurement import CONTRACT_FIELDS, OPTIONAL_CONTRACT_FIELDS, DERIVED_CONTRACT_FIELDS, PANEL_FIELDS
 from .ingest import file_hash
-PARSER_REVISION='1'
+# 2: the payload also keeps procurement-method facts and category tags when the export has them.
+PARSER_REVISION='2'
 
 
 def buyer_key(name, abn):
@@ -111,7 +112,9 @@ def import_procurement(engine, database):
                     with raw.cursor() as cursor:
                         with cursor.copy('''COPY market.procurement_contracts(snapshot_id,cn_id,buyer_key,buyer,buyer_abn,supplier,supplier_abn,
                             category_family,original_value,current_value,start_date,current_end_date,first_published,source_url,retrieved_at,payload,issues) FROM STDIN''') as output:
-                            for item in origin.execute('SELECT '+','.join(CONTRACT_FIELDS)+' FROM contracts'):
+                            present={r[1] for r in origin.execute('PRAGMA table_info(contracts)')}
+                            columns=CONTRACT_FIELDS+[f for f in OPTIONAL_CONTRACT_FIELDS+DERIVED_CONTRACT_FIELDS if f in present]
+                            for item in origin.execute('SELECT '+','.join(columns)+' FROM contracts'):
                                 values,issues=contract_values(snapshot_id,dict(item))
                                 metrics.update(issues)
                                 output.write_row(values)
