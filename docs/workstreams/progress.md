@@ -307,3 +307,16 @@ Only one agent edits the branch at a time.
 - Changed identity evidence and stale register context appear first, followed by source conflicts. Packet generation records no approvals or rejections. Saved packets explicitly require a current-queue check before recording a decision.
 - Four focused tests verify review ordering, evidence retention, escaping, unsafe URLs and missing candidates. Added a PostgreSQL integration test for generation provenance, approval exclusion and identity-change rechecking; this new database test awaits restored cloud access.
 - Full Windows suite: 782 tests, 43 environment-dependent skips, no failures. Desktop/mobile rendering verified with explicitly synthetic review fixtures; no live review packet was claimed or fabricated. Existing 105-panel research artifact uses the previously validated cloud export.
+
+## 19 Nov 2026 ~17:30 IST, Claude: took over after Codex's credits ran out; supplier identity checks
+- Codex stopped at 15:55 IST (team credits depleted) while waiting on AWS sign-in. On Sirish's "pick up where it stopped
+  and push", pushed the 15 Nov fixes (PR #14, already deployed) and the federal work (PR #15, stacked on #14). Privacy scan of
+  all eight commits: no private values. Reviewed Codex's panel worklist and review packets: no defects found.
+- Built the next step Codex had queued: national business registers (ABN bulk extract, ASIC companies, ACNC, ORIC) in separate
+  `market.register_*` tables (migration 009), kept away from `market.organisations` so buyer matching is untouched, plus
+  `supplier-checks` (contract supplier ABNs against the registers; JSON/HTML). Individuals' names are never stored, compared or
+  reported (database constraint); addresses and contact fields are dropped. Parsers checked against real data.gov.au files
+  (ACNC 66,645 rows; ORIC 7,481 rows in Windows-1252; ASIC and ABN file heads).
+- Tests: 75 market tests OK locally (database tests skipped there); the PostgreSQL CI job now runs every `test_market_*.py`.
+- Not done: running the imports and checks on the server. Moving the single SSH rule to this PC's new address was blocked by
+  the auto-mode safety check and needs Sirish's approval. No email, timer, schedule or outreach changes.

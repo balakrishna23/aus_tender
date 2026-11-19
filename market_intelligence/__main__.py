@@ -12,6 +12,8 @@ from .procurement import import_procurement
 from .analytics import build_report,write_report
 from .panels import worklist,write_worklist
 from .quality import report as quality_report
+from .registers import SOURCES as REGISTER_SOURCES,import_register
+from .supplier_checks import build_checks,write_checks
 
 
 def main(argv=None):
@@ -44,14 +46,24 @@ def main(argv=None):
     ingest.add_argument('--source',choices=['agor','government_directory'],required=True)
     bridge=commands.add_parser('bridge-buyers')
     bridge.add_argument('--contracts-db',required=True)
+    register=commands.add_parser('import-register',help='ABN/ASIC (scoped to procurement ABNs), ACNC or ORIC')
+    register.add_argument('--manifest',required=True)
+    register.add_argument('--source',choices=REGISTER_SOURCES,required=True)
+    checks=commands.add_parser('supplier-checks',help='Contract supplier ABNs against the national registers')
+    checks.add_argument('--as-of',required=True,type=date.fromisoformat)
+    checks.add_argument('--output',required=True)
     args=parser.parse_args(argv)
     try:
         db=engine()
         if args.command=='migrate':
             migrate(db)
-            result={'schema':'008_website_privacy','status':'ready'}
+            result={'schema':'009_business_registers','status':'ready'}
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
+        elif args.command=='import-register':
+            result=import_register(db,args.manifest,args.source)
+        elif args.command=='supplier-checks':
+            result=write_checks(build_checks(db,args.as_of),args.output)
         elif args.command=='bridge-buyers':
             result=bridge_buyers(db,args.contracts_db)
         elif args.command=='review':

@@ -25,10 +25,59 @@ generation, the daily brief, or any schedule. Reports are private drafts.
   contract evidence, supplier evidence, known panel routes and score components.
 - Quality reporting, including source conflicts, missing links and privacy checks.
 
-National ABR/ASIC/ACNC ingestion, agency restructuring lineage, verified Illoura
-eligibility, panel intake/extension monitoring, CRM/bench integration, healthcare,
-RAP expansion and JSA demand scoring are subsequent work. The downloaded datasets
-remain available for those phases. No automated refresh has been added.
+- National business registers for supplier identity checks (ABN bulk extract, ASIC
+  companies, ACNC charities, ORIC corporations), described below.
+
+Agency restructuring lineage, verified Illoura eligibility, panel intake/extension
+monitoring, CRM/bench integration, ASIC business names, healthcare, RAP expansion
+and JSA demand scoring are subsequent work. The downloaded datasets remain available
+for those phases. No automated refresh has been added.
+
+## National business registers and supplier checks
+
+These registers live in their own tables (`market.register_*`, migration 009). They
+never feed `market.organisations`, which treats every observation as a government
+body, so they cannot change buyer matching.
+
+| Source | What is kept | Scope |
+|---|---|---|
+| ABN bulk extract (ABR, weekly, CC BY 3.0 AU) | ABN status and date, entity type, ACN, GST status, DGR flag, state and postcode; organisation and trading names | ABNs in the current procurement snapshot (suppliers and buyers) |
+| ASIC companies (monthly) | Current company name, former names, status, type/class, registration and deregistration dates | Same procurement ABN scope |
+| ACNC charities (weekly) | Legal and other names, size, PBI/HPC, registration and establishment dates, beneficiary flags for Aboriginal or Torres Strait Islander people and health, states operated in, website | Complete register |
+| ORIC corporations (monthly) | ICN, name, status, registration dates, size, industry, ACNC flag, latest income and employee bands | Complete register |
+
+Privacy rules, applied before any database write and tested:
+
+- Sole traders and other individuals keep only ABN status, entity type, state and
+  postcode. Their names, including trading names that may contain a person's name,
+  are never stored, compared or reported. A database constraint enforces this.
+- Street addresses, towns, contact fields and people are never stored. Charity
+  websites pass the same contact filter as government register websites.
+
+ABN and ASIC files are imported only for the procurement ABN scope at import time,
+and that scope list is stored (`market.register_scope`). A supplier added later shows
+as `outside_import_scope` until the import is repeated; an ABN in scope but absent
+from the public extract shows as `abn_not_found` (it may be suppressed or mistyped).
+Text tables are read strictly as UTF-8, or else strictly as Windows-1252 (the ORIC
+file uses Windows-1252). One malformed date becomes a record issue rather than a
+failed import; missing required columns, duplicate identifiers and empty files fail.
+Blank ABNs, and ASIC's `0`, mean "no ABN", not an invalid ABN.
+
+`supplier-checks` compares every supplier ABN in the current analytical contracts
+with the loaded registers and writes `supplier_checks.json` and `.html`:
+
+- `invalid_contract_abn`, `abn_not_found`, `outside_import_scope`, `abn_cancelled`
+  (with `cancelled_before_latest_award` when the ABN was cancelled before the latest
+  award), `name_differs` or `consistent`.
+- Name comparison writes legal forms one way ("Proprietary Limited" equals "Pty Ltd"),
+  ignores a "The Trustee for" prefix, and accepts trading, business, former, ACNC and
+  ORIC names. `same_core_name` means the names match once legal forms are removed.
+- Flags: `indigenous_corporation_oric`, `registered_charity`,
+  `company_registered_within_3_years`, `sole_trader`.
+
+Every finding is a prompt for review, not evidence of wrongdoing: restructures,
+trustees and trading names explain many differences. ORIC registration identifies an
+Aboriginal and Torres Strait Islander corporation; it is not Supply Nation certification.
 
 ## Identity and evidence rules
 
@@ -124,7 +173,16 @@ python -m market_intelligence buyer-report --as-of 2026-11-19 --output /private/
 python -m market_intelligence panel-worklist --as-of 2026-11-19 --output /private/reports/20261119-panels
 python -m market_intelligence review-queue
 python -m market_intelligence review-queue --output /private/reports/20261119-identities
+python -m market_intelligence import-register --source oric --manifest /private/raw/run/manifest.json
+python -m market_intelligence import-register --source acnc --manifest /private/raw/run/manifest.json
+python -m market_intelligence import-register --source asic_companies --manifest /private/raw/run/manifest.json
+python -m market_intelligence import-register --source abn --manifest /private/raw/run/manifest.json
+python -m market_intelligence supplier-checks --as-of 2026-11-19 --output /private/reports/20261119-suppliers
 ```
+
+Import procurement first: the ABN and ASIC imports read their scope from the current
+procurement snapshot. The ABN import streams all twenty XML files inside the two ZIPs
+without extracting them; expect it to take a while on the 8 GB server.
 
 The export commands need read permission on collector files. The operator can run
 only those exporters with elevated local access, then transfer ownership of their
@@ -169,7 +227,7 @@ Saved packets can become stale; recheck the current queue before recording a rev
 ## Tests and operations
 
 ```text
-uv run --no-project --with-requirements requirements-market.txt python -m unittest discover -s tests -p test_market_intelligence.py
+uv run --no-project --with-requirements requirements-market.txt python -m unittest discover -s tests -p "test_market_*.py"
 ```
 
 Parser, identity, scoring and export tests run without a database. PostgreSQL
