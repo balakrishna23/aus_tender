@@ -66,7 +66,7 @@ def write_queue(queue, directory):
         cards.append('<article><h2>'+html.escape(row['buyer_name'])+'</h2><dl><dt>Published buyer ABN</dt><dd>'
                      +html.escape(row['buyer_abn'] or 'Unknown')+'</dd><dt>Proposal and review state</dt><dd>'
                      +html.escape(row['match_status'].replace('_',' ')+' / '+row['review_status'].replace('_',' '))
-                     +'</dd><dt>Machine evidence</dt><dd>'+html.escape(row['evidence'])
+                     +'</dd><dt>Proposal evidence</dt><dd>'+html.escape(row['evidence'].replace('_',' '))
                      +'</dd><dt>Proposed organisation</dt><dd>'+html.escape(row['organisation_id'] or 'Unresolved')
                      +'</dd><dt>Buyer review key</dt><dd><code>'+html.escape(row['buyer_key'])+'</code></dd></dl><p>'
                      +html.escape(warning)+'</p><h3>Candidate register observations</h3><ul>'
