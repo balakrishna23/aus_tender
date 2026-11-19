@@ -1,5 +1,7 @@
 # Federal market intelligence: first working milestone
 
+For the 19 November APS, demand, retained RAP/state, panel, geography and newsletter continuation, see [market_completion.md](market_completion.md). Run `readiness --as-of DATE` for current coverage and missing business inputs; the full specification is not automatically accepted by passing engineering tests.
+
 This package adds an isolated PostgreSQL research layer around the existing
 procurement collectors. It does not replace SQLite collection, the API publication
 generation, the daily brief, or any schedule. Reports are private drafts.

@@ -1,0 +1,155 @@
+{
+  "note": "JSON syntax is valid YAML. Cadences are intended frequencies, not enabled schedules. Acquisition manifests retain exact URLs, checksums, dates and licences.",
+  "sources": {
+    "abn": {
+      "source_url": "https://data.gov.au/data/dataset/abn-bulk-extract",
+      "licence": "Creative Commons Attribution 3.0 Australia",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded_procurement_scope_only"
+    },
+    "asic_companies": {
+      "source_url": "https://data.gov.au/data/dataset/asic-companies",
+      "licence": "Creative Commons Attribution 3.0 Australia",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded_procurement_scope_only"
+    },
+    "asic_business_names": {
+      "source_url": "https://data.gov.au/data/dataset/asic-business-names",
+      "licence": "Creative Commons Attribution 3.0 Australia",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded_procurement_scope_only"
+    },
+    "acnc": {
+      "source_url": "https://data.gov.au/data/dataset/b050b242-4487-4306-abf5-07ca073e5594",
+      "licence": "Creative Commons Attribution 3.0 Australia",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded"
+    },
+    "agor": {
+      "source_url": "https://data.gov.au/data/dataset/c77cface-69aa-4dd0-b99f-b065dc33c8e6",
+      "licence": "Creative Commons Attribution 3.0 Australia",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded"
+    },
+    "government_directory": {
+      "source_url": "https://data.gov.au/data/dataset/directory-gov-au-export",
+      "licence": "Creative Commons Attribution 4.0 International",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded"
+    },
+    "oric": {
+      "source_url": "https://data.gov.au/data/dataset/aboriginal-and-torres-strait-islander-corporations-oric",
+      "licence": "Creative Commons Attribution 3.0 Australia",
+      "commercial_reuse": "unclear",
+      "refresh": "monthly",
+      "status": "loaded",
+      "restriction": "No mailing-list or advertising use; keep internal research scope"
+    },
+    "abs_geography": {
+      "source_url": "https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-4-july-2026-june-2031/access-and-downloads/digital-boundary-files",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "publisher_release",
+      "status": "SA4_LGA_POA_imported",
+      "restriction": "Native GDA2020; no remoteness or geographic crosswalk inferred"
+    },
+    "jsa_ivi": {
+      "source_url": "https://www.jobsandskills.gov.au/data/internet-vacancy-index",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "loaded"
+    },
+    "jsa_projections": {
+      "source_url": "https://www.jobsandskills.gov.au/data/employment-projections",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "publisher_release",
+      "status": "loaded"
+    },
+    "jsa_reos": {
+      "source_url": "https://www.jobsandskills.gov.au/data/recruitment-experiences-and-outlook-survey",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "downloaded_not_integrated"
+    },
+    "jsa_shortages": {
+      "source_url": "https://www.jobsandskills.gov.au/data/occupation-shortage",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "annual",
+      "status": "loaded"
+    },
+    "jsa_tnv": {
+      "source_url": "https://www.jobsandskills.gov.au/data/total-new-vacancies",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "monthly",
+      "status": "downloaded_not_integrated"
+    },
+    "aps_employment": {
+      "source_url": "https://www.apsc.gov.au/employment-data/aps-employment-data-30-june-2025",
+      "licence": "CC BY 4.0",
+      "licence_evidence_url": "https://www.apsc.gov.au/copyright",
+      "commercial_reuse": "yes",
+      "refresh": "publisher_release",
+      "status": "loaded_2025_06_30"
+    },
+    "rap_directory": {
+      "source_url": "https://www.reconciliation.org.au/reconciliation-action-plans/who-has-a-rap/",
+      "status": "loaded_retained_2026_10_27",
+      "licence": "Source-specific rights retained; internal research only",
+      "commercial_reuse": "unclear",
+      "refresh": "monthly"
+    },
+    "rap_commitments": {
+      "source_url": "https://www.reconciliation.org.au/reconciliation-action-plans/",
+      "status": "loaded_26_retained_reviewed_findings",
+      "licence": "Source-specific rights retained; internal research only",
+      "commercial_reuse": "unclear",
+      "refresh": "monthly"
+    },
+    "wa_contracts": {
+      "source_url": "https://catalogue.data.wa.gov.au/",
+      "status": "loaded_retained_2021_22_to_2023_24",
+      "licence": "Source-specific rights retained; internal research only",
+      "commercial_reuse": "yes",
+      "refresh": "daily_after_verified_source_refresh"
+    },
+    "tender_feed": {
+      "source_url": "https://www.tenders.gov.au/",
+      "status": "loaded_contact_free_retained_snapshot",
+      "licence": "Source-specific rights retained; internal research only",
+      "commercial_reuse": "unclear",
+      "refresh": "daily_after_verified_source_refresh"
+    },
+    "ndis_providers": {
+      "source_url": "https://www.ndiscommission.gov.au/provider-registration/find-registered-provider",
+      "licence_evidence_url": "https://www.ndiscommission.gov.au/copyright-and-disclaimer",
+      "commercial_reuse": "unclear",
+      "status": "blocked_HTTP_error_and_local_timeout",
+      "refresh": "monthly"
+    }
+  },
+  "pending_sources": [
+    "Other state and territory contracts/directories",
+    "PHNs, hospitals, named aged-care and NDIS providers, ratings",
+    "GrantConnect, budget, annual report and insourcing evidence",
+    "ABS remoteness and verified geographic correspondences",
+    "Broad RAP extraction provider and quality sample"
+  ],
+  "business_inputs": [
+    "Illoura profile evidence",
+    "Panel relevance marking and portal facts",
+    "Aggregate bench and exact occupation mappings",
+    "CRM, invitation, placement and bid outcomes",
+    "Verified lineage and Indigenous business flags"
+  ]
+}

@@ -17,6 +17,17 @@ from .supplier_checks import build_checks,write_checks
 from .buyict import build_buyict,write_buyict
 from .levers import build_levers,write_levers
 from .watchlist import seed_watchlist,export_watchlist,mark_watchlist,set_profile,show_profile,category_summary
+from .aps import import_aps,build_aps_report,write_aps_report
+from .demand import SOURCES as DEMAND_SOURCES,import_demand,build_demand,write_demand
+from .panel_access import record_panel_evidence,build_panel_access,write_panel_access
+from .forward import import_forward,build_forward,write_forward
+from .research import import_research,build_rap,write_rap,build_state,write_state
+from .targets import build_targets,write_targets
+from .inputs import INPUT_FIELDS,import_input,templates,build_bench,write_bench
+from .brief import build_brief,write_brief
+from .geography import LAYERS,import_geography,build_geography,write_geography
+from .changes import build_changes,write_changes
+from .readiness import readiness
 
 
 def main(argv=None):
@@ -72,12 +83,66 @@ def main(argv=None):
     profile.add_argument('--evidence-url')
     profile.add_argument('--by',required=True)
     commands.add_parser('category-summary')
+    commands.add_parser('import-aps',help='APS agency headcount (APSC Employment Release Tables)').add_argument('--manifest',required=True)
+    aps=commands.add_parser('aps-report',help='APS agency size, ICT workforce and our-category spend')
+    aps.add_argument('--as-of',required=True,type=date.fromisoformat)
+    aps.add_argument('--output',required=True)
+    demand=commands.add_parser('import-demand',help='Manifest-verified JSA vacancy, shortage or projection workbook')
+    demand.add_argument('--manifest',required=True)
+    demand.add_argument('--source',choices=DEMAND_SOURCES,required=True)
+    demand_report=commands.add_parser('demand-report')
+    demand_report.add_argument('--as-of',required=True,type=date.fromisoformat)
+    demand_report.add_argument('--output',required=True)
+    panel_evidence=commands.add_parser('panel-verify',help='Record checked panel facts with document hash and named reviewer')
+    panel_evidence.add_argument('--json',required=True)
+    panel_evidence.add_argument('--by',required=True)
+    access=commands.add_parser('panel-access')
+    access.add_argument('--as-of',required=True,type=date.fromisoformat)
+    access.add_argument('--output',required=True)
+    forward_import=commands.add_parser('import-forward',help='Contact-free read-only Tender Feed export')
+    forward_import.add_argument('--database',required=True)
+    forward=commands.add_parser('forward-report')
+    forward.add_argument('--as-of',required=True,type=date.fromisoformat)
+    forward.add_argument('--output',required=True)
+    commands.add_parser('import-research',help='Strict contact-free retained RAP or state research bundle').add_argument('--json',required=True)
+    for name in ['rap-report','state-report','targets-report']:
+        sub=commands.add_parser(name)
+        sub.add_argument('--as-of',required=True,type=date.fromisoformat)
+        sub.add_argument('--output',required=True)
+    business=commands.add_parser('import-input',help='Strict contact-free bench, mapping, CRM, invitation or bid CSV')
+    business.add_argument('--kind',required=True,choices=INPUT_FIELDS)
+    business.add_argument('--csv',required=True)
+    business.add_argument('--source-url',required=True)
+    business.add_argument('--as-of',required=True,type=date.fromisoformat)
+    business.add_argument('--by',required=True)
+    commands.add_parser('input-templates').add_argument('--output',required=True)
+    bench=commands.add_parser('bench-report')
+    bench.add_argument('--as-of',required=True,type=date.fromisoformat)
+    bench.add_argument('--output',required=True)
+    digest=commands.add_parser('market-digest',help='Internal evidence-linked research package; never sends')
+    digest.add_argument('--as-of',required=True,type=date.fromisoformat)
+    digest.add_argument('--output',required=True)
+    geo=commands.add_parser('import-geography')
+    geo.add_argument('--manifest',required=True)
+    geo.add_argument('--layer',choices=LAYERS,required=True)
+    geo_report=commands.add_parser('geography-report')
+    geo_report.add_argument('--as-of',required=True,type=date.fromisoformat)
+    geo_report.add_argument('--output',required=True)
+    ready=commands.add_parser('readiness')
+    ready.add_argument('--as-of',required=True,type=date.fromisoformat)
+    changes=commands.add_parser('changes-report')
+    changes.add_argument('--since',required=True,type=date.fromisoformat)
+    changes.add_argument('--as-of',required=True,type=date.fromisoformat)
+    changes.add_argument('--output',required=True)
     args=parser.parse_args(argv)
     try:
+        if args.command=='input-templates':
+            print(json.dumps(templates(args.output),indent=2))
+            return 0
         db=engine()
         if args.command=='migrate':
             migrate(db)
-            result={'schema':'010_watchlist_profile','status':'ready'}
+            result={'schema':'018_research_views','status':'ready'}
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
         elif args.command=='import-register':
@@ -100,6 +165,44 @@ def main(argv=None):
             result=set_profile(db,args.key,args.value,args.evidence_url,args.by)
         elif args.command=='category-summary':
             result=category_summary(db)
+        elif args.command=='import-aps':
+            result=import_aps(db,args.manifest)
+        elif args.command=='import-demand':
+            result=import_demand(db,args.manifest,args.source)
+        elif args.command=='demand-report':
+            result=write_demand(build_demand(db,args.as_of),args.output)
+        elif args.command=='panel-verify':
+            result=record_panel_evidence(db,args.json,args.by)
+        elif args.command=='panel-access':
+            result=write_panel_access(build_panel_access(db,args.as_of),args.output)
+        elif args.command=='import-forward':
+            result=import_forward(db,args.database)
+        elif args.command=='forward-report':
+            result=write_forward(build_forward(db,args.as_of),args.output)
+        elif args.command=='import-research':
+            result=import_research(db,args.json)
+        elif args.command=='rap-report':
+            result=write_rap(build_rap(db,args.as_of),args.output)
+        elif args.command=='state-report':
+            result=write_state(build_state(db,args.as_of),args.output)
+        elif args.command=='targets-report':
+            result=write_targets(build_targets(db,args.as_of),args.output)
+        elif args.command=='import-input':
+            result=import_input(db,args.kind,args.csv,args.source_url,args.as_of,args.by)
+        elif args.command=='bench-report':
+            result=write_bench(build_bench(db,args.as_of),args.output)
+        elif args.command=='market-digest':
+            result=write_brief(build_brief(db,args.as_of),args.output)
+        elif args.command=='import-geography':
+            result=import_geography(db,args.manifest,args.layer)
+        elif args.command=='geography-report':
+            result=write_geography(build_geography(db,args.as_of),args.output)
+        elif args.command=='readiness':
+            result=readiness(db,args.as_of)
+        elif args.command=='changes-report':
+            result=write_changes(build_changes(db,args.since,args.as_of),args.output)
+        elif args.command=='aps-report':
+            result=write_aps_report(build_aps_report(db,args.as_of),args.output)
         elif args.command=='bridge-buyers':
             result=bridge_buyers(db,args.contracts_db)
         elif args.command=='review':

@@ -265,6 +265,15 @@ def compose(out, now=None):
     baseline = json.loads(baseline_file.read_text()) if baseline_file.exists() else []
     report = json.loads((out / 'source_refresh.json').read_text(encoding='utf-8'))
     notes = editorial_notes(edition_day, verified, new_since_baseline(intelligence, baseline), report)
+    new_request_count = len(notes['additional_sections'][0]['items']) if notes['additional_sections'] else 0
+    try:
+        from market_research_context import read_market_context
+    except ImportError:
+        market_sections,market_status = [],{'status':'unavailable','reason':'market reader not installed'}
+    else:
+        market_sections,market_status = read_market_context(WORK / 'market_research.json',edition_day,now)
+    notes['additional_sections'].extend(market_sections)
+    write_json(out / 'market_research_status.json',market_status)
     write_json(out / 'editorial_notes.json', notes)
     if not (out / 'newsletter_review.json').exists():
         write_json(out / 'newsletter_review.json', {'created_by': 'illoura_daily_brief'})
@@ -284,7 +293,7 @@ def compose(out, now=None):
         'schedule': SCHEDULE_NOTE, 'reviewed_at_utc': utc_now().isoformat(), 'sha256': digests,
         'selected': sorted(verified), 'dropped': dropped, 'layout_checks_passed': True})
     summary = {'run_dir': str(out), 'subject': notes['subject'], 'selected': sorted(verified), 'dropped': dropped,
-               'new_since_last_run': len(notes['additional_sections'][0]['items']) if notes['additional_sections'] else 0}
+               'new_since_last_run': new_request_count}
     print(json.dumps(summary))
     return summary
 
