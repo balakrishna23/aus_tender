@@ -453,9 +453,11 @@ class PostgreSQLTests(unittest.TestCase):
         from datetime import date
         from market_intelligence.procurement import import_procurement
         from market_intelligence.analytics import build_report
+        from market_intelligence.extract_procurement import OPTIONAL_CONTRACT_FIELDS,DERIVED_CONTRACT_FIELDS
         path=procurement_export(self.root)
         with closing(sqlite3.connect(path)) as c,c:
-            c.execute("INSERT INTO contracts SELECT 'CN1-A1',"+','.join(CONTRACT_FIELDS[1:])+" FROM contracts")
+            columns=CONTRACT_FIELDS+OPTIONAL_CONTRACT_FIELDS+DERIVED_CONTRACT_FIELDS
+            c.execute("INSERT INTO contracts SELECT 'CN1-A1',"+','.join(columns[1:])+" FROM contracts")
             meta=json.loads(c.execute('SELECT payload FROM export_metadata').fetchone()[0]);meta['sources']['contract_api']['rows']=2
             c.execute('UPDATE export_metadata SET payload=?',(json.dumps(meta),))
         import_procurement(self.engine,path)

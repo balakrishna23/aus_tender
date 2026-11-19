@@ -173,7 +173,9 @@ class Phase2DatabaseTests(unittest.TestCase):
         panels = [('SON4102906', 'Digital Marketplace Panel 2', 'Digital Transformation Agency', 'ICT', '1-Jan-2024 to 30-Jun-2027',
                    'https://www.tenders.gov.au/Son/Show/x', '2026-11-19')]
         inputs = collector(root, contracts, links=[('CN1', 'SON4102906'), ('CN2', 'SON4102906')], panels=panels)
-        import_procurement(self.engine, extract(inputs, root/'export.db'))
+        export = root/'export.db'
+        extract(inputs, export)
+        import_procurement(self.engine, export)
         import_snapshot(self.engine, manifest(root, [dict(zip(['Id', 'Title', 'Portfolio', 'ABN', 'Type of Body'],
                         ['O-000009', 'Unseen Agency', 'Finance', '', 'Non-corporate Commonwealth entity']))]), 'agor')
 
