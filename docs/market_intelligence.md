@@ -79,6 +79,49 @@ Every finding is a prompt for review, not evidence of wrongdoing: restructures,
 trustees and trading names explain many differences. ORIC registration identifies an
 Aboriginal and Torres Strait Islander corporation; it is not Supply Nation certification.
 
+Name comparison also removes apostrophes ("MENS" equals "MEN'S"), joins initials
+("M.G.S." equals "MGS"), compares each side of "ATF" and "T/A" separately, and treats a
+label as `similar_name` when AusTender cut it short or it differs by a small typo
+(string similarity of at least 0.9). ASIC business names (organisations only: a holder
+the ABN register shows as an individual, or does not know, is skipped) add trading names.
+
+## Categories, BuyICT buyers, Indigenous procurement levers, watchlist and profile
+
+Editable rules live in `market_intelligence/rules/`, each with its source and retrieved date:
+
+| File | What it holds |
+|---|---|
+| `categories.json` | Ordered rules that tag a contract `ict_labour`, `ict_services`, `labour_hire_general`, `recruitment`, `healthcare_staffing`, `nursing_agency` or `other` from the collector's category family, the UNSPSC code and keywords |
+| `buyict_arrangements.json` | Standing offer IDs of the BuyICT marketplaces and People Panel arrangements, and which are in Illoura's categories |
+| `ipp_rules.json` | Mandatory Set-Aside band ($80,000 to $200,000 GST inclusive, and all remote procurement), the $7.5 million MMR threshold and its 19 UNSPSC segments, 4 and 3 per cent targets, eligibility from 1 July 2026 (51 per cent, or ORIC registered), Exemption 16, and the rule that non-corporate Commonwealth entities must use coordinated arrangements; all from the NIAA IPP guidelines of May 2026 and the MSA factsheet |
+| `ipp_portfolio_results.csv` | NIAA's published portfolio targets and results (2024-25 results, 2025-26 targets; data current at September 2025) |
+
+The procurement export now also carries procurement method, exemption, the Indigenous
+exemption flag, limited tender reason, supplier state and postcode, and the category tag
+with the rule that matched. The description is read only to choose the tag and is never
+exported. Generic descriptions ("Temporary Personnel", "Labour Hire") stay
+`labour_hire_general`; the ICT share of labour hire is therefore a lower bound.
+
+- `buyict-report`: agencies buying through BuyICT arrangements, 12 and 36 months, by
+  arrangement and category, the sellers that keep winning (top 3 share), and non-corporate
+  Commonwealth entities with no such purchase in linked notices. Invitation history stays
+  unknown. Only notices AusTender links to a standing offer ID are counted.
+- `levers-report`: agencies using Exemption 16; agencies buying our categories in the
+  set-aside band outside BuyICT arrangements (remote delivery and CPR exemptions not
+  checked); primes holding active contracts of $7.5 million or more in an MMR segment and
+  our categories (subcontracting targets); NIAA portfolio results beside each portfolio's
+  spend in our categories.
+- `watchlist-seed` adds panels linked to contracts in our categories (36 months) plus the
+  BuyICT arrangements, refreshing only spend and contract counts. `watchlist-export` writes
+  a CSV for marking; `watchlist-mark --csv FILE --by NAME` applies only relevance, Illoura
+  status and notes, logging every change. Intake dates, extension options and eligibility
+  stay empty with `needs_manual_check` until a person verifies them.
+- `profile-set --key K --value V --evidence-url https://... --by NAME` records Illoura's
+  own facts (Supply Nation status, ownership, licences, clearances, panels joined), each
+  change logged; `profile-show` lists them. Nothing is assumed.
+- `category-summary` shows how contracts are tagged and the share of our families'
+  value left in `other`.
+
 ## Identity and evidence rules
 
 `gov:<publisher_id>` identifies a published government body, portfolio or unit. It
@@ -177,12 +220,21 @@ python -m market_intelligence import-register --source oric --manifest /private/
 python -m market_intelligence import-register --source acnc --manifest /private/raw/run/manifest.json
 python -m market_intelligence import-register --source asic_companies --manifest /private/raw/run/manifest.json
 python -m market_intelligence import-register --source abn --manifest /private/raw/run/manifest.json
+python -m market_intelligence import-register --source asic_business_names --manifest /private/raw/run/manifest.json
 python -m market_intelligence supplier-checks --as-of 2026-11-19 --output /private/reports/20261119-suppliers
+python -m market_intelligence buyict-report --as-of 2026-11-19 --output /private/reports/20261119-buyict
+python -m market_intelligence levers-report --as-of 2026-11-19 --output /private/reports/20261119-levers
+python -m market_intelligence watchlist-seed --as-of 2026-11-19
+python -m market_intelligence watchlist-export --output /private/reports/20261119-watchlist.csv
+python -m market_intelligence watchlist-mark --csv reviewed.csv --by REVIEWER
+python -m market_intelligence profile-set --key supply_nation_status --value Certified --evidence-url https://example --by REVIEWER
+python -m market_intelligence category-summary
 ```
 
 Import procurement first: the ABN and ASIC imports read their scope from the current
 procurement snapshot. The ABN import streams all twenty XML files inside the two ZIPs
-without extracting them; expect it to take a while on the 8 GB server.
+without extracting them; it took 16 minutes for 20.7 million records on the 8 GB server.
+Business names need the ABN register loaded first (holder type decides what is kept).
 
 The export commands need read permission on collector files. The operator can run
 only those exporters with elevated local access, then transfer ownership of their

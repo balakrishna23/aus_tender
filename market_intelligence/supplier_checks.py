@@ -6,6 +6,7 @@ Sole traders are counted and checked by ABN status only; no person's name is rep
 """
 from collections import Counter, defaultdict
 from datetime import date, timedelta
+from difflib import SequenceMatcher
 import html
 import json
 from pathlib import Path
@@ -27,25 +28,59 @@ STATUS_TEXT = {
     'consistent': 'Active ABN and a contract name matches a registered name.'}
 LEGAL_FORMS = [(r'\bproprietary\b', 'pty'), (r'\blimited\b', 'ltd'), (r'\bcorporation\b', 'corp'),
                (r'\bincorporated\b', 'inc'), (r'\bcompany\b', 'co'), (r'\baustralian\b', 'aust'), (r'\baustralia\b', 'aust')]
-CORE_DROP = r'\b(pty|ltd|inc|corp|co|plc|llc|nl|aust)\b'
+CORE_DROP = r'\b(pty|ltd|inc|corp|co|plc|llc|nl|aust|trust|unit|discretionary|family|trustee|trading)\b'
+# "X Pty Ltd ATF Y Trust", "X T/A Y": each part is compared on its own.
+NAME_PARTS = re.compile(r'\b(?:atf|as trustee for|trustee for|t/a|trading as)\b', re.I)
 
 
 def legal_key(value):
-    """Name key with legal forms written one way: 'Proprietary Limited' == 'Pty Ltd'."""
-    key = name_key((value or '').replace('&', ' and '))
+    """Name key with legal forms written one way: 'Proprietary Limited' == 'Pty Ltd', "MEN'S" == 'MENS', 'M.G.S.' == 'MGS'."""
+    value = re.sub(r"['’`]", '', value or '').replace('&', ' and ')
+    key = name_key(value)
     for pattern, replacement in LEGAL_FORMS:
         key = re.sub(pattern, replacement, key)
     key = re.sub(r'^the trustee for (the )?', '', key)
     key = re.sub(r'^the ', '', key)
-    return ' '.join(key.split())
+    merged, run = [], False
+    for token in key.split():  # initials written with stops or spaces: "m g s" -> "mgs"
+        single = len(token) == 1 and token.isalpha()
+        if single and run:
+            merged[-1] += token
+        else:
+            merged.append(token)
+        run = single
+    return ' '.join(merged)
 
 
 def core_key(value):
     return ' '.join(re.sub(CORE_DROP, ' ', legal_key(value)).split())
 
 
+def _parts(names):
+    out = set()
+    for name in names:
+        if name:
+            out.add(name)
+            out.update(p for p in NAME_PARTS.split(name) if p and p.strip())
+    return out
+
+
+def _similar(contract_cores, register_cores):
+    for c in contract_cores:
+        if len(c) < 6:
+            continue
+        for r in register_cores:
+            # AusTender cuts long supplier names short; a shorter label can also omit a suffix.
+            if len(c) >= 10 and len(c.split()) >= 2 and r.startswith(c):
+                return True
+            if SequenceMatcher(None, c, r).ratio() >= 0.9:
+                return True
+    return False
+
+
 def name_match(contract_names, main_name, other_names):
-    contract = {legal_key(n) for n in contract_names if n}
+    names = _parts(contract_names)
+    contract = {legal_key(n) for n in names}
     if not contract:
         return 'no_contract_name'
     if main_name and legal_key(main_name) in contract:
@@ -53,10 +88,14 @@ def name_match(contract_names, main_name, other_names):
     others = {legal_key(n) for n in other_names if n}
     if contract & others:
         return 'other_registered_name'
-    cores = {core_key(n) for n in [main_name, *other_names] if n} - {''}
-    if cores & {core_key(n) for n in contract_names if n}:
+    registered = [n for n in [main_name, *other_names] if n]
+    cores = {core_key(n) for n in registered} - {''}
+    contract_cores = {core_key(n) for n in names} - {''}
+    if cores & contract_cores:
         return 'same_core_name'
-    return 'differs' if (main_name or other_names) else 'no_register_name'
+    if _similar(contract_cores | contract, cores | {legal_key(n) for n in registered}):
+        return 'similar_name'
+    return 'differs' if registered else 'no_register_name'
 
 
 def _abn_or_issue(value):
@@ -127,10 +166,12 @@ def _supplier(abn, items, entities, names, scope, abn_loaded, as_of):
     oric = entities['oric'].get(abn) or []
     acnc = (entities['acnc'].get(abn) or [None])[0]
     asic = entities['asic_companies'].get(abn) or []
+    business_names = entities['asic_business_names'].get(abn) or []
     individual = bool(abr and abr['is_individual'])
     published = sorted(r['first_published'] for r in items if r['first_published'])
     latest = published[-1] if published else None
-    other = set(names.get(abn, set())) | {e['name'] for e in [*oric, *asic] if e['name']} | ({acnc['name']} if acnc and acnc['name'] else set())
+    other = (set(names.get(abn, set())) | {e['name'] for e in [*oric, *asic, *business_names] if e['name']}
+             | ({acnc['name']} if acnc and acnc['name'] else set()))
     flags = []
     if not abn_loaded:
         status = 'register_not_loaded'

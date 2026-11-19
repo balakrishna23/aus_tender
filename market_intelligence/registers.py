@@ -26,9 +26,9 @@ from .ingest import file_hash
 from .parsers import SourceError, name_key, valid_abn, website
 
 PARSER_REVISION = '1'
-SOURCES = ('abn', 'asic_companies', 'acnc', 'oric')
-SCOPED = ('abn', 'asic_companies')
-SUFFIX = {'abn': '.zip', 'asic_companies': '.zip', 'acnc': '.csv', 'oric': '.csv'}
+SOURCES = ('abn', 'asic_companies', 'asic_business_names', 'acnc', 'oric')
+SCOPED = ('abn', 'asic_companies', 'asic_business_names')
+SUFFIX = {'abn': '.zip', 'asic_companies': '.zip', 'asic_business_names': '.zip', 'acnc': '.csv', 'oric': '.csv'}
 LICENCES = ['Creative Commons Attribution 3.0 Australia', 'Creative Commons Attribution 4.0 International']
 MONTHS = {m: i for i, m in enumerate(['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august',
                                        'september', 'october', 'november', 'december'], 1)}
@@ -258,6 +258,47 @@ def _asic_entities(reader, scope, encoding):
     return list(companies.values()), metrics
 
 
+# ---------------------------------------------------------------- ASIC business names (tab CSV in ZIP)
+
+BUSINESS_NAME_COLUMNS = ['BN_NAME', 'BN_STATUS', 'BN_REG_DT', 'BN_CANCEL_DT', 'BN_STATE_OF_REG', 'BN_ABN']
+
+
+def parse_asic_business_names(path, organisations):
+    """Business names held by ABNs in `organisations`: in the procurement scope AND known from the
+    current ABN register not to be individuals. Names held by sole traders often contain a person's
+    name, so a holder that is an individual, or whose status is unknown, is skipped."""
+    if not organisations:
+        raise SourceError('Load the ABN register before business names (holder type is needed)')
+    with zipfile.ZipFile(path) as archive:
+        members = [n for n in archive.namelist() if n.lower().endswith(('.csv', '.txt'))]
+        if len(members) != 1:
+            raise SourceError('Expected one ASIC business names table')
+        return _scan(lambda: archive.open(members[0]), '\t', lambda reader, enc: _business_names(reader, organisations, enc))
+
+
+def _business_names(reader, organisations, encoding):
+    _require(reader, BUSINESS_NAME_COLUMNS)
+    found, metrics = {}, dict(rows_read=0, encoding=encoding, skipped_not_organisation_in_scope=0, duplicates=0)
+    for row in reader:
+        metrics['rows_read'] += 1
+        issues = []
+        abn = _abn(row['BN_ABN'], issues)
+        name = _clean(row['BN_NAME'])
+        if abn not in organisations or not name:
+            metrics['skipped_not_organisation_in_scope'] += 1
+            continue
+        registered = _dmy(row['BN_REG_DT'], issues)
+        record_id = 'BN-' + hashlib.sha1('|'.join([abn, name.casefold(), str(registered)]).encode()).hexdigest()[:20]
+        if record_id in found:
+            metrics['duplicates'] += 1
+            continue
+        found[record_id] = Entity(record_id=record_id, abn=abn, name=name, status=_clean(row['BN_STATUS']),
+                                  registered_on=registered, deregistered_on=_dmy(row['BN_CANCEL_DT'], issues),
+                                  entity_type='Business name', state=_clean(row['BN_STATE_OF_REG']), issues=issues)
+    _nonempty(metrics)
+    return list(found.values()), metrics
+
+
 # ---------------------------------------------------------------- ACNC charities (CSV)
 
 ACNC_COLUMNS = ['ABN', 'Charity_Legal_Name', 'Other_Organisation_Names', 'State', 'Postcode',
@@ -425,10 +466,12 @@ def procurement_scope(conn):
     return scope
 
 
-def parse_source(source, files, scope):
+def parse_source(source, files, scope, organisations=None):
     paths = [f['path'] for f in files]
     if source == 'abn':
         return parse_abn(paths, scope)
+    if source == 'asic_business_names':
+        return (*parse_asic_business_names(paths[0], organisations), None)
     if source == 'asic_companies':
         return (*parse_asic_companies(paths[0], scope), None)
     if source == 'acnc':
@@ -451,7 +494,12 @@ def import_register(engine, manifest, source):
                 scope = procurement_scope(conn)
             if not scope:
                 raise SourceError('No procurement snapshot ABNs to scope the import')
-        records, metrics, extract_date = parse_source(source, files, scope)
+        organisations = None
+        if source == 'asic_business_names':
+            with engine.connect() as conn:
+                organisations = scope & set(conn.execute(text("""SELECT abn FROM market.current_register_entities
+                    WHERE source='abn' AND NOT is_individual AND abn IS NOT NULL""")).scalars())
+        records, metrics, extract_date = parse_source(source, files, scope, organisations)
         if not records:
             raise SourceError('No register records accepted')
         for f in files:

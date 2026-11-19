@@ -14,6 +14,9 @@ from .panels import worklist,write_worklist
 from .quality import report as quality_report
 from .registers import SOURCES as REGISTER_SOURCES,import_register
 from .supplier_checks import build_checks,write_checks
+from .buyict import build_buyict,write_buyict
+from .levers import build_levers,write_levers
+from .watchlist import seed_watchlist,export_watchlist,mark_watchlist,set_profile,show_profile,category_summary
 
 
 def main(argv=None):
@@ -52,18 +55,51 @@ def main(argv=None):
     checks=commands.add_parser('supplier-checks',help='Contract supplier ABNs against the national registers')
     checks.add_argument('--as-of',required=True,type=date.fromisoformat)
     checks.add_argument('--output',required=True)
+    for name,text_help in [('buyict-report','BuyICT buyer universe (phase 2a)'),('levers-report','Indigenous procurement levers (phase 2d)')]:
+        sub=commands.add_parser(name,help=text_help)
+        sub.add_argument('--as-of',required=True,type=date.fromisoformat)
+        sub.add_argument('--output',required=True)
+    seed=commands.add_parser('watchlist-seed',help='Add candidate panels from data; never overwrites what people entered')
+    seed.add_argument('--as-of',required=True,type=date.fromisoformat)
+    commands.add_parser('watchlist-export',help='CSV for marking relevance and Illoura status').add_argument('--output',required=True)
+    mark=commands.add_parser('watchlist-mark',help='Apply a reviewed watchlist CSV (relevance, status, notes)')
+    mark.add_argument('--csv',required=True)
+    mark.add_argument('--by',required=True)
+    commands.add_parser('profile-show')
+    profile=commands.add_parser('profile-set')
+    profile.add_argument('--key',required=True)
+    profile.add_argument('--value',required=True)
+    profile.add_argument('--evidence-url')
+    profile.add_argument('--by',required=True)
+    commands.add_parser('category-summary')
     args=parser.parse_args(argv)
     try:
         db=engine()
         if args.command=='migrate':
             migrate(db)
-            result={'schema':'009_business_registers','status':'ready'}
+            result={'schema':'010_watchlist_profile','status':'ready'}
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
         elif args.command=='import-register':
             result=import_register(db,args.manifest,args.source)
         elif args.command=='supplier-checks':
             result=write_checks(build_checks(db,args.as_of),args.output)
+        elif args.command=='buyict-report':
+            result=write_buyict(build_buyict(db,args.as_of),args.output)
+        elif args.command=='levers-report':
+            result=write_levers(build_levers(db,args.as_of),args.output)
+        elif args.command=='watchlist-seed':
+            result=seed_watchlist(db,args.as_of)
+        elif args.command=='watchlist-export':
+            result=export_watchlist(db,args.output)
+        elif args.command=='watchlist-mark':
+            result=mark_watchlist(db,args.csv,args.by)
+        elif args.command=='profile-show':
+            result=show_profile(db)
+        elif args.command=='profile-set':
+            result=set_profile(db,args.key,args.value,args.evidence_url,args.by)
+        elif args.command=='category-summary':
+            result=category_summary(db)
         elif args.command=='bridge-buyers':
             result=bridge_buyers(db,args.contracts_db)
         elif args.command=='review':
