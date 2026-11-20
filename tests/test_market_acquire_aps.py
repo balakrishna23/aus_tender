@@ -42,6 +42,9 @@ def payload(folder, year=2026, restriction=None, changed_layout=False):
                     cell.value += year - 2025
     if restriction:
         wb['Table of Contents'].append([restriction])
+    if year >= 2026:
+        wb['Table 88']['B4'] = 'ICT and Digital'
+        wb['Table 88']['D4'] = 'No data'
     if changed_layout:
         wb['Table 2']['B3'] = 'Changed category'
     output = io.BytesIO()

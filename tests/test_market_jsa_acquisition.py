@@ -24,7 +24,7 @@ TNV = jsa.ORIGIN + '/sites/default/files/2026-08/total_new_vacancies_may_2026.xl
 
 def html(*links, licence=True):
     if licence:
-        links += (jsa.LICENCE_URL,)
+        links += (jsa.LICENCE_URL, '/copyright-and-disclaimer')
     return ('<html>' + ''.join('<a href="' + link + '">Download</a>' for link in links) + '</html>').encode()
 
 
@@ -72,6 +72,7 @@ class FixturePublisher:
     def __init__(self):
         self.payloads = {'jsa_reos': workbook('jsa_reos'), 'jsa_tnv': workbook('jsa_tnv')}
         self.routes = {jsa.ORIGIN + '/robots.txt': b'User-agent: *\nAllow: /\n',
+                       jsa.ORIGIN + '/copyright-and-disclaimer': html(jsa.LICENCE_URL, licence=False),
                        jsa.ORIGIN + jsa.DATASETS['jsa_reos'][0]: html(REOS),
                        jsa.ORIGIN + jsa.DATASETS['jsa_tnv'][0]: html(TNV),
                        REOS: self.payloads['jsa_reos'], TNV: self.payloads['jsa_tnv']}
@@ -258,13 +259,61 @@ class JSAAcquisitionTests(unittest.TestCase):
         copyright_url = jsa.ORIGIN + '/copyright'
         fixture.routes[copyright_url] = html(jsa.LICENCE_URL, licence=False)
         client = fixture.client()
-        self.assertEqual(jsa.licence_evidence(client, html('/copyright', licence=False), TNV), copyright_url)
+        evidence = jsa.licence_evidence(client, html('/copyright', licence=False), TNV)
+        self.assertEqual((evidence['url'], evidence['evidence_type']), (copyright_url, 'deed_link'))
         for body in [html(licence=False), html('/copyright', '/licensing', licence=False)]:
             with self.assertRaisesRegex(jsa.AcquisitionError, 'missing or ambiguous'):
                 jsa.licence_evidence(client, body, TNV)
         fixture.routes[copyright_url] = html(licence=False)
         with self.assertRaisesRegex(jsa.AcquisitionError, 'does not link'):
             jsa.licence_evidence(client, html('/copyright', licence=False), TNV)
+
+    def test_explicit_statement_retained_with_exceptions_and_scope_review(self):
+        fixture = FixturePublisher()
+        source = jsa.ORIGIN + jsa.DATASETS['jsa_tnv'][0]
+        copyright = jsa.ORIGIN + '/copyright-and-disclaimer'
+        fixture.routes[source] = html(TNV, '/copyright-and-disclaimer', licence=False)
+        page = (b'All content on the Jobs and Skills Australia website is provided under a '
+                b'Creative Commons Attribution 4.0 International Licence with the exception of: '
+                b'content supplied by third parties; the Commonwealth Coat of Arms; '
+                b'material protected by a trade mark; any images and/or photographs. '
+                b'Details of the Creative Commons BY 4.0 licence are available on the Creative Commons website.'
+                + html('https://creativecommons.org/', licence=False))
+        fixture.routes[copyright] = page
+        with tempfile.TemporaryDirectory() as tmp:
+            entry = json.loads(jsa.acquire(tmp, ['jsa_tnv'], client=fixture.client()).read_text())['files'][0]
+            self.assertEqual(entry['evidence_type'], 'explicit_statement')
+            self.assertEqual(entry['licence_exceptions'], ['content supplied by third parties',
+                             'the Commonwealth Coat of Arms', 'material protected by a trade mark',
+                             'any images and/or photographs'])
+            evidence = entry['licence_evidence'][0]
+            self.assertEqual(Path(evidence['path']).read_bytes(), page)
+            self.assertEqual(evidence['sha256'], hashlib.sha256(page).hexdigest())
+            self.assertIn('Claude on 20 Nov 2026', entry['licence_scope_review'])
+
+    def test_homepage_only_and_conflicting_evidence_rejected(self):
+        fixture = FixturePublisher()
+        copyright = jsa.ORIGIN + '/copyright-and-disclaimer'
+        body = html('/copyright-and-disclaimer', licence=False)
+        for page in [html('https://creativecommons.org/', licence=False),
+                     html(jsa.LICENCE_URL, 'https://creativecommons.org/licenses/by-nc/4.0/', licence=False),
+                     html(jsa.LICENCE_URL, 'https://creativecommons.org/licenses/by-nd/4.0/', licence=False),
+                     html(jsa.LICENCE_URL, 'https://creativecommons.org/licenses/by/3.0/', licence=False),
+                     html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Attribution 3.0 International',
+                     html('https://creativecommons.org/', licence=False) + b'Creative Commons Attribution 4.0 International; CC BY-ND 4.0',
+                     html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Zero',
+                     html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Attribution ShareAlike 4.0',
+                     html(jsa.LICENCE_URL, licence=False) + b'CC BY-NC 4.0']:
+            with self.subTest(page=page):
+                fixture.routes[copyright] = page
+                with self.assertRaises(jsa.AcquisitionError):
+                    jsa.licence_evidence(fixture.client(), body, TNV)
+        # A deed on the dataset must not bypass ambiguity or conflicting text.
+        with self.assertRaisesRegex(jsa.AcquisitionError, 'missing or ambiguous'):
+            jsa.licence_evidence(fixture.client(), html('/copyright', '/licensing'), TNV)
+        fixture.routes[copyright] = html(jsa.LICENCE_URL, licence=False)
+        with self.assertRaises(jsa.AcquisitionError):
+            jsa.licence_evidence(fixture.client(), html() + b'CC BY-ND 4.0', TNV)
 
     def test_previous_failed_manifest_and_invalid_options_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
