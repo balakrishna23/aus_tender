@@ -6,42 +6,49 @@
       "licence": "Creative Commons Attribution 3.0 Australia",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "loaded_procurement_scope_only"
+      "status": "loaded_procurement_scope_only",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release",
+      "alternative": "ABN Lookup web services (abr.business.gov.au) are the official programmatic channel; they need a free registration GUID"
     },
     "asic_companies": {
       "source_url": "https://data.gov.au/data/dataset/asic-companies",
       "licence": "Creative Commons Attribution 3.0 Australia",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "loaded_procurement_scope_only"
+      "status": "loaded_procurement_scope_only",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release"
     },
     "asic_business_names": {
       "source_url": "https://data.gov.au/data/dataset/asic-business-names",
       "licence": "Creative Commons Attribution 3.0 Australia",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "loaded_procurement_scope_only"
+      "status": "loaded_procurement_scope_only",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release"
     },
     "acnc": {
       "source_url": "https://data.gov.au/data/dataset/b050b242-4487-4306-abf5-07ca073e5594",
       "licence": "Creative Commons Attribution 3.0 Australia",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "loaded"
+      "status": "loaded",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release"
     },
     "agor": {
       "source_url": "https://data.gov.au/data/dataset/c77cface-69aa-4dd0-b99f-b065dc33c8e6",
       "licence": "Creative Commons Attribution 3.0 Australia",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "loaded"
+      "status": "loaded",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release"
     },
     "government_directory": {
       "source_url": "https://data.gov.au/data/dataset/directory-gov-au-export",
       "licence": "Creative Commons Attribution 4.0 International",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "loaded"
+      "status": "loaded",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release"
     },
     "oric": {
       "source_url": "https://data.gov.au/data/dataset/aboriginal-and-torres-strait-islander-corporations-oric",
@@ -49,7 +56,8 @@
       "commercial_reuse": "unclear",
       "refresh": "monthly",
       "status": "loaded",
-      "restriction": "No mailing-list or advertising use; keep internal research scope"
+      "restriction": "No mailing-list or advertising use; keep internal research scope",
+      "automation": "manual_only: data.gov.au robots.txt is \"User-agent: * / Disallow: /\" (verified 20 Nov 2026 from the admin PC and the server), so no automated catalogue or file requests; refresh by a person downloading the release"
     },
     "abs_geography": {
       "source_url": "https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-4-july-2026-june-2031/access-and-downloads/digital-boundary-files",
@@ -88,7 +96,7 @@
       "commercial_reuse": "yes",
       "refresh": "monthly",
       "status": "parser_verified_on_retained_2026_10_release",
-      "acquisition": "python -m market_intelligence.acquire_jsa (run on the Sydney server; the publisher site did not answer from the admin PC on 20 Nov 2026); live robots/licence/link validation pending"
+      "acquisition": "python -m market_intelligence.acquire_jsa (run on the Sydney server; the publisher site does not answer from the admin PC). Live page, robots.txt and workbook link validated from the server 20 Nov 2026"
     },
     "jsa_shortages": {
       "source_url": "https://www.jobsandskills.gov.au/data/occupation-shortage",
@@ -103,7 +111,7 @@
       "commercial_reuse": "yes",
       "refresh": "monthly",
       "status": "parser_verified_on_retained_2026_05_release",
-      "acquisition": "python -m market_intelligence.acquire_jsa (run on the Sydney server; the publisher site did not answer from the admin PC on 20 Nov 2026); live robots/licence/link validation pending"
+      "acquisition": "python -m market_intelligence.acquire_jsa (run on the Sydney server; the publisher site does not answer from the admin PC). Live page, robots.txt and workbook link validated from the server 20 Nov 2026"
     },
     "aps_employment": {
       "source_url": "https://www.apsc.gov.au/employment-data/aps-employment-data-30-june-2025",
@@ -111,15 +119,17 @@
       "licence_evidence_url": "https://www.apsc.gov.au/copyright",
       "commercial_reuse": "yes",
       "refresh": "publisher_release",
-      "status": "loaded_2025_06_30",
-      "acquisition": "python -m market_intelligence.acquire_aps --year 2026 (server only; APSC did not answer from the admin PC on 20 Nov 2026). 30 June 2026 release listed 30 Sep 2026; workbook layout, licence scope and live links not yet validated"
+      "status": "loaded_2025_06_30; 30_June_2026_release_live",
+      "acquisition": "python -m market_intelligence.acquire_aps --year 2026 (server only). Live page and workbook link validated from the server 20 Nov 2026: /employment-data/aps-employment-data-30-june-2026 lists /sites/default/files/2026-09/APS Employment Release Tables - 30 June 2026.xlsx"
     },
     "rap_directory": {
       "source_url": "https://www.reconciliation.org.au/reconciliation-action-plans/who-has-a-rap/",
       "status": "loaded_retained_2026_10_27",
       "licence": "Source-specific rights retained; internal research only",
       "commercial_reuse": "unclear",
-      "refresh": "monthly"
+      "refresh": "monthly",
+      "acquisition": "Live structure validated from the server 20 Nov 2026 (robots.txt allows the directory and its pages): one form POST per RAP type returns that type's complete list; 1,474 entries (Reflect 667, Innovate 677, Stretch 120, Elevate 10)",
+      "privacy_review": "Automated directory reviewer approved by the project owner on 20 Nov 2026; directory metadata only, never PDF text or commitments"
     },
     "rap_commitments": {
       "source_url": "https://www.reconciliation.org.au/reconciliation-action-plans/",
@@ -145,9 +155,11 @@
     "aged_care_star_ratings": {
       "source_url": "https://www.health.gov.au/resources/publications/star-ratings-quarterly-data-extract-october-2026",
       "licence_evidence_url": "https://www.health.gov.au/using-our-websites/copyright",
-      "commercial_reuse": "permission_required",
-      "status": "download_verified_not_imported_due_to_commercial_reuse_restriction",
-      "refresh": "quarterly_after_reuse_permission"
+      "commercial_reuse": "permission_confirmed_by_project_owner_2026_11_20",
+      "status": "download_verified_parser_pending",
+      "refresh": "quarterly",
+      "permission": "The project owner confirmed on 20 Nov 2026 that permission to use this data is held; publisher attribution and copyright notice still apply",
+      "release_check": "October 2026 extract is the newest (collection page https://www.health.gov.au/resources/collections/star-ratings-quarterly-data-extracts, checked from the server 20 Nov 2026)"
     },
     "ndis_providers": {
       "source_url": "https://www.ndiscommission.gov.au/provider-registration/find-registered-provider",
@@ -162,7 +174,7 @@
     "PHNs, hospitals, named aged-care and NDIS providers, ratings",
     "GrantConnect, budget, annual report and insourcing evidence",
     "ABS remoteness production import (parser verified; awaiting server import)",
-    "Broad RAP extraction provider and quality sample"
+    "Broad RAP extraction provider and quality sample (deferred by the project owner, 20 Nov 2026)"
   ],
   "business_inputs": [
     "Illoura profile evidence",
