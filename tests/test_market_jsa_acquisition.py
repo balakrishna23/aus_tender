@@ -140,7 +140,8 @@ class JSAAcquisitionTests(unittest.TestCase):
             fixture.routes[TNV] = b'<html>not a workbook</html>'
             with self.assertRaisesRegex(jsa.AcquisitionError, 'not an XLSX'):
                 jsa.acquire(tmp, ['jsa_reos', 'jsa_tnv'], [first], fixture.client())
-            failed = next(p for p in Path(tmp).glob('*/manifest.json') if p != first)
+            # Resolve both sides: Windows runners may expose the temp folder as a short (8.3) path.
+            failed = next(p for p in Path(tmp).resolve().glob('*/manifest.json') if p.resolve() != first.resolve())
             self.assertEqual(json.loads(failed.read_text())['status'], 'failed')
             self.assertEqual(first.read_bytes(), before)
             with self.assertRaisesRegex(SourceError, 'incomplete'):
