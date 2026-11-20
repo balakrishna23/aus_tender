@@ -26,6 +26,7 @@ from .targets import build_targets,write_targets
 from .inputs import INPUT_FIELDS,import_input,templates,build_bench,write_bench
 from .brief import build_brief,write_brief
 from .geography import LAYERS,import_geography,build_geography,write_geography
+from .geography import import_remoteness,build_remoteness,write_remoteness
 from .changes import build_changes,write_changes
 from .readiness import readiness
 from .crm import build_crm,export_crm
@@ -139,6 +140,10 @@ def main(argv=None):
     crm.add_argument('--as-of',required=True,type=date.fromisoformat)
     crm.add_argument('--output',required=True)
     crm.add_argument('--limit',type=int,default=20)
+    commands.add_parser('import-remoteness',help='Verified official ABS inputs; conservative derived RA references').add_argument('--manifest',required=True)
+    remoteness=commands.add_parser('remoteness-report')
+    remoteness.add_argument('--as-of',required=True,type=date.fromisoformat)
+    remoteness.add_argument('--output',required=True)
     args=parser.parse_args(argv)
     try:
         if args.command=='input-templates':
@@ -147,7 +152,7 @@ def main(argv=None):
         db=engine()
         if args.command=='migrate':
             migrate(db)
-            result={'schema':'020_extended_demand','status':'ready'}
+            result={'schema':'021_remoteness','status':'ready'}
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
         elif args.command=='import-register':
@@ -198,6 +203,10 @@ def main(argv=None):
             result=write_bench(build_bench(db,args.as_of),args.output)
         elif args.command=='market-digest':
             result=write_brief(build_brief(db,args.as_of),args.output)
+        elif args.command=='import-remoteness':
+            result=import_remoteness(db,args.manifest)
+        elif args.command=='remoteness-report':
+            result=write_remoteness(build_remoteness(db,args.as_of),args.output)
         elif args.command=='import-geography':
             result=import_geography(db,args.manifest,args.layer)
         elif args.command=='geography-report':

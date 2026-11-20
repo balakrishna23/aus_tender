@@ -28,6 +28,7 @@ deployed milestone unless explicitly updated.
 | Supplier research | 3,686 suppliers with relevant original awards over 36 months; 339 young/ORIC research candidates |
 | Healthcare research | 8,306 ACNC health-purpose/ORIC health-industry source records, potentially overlapping; buying and staffing need unknown |
 | ABS geography | SA4, LGA and POA boundary importer, native GDA2020 coordinates; no remoteness or postcode crosswalk inferred |
+| ABS remoteness (derived) | `import-remoteness --manifest` / `remoteness-report`: RA 2021 (Edition 3) carried to 2026 SA1 through the official population-weighted CG SA1 2021->2026 links (single-class, mixed, unknown and non-spatial kept separate), then SA4/LGA/POA 2026 as AREA shares of allocated mesh blocks, never population shares. Real files 20 Nov: 63,450 single-class / 0 mixed / 1 unknown / 34 non-spatial SA1; 108 SA4, 567 LGA, 2,645 POA. Official Edition 4 remoteness is expected March 2028. Not yet imported on the server |
 
 The APS tables reconcile to their published totals. Missing cells remain distinct from zero. Rejected/stale buyer proposals are excluded from APS spend associations. Partial identity approval never becomes full approval.
 

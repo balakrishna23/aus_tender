@@ -59,6 +59,15 @@
       "status": "SA4_LGA_POA_imported",
       "restriction": "Native GDA2020; no remoteness or geographic crosswalk inferred"
     },
+    "abs_remoteness": {
+      "source_url": "https://www.abs.gov.au/statistics/standards/australian-statistical-geography-standard-asgs/edition-4-july-2026-june-2031/access-and-downloads/correspondences",
+      "inputs": "RA 2021 by SA1 2021 (ASGS Edition 3 allocation); official population-weighted CG SA1 2021->2026 correspondence; ASGS Edition 4 SA1/MB/LGA/POA 2026 allocations",
+      "licence": "CC BY 4.0",
+      "commercial_reuse": "yes",
+      "refresh": "publisher_release; official Edition 4 Remoteness Structure expected March 2028",
+      "status": "parser_verified_on_files_retrieved_2026_11_20_not_imported",
+      "restriction": "Derived reference only: SA1 class by consensus of official links; SA4/LGA/POA are AREA shares, never population shares; no eligibility or delivery location inferred"
+    },
     "jsa_ivi": {
       "source_url": "https://www.jobsandskills.gov.au/data/internet-vacancy-index",
       "licence": "CC BY 4.0",
@@ -149,7 +158,7 @@
     "Other state and territory contracts/directories",
     "PHNs, hospitals, named aged-care and NDIS providers, ratings",
     "GrantConnect, budget, annual report and insourcing evidence",
-    "ABS remoteness and verified geographic correspondences",
+    "ABS remoteness production import (parser verified; awaiting server import)",
     "Broad RAP extraction provider and quality sample"
   ],
   "business_inputs": [
