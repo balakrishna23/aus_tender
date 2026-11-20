@@ -3,8 +3,10 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 import hashlib
 import json
+import io
 import re
 import uuid
+import zipfile
 
 from sqlalchemy import text
 
@@ -13,7 +15,7 @@ from .parsers import SourceError
 from .resources import verified_resource
 
 REVISION = '1'
-SOURCES = ('jsa_ivi', 'jsa_shortages', 'jsa_projections')
+SOURCES = ('jsa_ivi', 'jsa_shortages', 'jsa_projections', 'jsa_reos', 'jsa_tnv')
 REGIONS = {'AUST','NSW','VIC','QLD','SA','WA','TAS','NT','ACT'}
 
 
@@ -120,11 +122,90 @@ def parse_projections(wb):
     return out,periods[0]  # latest release is determined by baseline, not its future horizon
 
 
+def parse_reos(wb):
+    specs={'1.1 Recruitment Rate (M)':('recruitment_rate','All employers'),
+           '2.1 Increased Staff':('increased_staff_rate','All employers'),
+           '2.2 Decreased Staff':('decreased_staff_rate','All employers'),
+           '3.1 Recruitment Difficulty (M)':('recruitment_difficulty_rate','Recruiting employers'),
+           '4.1 Expected Increase (M)':('expected_staff_increase_rate','All employers'),
+           '4.3 Expected Decrease (M)':('expected_staff_decrease_rate','All employers')}
+    out=[];latest=None
+    for title,(measure,denominator) in specs.items():
+        sheet=wb[title];rows=list(sheet.iter_rows(values_only=True,max_col=6,max_row=500))
+        start=next((i for i,r in enumerate(rows[:12]) if r[0]=='Month'),None)
+        if start is None:raise SourceError('REOS monthly header missing')
+        headers=list(rows[start]);columns=range(1,6)
+        if denominator=='Recruiting employers':
+            if list(rows[start-1][2:4])!=['Capital Cities','Rest of State areas']:raise SourceError('REOS recruiting strata changed')
+            headers[2:4]=rows[start-1][2:4];columns=range(1,4)
+        elif list(headers[2:6])!=['Capital Cities','Rest of State areas','5 to 19 employees','20 employees or more']:
+            raise SourceError('REOS monthly strata changed')
+        dated=[(i,r) for i,r in enumerate(rows[start+1:],start+2) if isinstance(r[0],(date,datetime))]
+        if not dated:raise SourceError('REOS monthly observations missing')
+        dates=[r[0].date() if isinstance(r[0],datetime) else r[0] for _,r in dated]
+        if dates!=sorted(set(dates)):raise SourceError('REOS months duplicate or unordered')
+        for (row_number,row),period in list(zip(dated,dates))[-13:]:
+            latest=max(latest or period,period)
+            for col in columns:
+                raw=row[col];warning=isinstance(raw,str) and '*' in raw
+                if isinstance(raw,str) and '%' in raw:
+                    if not re.fullmatch(r'\d+(?:\.\d+)?%\*?',raw.strip()):raise SourceError('Unknown REOS warning format')
+                    value=number(raw.strip().rstrip('*%'))/100
+                else:value=number(raw)
+                if value is not None and not 0<=value<=1:raise SourceError('REOS proportion outside 0..1')
+                out.append(observation('REOS published aggregate strata',None,denominator,str(headers[col]),period,measure,value,
+                    sheet=title,row=row_number,source_units='proportion',denominator=denominator,
+                    low_sample_warning=warning,suppressed=raw=='n.p.',
+                    scope='Employers with five or more employees; many government organisations excluded. Strata overlap; do not sum.'))
+    return out,latest
+
+
+def parse_tnv(wb):
+    out=[];latest=None
+    for title,header in [('Data_1',['region_level','region_code','region_title','date','tnv']),
+                         ('Data_2',['date','occupation_code','occupation_level','occupation_title','tnv'])]:
+        sheet=wb[title];rows=list(sheet.iter_rows(values_only=True,max_col=5,max_row=20000))
+        start=next((i for i,r in enumerate(rows[:15]) if list(r)==header),None)
+        if start is None:raise SourceError('TNV long-format columns changed')
+        for i,row in enumerate(rows[start+1:],start+2):
+            if not any(v is not None for v in row):continue
+            period=row[3] if title=='Data_1' else row[0]
+            if isinstance(period,datetime):period=period.date()
+            if not isinstance(period,date) or period.day!=1:raise SourceError('TNV reference date changed')
+            value=number(row[4])
+            if value is not None and value<0:raise SourceError('Negative TNV vacancies')
+            latest=max(latest or period,period)
+            if title=='Data_1':
+                level,region,title_value=str(row[0]),str(row[1]),str(row[2]);occupation=None
+                classification='TNV published regional aggregate'
+            else:
+                occupation,level,title_value=str(row[1]),str(row[2]),str(row[3]);region='AUST'
+                classification='TNV published '+level
+            out.append(observation(classification,occupation,title_value,region,period,'total_new_vacancies',value,
+                sheet=title,row=i,aggregation_level=level,source_units='vacancies',
+                formatting_normalization='Invalid fractional baseColWidth changed in memory; cell data unchanged',
+                scope='Overlapping occupation and region totals; do not sum across levels or treat as online advertisements.'))
+    return out,latest
+
+
 def parse_demand(path,source):
     import openpyxl
-    parsers={'jsa_ivi':parse_ivi,'jsa_shortages':parse_shortages,'jsa_projections':parse_projections}
+    parsers={'jsa_ivi':parse_ivi,'jsa_shortages':parse_shortages,'jsa_projections':parse_projections,'jsa_reos':parse_reos,'jsa_tnv':parse_tnv}
     if source not in parsers: raise ValueError('Unknown demand source')
-    wb=openpyxl.load_workbook(path,read_only=True,data_only=True)
+    resource=path
+    if source=='jsa_tnv':
+        # The published workbook uses baseColWidth="8.43", invalid for openpyxl's integer field.
+        # Repair only this cosmetic XML attribute in memory; retain and hash the unmodified download.
+        resource=io.BytesIO()
+        with zipfile.ZipFile(path) as original,zipfile.ZipFile(resource,'w',zipfile.ZIP_DEFLATED) as normalized:
+            if sum(f.file_size for f in original.infolist())>100_000_000:raise SourceError('Workbook expansion limit')
+            for item in original.infolist():
+                body=original.read(item.filename)
+                if item.filename.startswith('xl/worksheets/') and item.filename.endswith('.xml'):
+                    body=body.replace(b'baseColWidth="8.43"',b'baseColWidth="8"')
+                normalized.writestr(item.filename,body)
+        resource.seek(0)
+    wb=openpyxl.load_workbook(resource,read_only=True,data_only=True)
     try: records,period=parsers[source](wb)
     except (KeyError,IndexError,StopIteration) as exc: raise SourceError('Workbook structure changed') from exc
     finally: wb.close()
@@ -136,7 +217,8 @@ def parse_demand(path,source):
 def import_demand(engine,manifest,source):
     selectors={'jsa_ivi':lambda f:'anzsco4_occupations_states_and_territories' in f['path'],
                'jsa_shortages':lambda f:'4_digit_anzsco' in f['path'],
-               'jsa_projections':lambda f:f['path'].endswith('.xlsx')}
+               'jsa_projections':lambda f:f['path'].endswith('.xlsx'),
+               'jsa_reos':lambda f:f['path'].endswith('.xlsx'),'jsa_tnv':lambda f:f['path'].endswith('.xlsx')}
     if source not in selectors: raise ValueError('Unknown demand source')
     run=uuid.uuid4()
     with engine.begin() as conn:
@@ -197,17 +279,24 @@ def build_demand(engine,as_of):
     return dict(as_of=as_of,status='research; role mappings awaiting review',snapshots=snapshots,vacancy_trends=trends,
                 shortage_ratings=[r for r in rows if r['source']=='jsa_shortages' and r['period']<=as_of],
                 employment_projections=[r for r in rows if r['source']=='jsa_projections'],
+                recruitment_survey=[r for r in rows if r['source']=='jsa_reos' and r['period']<=as_of],
+                total_new_vacancies=[r for r in rows if r['source']=='jsa_tnv' and r['period']<=as_of],
                 limitations=['IVI four-digit figures are three-month average online advertisements, not vacancies, placements or all labour demand.',
                              'Suppressed/missing values remain unknown; the latest 13 published months are retained for year-on-year comparison.',
                              'National and state observations overlap and must not be added together.',
                              'Shortage ratings are national annual assessments, not state-specific ratings.',
                              'Occupation classifications are kept separate; no unverified cross-edition code joins or role mappings.',
                              'Employment projections are indicative scenarios; baseline and future observations are labelled separately.',
+                             'REOS covers employers with five or more employees and excludes many government organisations; proportions retain denominators and suppression.',
+                             'TNV combines IVI and REOS evidence; do not add it to IVI. Published occupation and regional aggregates overlap. Prefer annual comparisons.',
                              'Illoura bench availability and clearance fit are unknown until an aggregate bench export is imported.'])
 
 
 def write_demand(report,directory):
     from .reporting import write_report_files
+    for key,title in [('recruitment_survey','Recruitment survey proportions'),('total_new_vacancies','Total new vacancies')]:
+        write_report_files(dict(as_of=report['as_of'],limitations=report['limitations'],observations=report[key]),directory,key,report[key],
+            ['source','classification','occupation_title','region','period','measure','value','payload'],title)
     return write_report_files(report,directory,'demand',report['vacancy_trends'],
                               ['occupation_title','region','period','ads_3m_average','year_on_year','role_family'],
                               'Workforce demand indicators')

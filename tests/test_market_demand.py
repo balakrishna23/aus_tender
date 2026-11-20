@@ -9,7 +9,7 @@ import unittest
 
 import openpyxl
 
-from market_intelligence.demand import parse_demand, number
+from market_intelligence.demand import parse_demand, number,parse_reos,parse_tnv
 from market_intelligence.parsers import SourceError
 
 
@@ -35,6 +35,39 @@ def acquisition(root,path):
 
 
 class DemandParsers(unittest.TestCase):
+    def test_reos_preserves_denominators_percent_strings_and_suppression(self):
+        wb=openpyxl.Workbook();wb.remove(wb.active)
+        names=['1.1 Recruitment Rate (M)','2.1 Increased Staff','2.2 Decreased Staff','3.1 Recruitment Difficulty (M)',
+               '4.1 Expected Increase (M)','4.3 Expected Decrease (M)']
+        for name in names:
+            ws=wb.create_sheet(name)
+            if name.startswith('3.1'):
+                ws.append([None,None,'Capital Cities','Rest of State areas'])
+                ws.append(['Month','All recruiting employers'])
+                ws.append([datetime(2026,10,1),'45%*','n.p.',0])
+            else:
+                ws.append(['Month','All employers','Capital Cities','Rest of State areas','5 to 19 employees','20 employees or more'])
+                ws.append([datetime(2026,10,1),'51%',.48,'n.p.',0,.72])
+        rows,end=parse_reos(wb);wb.close()
+        self.assertEqual((len(rows),end),(28,date(2026,10,1)))
+        self.assertEqual(rows[0]['value'],number('.51'))
+        difficulty=[r for r in rows if r['measure']=='recruitment_difficulty_rate']
+        self.assertEqual(difficulty[0]['value'],number('.45'));self.assertTrue(difficulty[0]['payload']['low_sample_warning'])
+        self.assertIsNone(difficulty[1]['value']);self.assertEqual(difficulty[2]['value'],0)
+        self.assertEqual(difficulty[0]['payload']['denominator'],'Recruiting employers')
+
+    def test_tnv_keeps_overlapping_aggregation_levels_separate(self):
+        wb=openpyxl.Workbook();wb.active.title='Data_1';ws=wb.active
+        ws.append(['region_level','region_code','region_title','date','tnv'])
+        ws.append(['national','AUS','Australia',datetime(2026,5,1),100])
+        ws=wb.create_sheet('Data_2');ws.append(['date','occupation_code','occupation_level','occupation_title','tnv'])
+        ws.append([datetime(2026,5,1),'0','total','Australia',100])
+        ws.append([datetime(2026,5,1),'2','anzsco1','Professionals',50])
+        rows,end=parse_tnv(wb);wb.close()
+        self.assertEqual((len(rows),end),(3,date(2026,5,1)))
+        self.assertEqual(len({r['observation_key'] for r in rows}),3)
+        self.assertEqual(rows[2]['classification'],'TNV published anzsco1')
+
     def test_ivi_suppression_and_periods(self):
         with tempfile.TemporaryDirectory() as tmp:
             rows,end=parse_demand(ivi(Path(tmp)/'ivi.xlsx'),'jsa_ivi')

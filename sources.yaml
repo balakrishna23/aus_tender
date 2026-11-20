@@ -78,7 +78,7 @@
       "licence": "CC BY 4.0",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "downloaded_not_integrated"
+      "status": "parser_verified_on_retained_2026_10_release"
     },
     "jsa_shortages": {
       "source_url": "https://www.jobsandskills.gov.au/data/occupation-shortage",
@@ -92,7 +92,7 @@
       "licence": "CC BY 4.0",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "downloaded_not_integrated"
+      "status": "parser_verified_on_retained_2026_05_release"
     },
     "aps_employment": {
       "source_url": "https://www.apsc.gov.au/employment-data/aps-employment-data-30-june-2025",

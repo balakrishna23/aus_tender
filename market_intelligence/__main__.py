@@ -142,7 +142,7 @@ def main(argv=None):
         db=engine()
         if args.command=='migrate':
             migrate(db)
-            result={'schema':'018_research_views','status':'ready'}
+            result={'schema':'020_extended_demand','status':'ready'}
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
         elif args.command=='import-register':
