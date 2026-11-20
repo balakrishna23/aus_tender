@@ -106,7 +106,18 @@ def main(argv=None):
     forward=commands.add_parser('forward-report')
     forward.add_argument('--as-of',required=True,type=date.fromisoformat)
     forward.add_argument('--output',required=True)
-    commands.add_parser('import-research',help='Strict contact-free retained RAP or state research bundle').add_argument('--json',required=True)
+    research_import=commands.add_parser('import-research',help='Strict contact-free retained RAP or state research bundle')
+    research_import.add_argument('--json',required=True)
+    research_import.add_argument('--rap-collection',help='Required retained responses for automated RAP directory clearance')
+    rap_acquire=commands.add_parser('acquire-rap',help='Official directory metadata only; retains private HTML')
+    rap_acquire.add_argument('--output',required=True)
+    rap_review=commands.add_parser('review-rap',help='Directory-only service account review and independent verifier')
+    rap_review.add_argument('--collection',required=True)
+    rap_review.add_argument('--output',required=True)
+    rap_review.add_argument('--by',required=True)
+    rap_verify=commands.add_parser('verify-rap',help='Replay directory evidence, identity checks and exact payload digest')
+    rap_verify.add_argument('--collection',required=True)
+    rap_verify.add_argument('--json',required=True)
     for name in ['rap-report','state-report','targets-report']:
         sub=commands.add_parser(name)
         sub.add_argument('--as-of',required=True,type=date.fromisoformat)
@@ -146,11 +157,21 @@ def main(argv=None):
     remoteness.add_argument('--output',required=True)
     args=parser.parse_args(argv)
     try:
+        if args.command=='acquire-rap':
+            from .acquire_rap import acquire
+            print(json.dumps(acquire(args.output),indent=2))
+            return 0
         if args.command=='input-templates':
             print(json.dumps(templates(args.output),indent=2))
             return 0
         db=engine()
-        if args.command=='migrate':
+        if args.command=='review-rap':
+            from .rap_review import review as review_directory
+            result=review_directory(db,args.collection,args.output,args.by)
+        elif args.command=='verify-rap':
+            from .rap_review import verify
+            result=verify(db,args.collection,args.json)
+        elif args.command=='migrate':
             migrate(db)
             result={'schema':'021_remoteness','status':'ready'}
         elif args.command=='import':
@@ -190,7 +211,7 @@ def main(argv=None):
         elif args.command=='forward-report':
             result=write_forward(build_forward(db,args.as_of),args.output)
         elif args.command=='import-research':
-            result=import_research(db,args.json)
+            result=import_research(db,args.json,args.rap_collection)
         elif args.command=='rap-report':
             result=write_rap(build_rap(db,args.as_of),args.output)
         elif args.command=='state-report':
@@ -242,7 +263,7 @@ def main(argv=None):
                     'organisation_count':conn.execute(text('SELECT count(*) FROM market.organisations')).scalar(),
                     'proposal_counts':[dict(r) for r in conn.execute(text('SELECT match_status,count(*) FROM market.current_buyer_matches GROUP BY match_status')).mappings()]}
         print(json.dumps(result,default=str,indent=2))
-        return 0
+        return 1 if isinstance(result,dict) and result.get('status')=='blocked' else 0
     except Exception as exc:
         # Connection errors may include credentials; expose only the error class.
         print(json.dumps({'status':'failed','error_code':type(exc).__name__}),file=sys.stderr)

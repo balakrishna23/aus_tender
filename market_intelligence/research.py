@@ -23,7 +23,7 @@ SCHEMAS={
 }
 
 
-def import_research(engine,path):
+def import_research(engine,path,rap_collection=None):
     path=Path(path).resolve(strict=True);file_sha=file_hash(path);data=json.loads(path.read_text(encoding='utf-8'))
     # Acquisition time may change on a repeated export; unchanged evidence remains one content snapshot.
     sha=hashlib.sha256(json.dumps({k:data[k] for k in ['source','provenance','records']},sort_keys=True).encode()).hexdigest()
@@ -32,6 +32,14 @@ def import_research(engine,path):
         # Privacy clearance is part of the snapshot identity, allowing safe reimport of legacy exports.
         sha=hashlib.sha256((sha+json.dumps(data.get('privacy_review'),sort_keys=True)).encode()).hexdigest()
     if source not in SCHEMAS or data.get('contains_contact_data') is not False:raise SourceError('Unrecognised research export')
+    if source=='rap_directory':
+        import os
+        directory_ids={v.strip() for v in os.environ.get('ILLOURA_RAP_DIRECTORY_REVIEWER_IDS','').split(',') if v.strip()}
+        if (data.get('privacy_review',{}).get('reviewer_id') in directory_ids
+                or data['provenance'].get('privacy_policy')):
+            if rap_collection is None:raise SourceError('Automated directory import requires retained collection verification')
+            from .rap_review import verify
+            verify(engine,rap_collection,path)
     records=data['records']
     if not records or len({r['record_key'] for r in records})!=len(records):raise SourceError('Empty or duplicate research export')
     observed=datetime.fromisoformat(data['observed_at'])
@@ -43,12 +51,18 @@ def import_research(engine,path):
             from .rap_extract import privacy_check,public_url,reviewer_id,digest
             clearance=data.get('privacy_review',{})
             if set(clearance)!={'reviewer_id','contains_personal_data','payload_sha256'}:raise SourceError('Unsupported RAP privacy review fields')
-            reviewer_id(clearance.get('reviewer_id'))
+            import os
+            directory_ids={v.strip() for v in os.environ.get('ILLOURA_RAP_DIRECTORY_REVIEWER_IDS','').split(',') if v.strip()}
+            scope='rap_directory' if source=='rap_directory' and clearance.get('reviewer_id') in directory_ids else 'rap_extract'
+            reviewer_id(clearance.get('reviewer_id'),scope)
             if clearance.get('contains_personal_data') is not False or clearance.get('payload_sha256')!=digest({'records':records,'provenance':data['provenance']}):
-                raise SourceError('RAP records require exact human privacy clearance')
+                raise SourceError('RAP records require exact scoped privacy clearance')
             public_url(row['source_url'])
             for k,v in row.items():
-                if isinstance(v,str) and k not in ['source_url','document_url','document_sha256']:privacy_check(v)
+                # Hash identities are structural values, not contact text. Decimal runs in a
+                # SHA256 must not be mistaken for a phone number or an ABN.
+                if (isinstance(v,str) and k not in ['source_url','document_url','document_sha256']
+                        and not (k=='record_key' and re.fullmatch('[0-9a-f]{64}',v))):privacy_check(v)
         if source=='rap_directory':
             if row['rap_type'] not in ['Reflect','Innovate','Stretch','Elevate']:raise SourceError('Unexpected RAP type')
             date.fromisoformat(row['collection_date'])
@@ -137,10 +151,13 @@ def build_rap(engine,as_of):
     out.sort(key=lambda r:(-r['score'],r['organisation'],r['record_key']))
     for rank,r in enumerate(out,1):r['rank']=rank
     return dict(as_of=as_of,status='draft RAP research; no missed targets inferred',targets=out,
-        summary=dict(directory_entries=len(out),reviewed_commitments=sum(len(r['reviewed_commitments']) for r in out),
+        summary=dict(directory_entries=len(out),privacy_exclusions=max((r['provenance'].get('privacy_partition',{}).get('quarantined',0) for r in records),default=0),
+                     malformed_periods=max((r['provenance'].get('privacy_partition',{}).get('malformed_periods',0) for r in records),default=0),
+                     cleared_malformed_periods=sum(period_range(r['payload']['period_as_published'])==(None,None) for r in records),
+                     reviewed_commitments=sum(len(r['reviewed_commitments']) for r in out),
                      entries_with_same_document_evidence=sum(bool(r['reviewed_commitments']) for r in out),
                      entries_with_candidate_abns=sum(bool(r['candidate_abns']) for r in out)),
-        limitations=['Directory snapshot collected 27 October 2026; this report does not assert it is the latest list.',
+        limitations=['Directory coverage is limited to the retained collection date; quarantined privacy exclusions are disclosed in the summary.',
                      'Published RAP commitments are not proof of unspent budget, missed targets, supplier acceptance or eligibility.',
                      'Legal-name matches are proposals; a group RAP may cover several legal entities.',
                      'Findings require a registered reviewer approval for the exact document hash; legacy manual findings and uncleared directory snapshots are excluded.',
