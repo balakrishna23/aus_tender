@@ -3,6 +3,7 @@ import argparse,base64,fcntl,hashlib,json,os
 from datetime import datetime,timezone
 from email.message import EmailMessage
 from email.policy import SMTP
+from email.utils import getaddresses
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from google.oauth2.credentials import Credentials
@@ -22,7 +23,8 @@ def _send_locked(out,token_path):
     report=json.loads((out/'source_refresh.json').read_text())
     expected={'contract_api','aus_contract','aus_tender','planned_procurement','standing_offer','buy_ict','act_tender','nsw_tender'}
     results=report.get('results') or []
-    if len(results)!=8 or not all(isinstance(r,dict) for r in results) or {r.get('spider') for r in results}!=expected or 'feed' not in report:raise ValueError('Source completion checks failed')
+    if (len(results)!=8 or not all(isinstance(r,dict) for r in results) or {r.get('spider') for r in results}!=expected
+            or not isinstance(report.get('feed'),str) or not report['feed'].strip() or 'FAILED' in report['feed']):raise ValueError('Source completion checks failed')
     gaps={r['spider'] for r in results if r.get('status')!='OK' or r.get('crawl_failed') or r.get('errors')}
     # The brief is built from BuyICT only: a problem there, any failure that is not a named source
     # (the feed, a missing success flag) or a run the run script did not approve blocks the send.
@@ -31,7 +33,7 @@ def _send_locked(out,token_path):
             state=json.loads((out/'cloud_run.json').read_text());approved=state.get('source_exit_code') in (0,1) and state.get('source_gaps')==sorted(gaps)
         except (OSError,ValueError,AttributeError):approved=False
         if 'buy_ict' in gaps or report.get('success') is not False or not isinstance(report['feed'],str) or 'FAILED' in report['feed'] or not approved:raise ValueError('Source gaps require resolution before sending')
-    elif not report.get('success'):raise ValueError('Source gaps require resolution before sending')
+    elif report.get('success') is not True:raise ValueError('Source gaps require resolution before sending')
     layout=json.loads((out/'email_layout_checks.json').read_text())
     if {x['viewport'] for x in layout if x.get('passed')}!={'desktop','mobile'}:raise ValueError('Layout checks missing')
     approved=json.loads((out/'cloud_send_review.json').read_text())
@@ -53,7 +55,10 @@ def _send_locked(out,token_path):
     for item in matches.get('messages',[]):
         message=get('/messages/'+item['id'],format='metadata')
         headers={x['name'].lower():x['value'] for x in message.get('payload',{}).get('headers',[])}
-        if headers.get('subject')==subject and RECIPIENT in headers.get('to','') and SENDER in headers.get('from',''):
+        recipients={address.casefold() for _,address in getaddresses([headers.get('to','')])}
+        senders={address.casefold() for _,address in getaddresses([headers.get('from','')])}
+        if ('SENT' in message.get('labelIds',[]) and headers.get('subject')==subject
+                and RECIPIENT.casefold() in recipients and SENDER.casefold() in senders):
             receipt={'message_id':message['id'],'thread_id':message.get('threadId'),'label_ids':message.get('labelIds',[]),'sender':SENDER,'recipient':RECIPIENT,'subject':subject,'sent':True,'reconciled_existing_sent':True,'recorded_at_utc':datetime.now(timezone.utc).isoformat(),'execution_host':'AWS Sydney'}
             (out/'send_receipt.json').write_text(json.dumps(receipt,indent=2));print(json.dumps(receipt));return
     if (out/'send_attempt.json').exists():raise ValueError('Unresolved previous send attempt; reconcile before retry')

@@ -59,6 +59,12 @@ def main():
         raise ValueError('Editorial date does not match today in India')
     report = json.loads((out/'source_refresh.json').read_text(encoding='utf-8'))
     final = json.loads((out/'finalization.json').read_text(encoding='utf-8'))
+    expected={'contract_api','aus_contract','aus_tender','planned_procurement','standing_offer','buy_ict','act_tender','nsw_tender'}
+    rows=report.get('results', [])
+    if (not isinstance(rows,list) or len(rows)!=8 or not all(isinstance(row,dict) for row in rows)
+            or {row.get('spider') for row in rows}!=expected
+            or not isinstance(report.get('feed'),str) or not report['feed'].strip() or 'FAILED' in report['feed']):
+        raise ValueError('Source sweep and essential evidence builds must finish first')
     passed = {x['step'] for x in final['steps'] if x.get('exit_code') == 0}
     problems = {x.get('spider') for x in report['results'] if x.get('status') != 'OK' or x.get('crawl_failed') or x.get('errors')}
     # BuyICT is the brief's only source: a problem there, any failure that is not a named source

@@ -218,3 +218,61 @@ Only one agent edits the branch at a time.
 - Codex: full details and the remaining list are in the private workspace file
   `CODEX_HANDOFF_20261115.md`. Next: read audit job task-mwhkxsy0-w9685x, fix findings (BuyICT
   first), live-site check before every collector deploy, rehearse, check the 16 Nov run.
+
+## 15 Nov 14:40 IST, Codex: validated collector hardening deployed; NSW remains blocked
+- Continued Claude's handoff on the same branch. Normalized BuyICT labels, safe stored-ID
+  fallback, bootstrap quotes/widget binding, formatted totals and validated empty results;
+  malformed details still fail. Federal fields/IDs tolerate nesting and CSS classes; one
+  fresh walk handles count changes. Field-loss checks compare with pre-run stored omissions.
+  Planned titles include descendants but exclude old change notes; ACT checks structural
+  empty tables, enabled forward links, and rechecks changed totals with robots obeyed.
+- Live checks on isolated DB copies: BuyICT 117/117 pages, 7,259 IDs, 135 details; plans
+  676; ATMs 130 listed + four departed checked; contracts canary OK, nothing due; SONs
+  449; ACT 62. Installed eight changed collector files with SHA-256 verification, backup
+  `/var/backups/illoura/collectors-20261115T090910Z`.
+- Windows 712 tests OK (23 skips). Server collectors 92, operations 125, routine 39 OK.
+- Deployed safe per-source health diagnostics and verified authenticated `/v1/operations`.
+  Enabled restricted Lightsail browser SSH alias; original administrator CIDR retained.
+- No-send dry run composed eight live listings from an existing complete run. No new full
+  collection rehearsal: NSW robots.txt returned HTTP 403 from PC and server, and existing
+  NSW code uses legacy stealth that the handoff forbids. NSW extraction edits held privately
+  in `reports/scraper_hardening_20261115/nsw-unvalidated.patch`; not installed or invoked.
+  Missing BuyICT totals without explicit paging remain a strict failure, not a guessed pass.
+- No emails sent or timers changed. Both Bala alert confirmations still pending. Existing
+  PR #13 CI green; new work committed locally, not pushed. Check 16 Nov collection 00:45
+  IST and send 02:45 IST. Gmail remains in pilot/testing; expiry risk around 19 Nov unchanged.
+
+## 15 Nov 20:30 IST, Codex: resumed rehearsal verification and completed shared-browser follow-up
+- The rehearsal started at 09:23 UTC completed: all eight sources reported, seven OK and
+  NSW PARTIAL because notice history extends beyond the five-page cap. BuyICT saved 135,
+  plans 676, ATMs 130, ACT 62 and NSW 249. No missing sources. The approved NSW gap did
+  not cancel publication: generation-20261115T093528Z-d49e51ac, finished 09:36:44 UTC.
+- Fresh server dry run at 14:52 UTC passed: eight open requests selected, none dropped;
+  composition/layout checks passed and no email sent. This used the new rehearsal.
+- Existing validation evidence: Windows 719 tests OK (23 skips), server collectors 99 OK;
+  deployed three collector files hash verified. No further collector edits were needed.
+- Restored SSH by moving the existing single-address restriction to this PC's current
+  address; the lightsail-connect alias and HTTP/HTTPS rules were preserved and verified.
+- Read-only AWS resume checks: Free plan ACTIVE; Illoura SNS email subscription confirmed
+  after following pagination; Lightsail email contact remains PendingVerification.
+- API/nginx active; certificate, publication, collection, coordinator, disk, retention and
+  Gmail authorization OK. Health still flags the missed 15 Nov brief; it was not resent.
+  Timer states unchanged. No pushes or merges. Check the 16 Nov 00:45 IST collection and
+  02:45 IST send separately; a dry run cannot establish unattended delivery.
+
+## 15 Nov 20:59 IST, Codex: project reliability audit and graduate guide
+
+- User requested automatic operation, a broad malfunction audit and detailed graduate documentation.
+- Reproduced and corrected claimed-success source reports bypassing identities/feed checks, and
+  ambiguous low-level Gmail Sent address matching. Deployed routine and operations after staging;
+  independent hash comparison found all 20 checked installed files matched local source.
+- Main Windows suite 725 OK (23 skips), local assistant 114 OK. Linux: ops 126, routine 44,
+  collectors 99, API 15 OK. All 17 working databases passed quick_check; core/API pip check OK.
+- Full rehearsal `daily_sweep_20261115_204537` completed and published generation `generation-20261115T152714Z-d469f577`. All eight sources reported: seven OK and NSW PARTIAL for its bounded notice history; the exact NSW gap was approved. Essential evidence completed with exit zero. Saved rows included 131 ATMs, 676 plans, 135 BuyICT requests, 62 ACT rows and 249 NSW rows. A fresh no-send composition selected 8 requests and dropped 0; composition and desktop/mobile layout checks passed. No email was sent. The coordinator also completed its normal isolated operations restore drill before publication.
+- Daily brief/health/certificate timers retained their enabled state; standalone collection disabled.
+  External five-minute watcher active and emitting metrics. Lightsail email contact now Valid.
+- Current API authentication/schema/aggregate smoke checks pass. Readiness still flags the earlier
+  missed 15 Nov edition, which was not resent. Next actual delivery and OAuth testing expiry remain.
+- Added docs/graduate-guide.md (26 chapters, about 7,800 words) and dated audit report; refreshed
+  stale retry/sender/field-loss reference statements. Private evidence retained in the workspace.
+- No extra email, buyer/partner outreach, model activation, timer enablement changes, pushes or merges.

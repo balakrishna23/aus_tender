@@ -85,6 +85,7 @@ def is_relevant(text):
 PW_META = {
     'playwright': True,
     'playwright_include_page': True,
+    'playwright_page_init_callback': 'spiders.browser_support.stealth_async',
     'playwright_page_methods': [
         # 'load' fires after HTML + subresources, NOT waiting for XHR polling
         # (networkidle never fires: Cloudflare jsd + /serverTime XHR keep going)
@@ -115,13 +116,15 @@ EXTRACT_ROWS_JS = """
 # Pagination: handles both "Next" buttons and numbered page links (e.g. "Pages: 1 2")
 NEXT_PAGE_JS = """
 () => {
+    const links = Array.from(document.querySelectorAll('a')).filter(a =>
+        !a.closest('.disabled, [aria-disabled="true"]') &&
+        a.getAttribute('href') && a.getAttribute('href') !== '#');
     // Try rel=next or .next class first
-    const relNext = document.querySelector('a[rel="next"], a.next');
+    const relNext = links.find(a => a.rel === 'next' || a.classList.contains('next'));
     if (relNext) return relNext.getAttribute('href');
 
     // Try text-based "Next" / ">" / ">>" links
-    const links = Array.from(document.querySelectorAll('a'));
-    const nextBtn = links.find(l => /^(Next|>|>>)$/.test(l.textContent.trim()));
+    const nextBtn = links.find(l => /^(Next|>|>>)$/i.test(l.textContent.trim()));
     if (nextBtn) return nextBtn.getAttribute('href');
 
     // Handle numbered pagination: find current page number and return link to page+1
@@ -199,7 +202,7 @@ class ActTenderSpider(scrapy.Spider):
         'AUTOTHROTTLE_ENABLED': True,
         'CONCURRENT_REQUESTS': 1,
         'CONCURRENT_REQUESTS_PER_DOMAIN': 1,
-        'ROBOTSTXT_OBEY': False,
+            'ROBOTSTXT_OBEY': True,
         'DOWNLOAD_HANDLERS': {
             'https': 'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
             'http':  'scrapy_playwright.handler.ScrapyPlaywrightDownloadHandler',
@@ -208,7 +211,6 @@ class ActTenderSpider(scrapy.Spider):
         'PLAYWRIGHT_BROWSER_TYPE': 'chromium',
         'PLAYWRIGHT_LAUNCH_OPTIONS': {
             'headless': True,
-            'args': ['--disable-blink-features=AutomationControlled'],
         },
         'PLAYWRIGHT_CONTEXTS': {
             'default': {
@@ -252,7 +254,14 @@ class ActTenderSpider(scrapy.Spider):
             self.logger.info(f"Rows found: {len(rows)} on {response.url}")
 
             if not rows:
-                if _explicit_empty(await page.inner_text('body')):
+                structural_empty = await page.evaluate('''() => {
+                    const marker = document.querySelector('table tbody td.dataTables_empty, table tbody td.dt-empty');
+                    return !!marker && !!marker.textContent.trim() &&
+                        !document.querySelector('table tbody a[href*="/tender/view"]');
+                }''')
+                if structural_empty is True or _explicit_empty(await page.inner_text('body')):
+                    if response.meta.get('coverage_reset'):
+                        self._coverage[response.url.split('?')[0]] = {'ids': set(), 'total': 0}
                     self.logger.info('Explicitly empty ACT listing: %s', response.url)
                     self.crawler.stats.inc_value('crawl/act_empty_lists')
                     empty = getattr(self, '_empty_lists', set())
@@ -265,6 +274,8 @@ class ActTenderSpider(scrapy.Spider):
             root = response.url.split('?')[0]
             coverage = getattr(self, '_coverage', {})
             self._coverage = coverage
+            if response.meta.get('coverage_reset'):
+                coverage[root] = {'ids': set(), 'total': coverage.get(root, {}).get('total')}
             check = coverage.setdefault(root, {'ids': set(), 'total': None})
             text = await page.inner_text('body')
             match = re.search(
@@ -272,7 +283,7 @@ class ActTenderSpider(scrapy.Spider):
                 r'Total\s*:\s*([\d,]+)\s+(?:results|tenders))\s*$', text)
             if match:
                 total = int((match.group(1) or match.group(2)).replace(',', ''))
-                check['total'] = max(check['total'] or 0, total)
+                check['total'] = total if response.meta.get('coverage_reset') else max(check['total'] or 0, total)
             for row in rows:
                 ref, status, category = _parse_cell0(row.get('cell0', ''))
                 title, agency         = _parse_cell1(row.get('cell1', ''))
@@ -331,8 +342,15 @@ class ActTenderSpider(scrapy.Spider):
                 self.logger.info(f"Next page: {next_url}")
                 yield scrapy.Request(
                     next_url, callback=self.parse,
-                    meta=PW_META, errback=self.errback,
+                    meta={**PW_META, 'coverage_recheck': response.meta.get('coverage_recheck', False)},
+                    dont_filter=bool(response.meta.get('coverage_recheck')), errback=self.errback,
                 )
+            elif (check['total'] is not None and len(check['ids']) < check['total']
+                  and not response.meta.get('coverage_recheck')):
+                self.logger.warning('Rechecking changed ACT listing total: %s', root)
+                yield scrapy.Request(root, callback=self.parse, dont_filter=True,
+                                     meta={**PW_META, 'coverage_recheck': True, 'coverage_reset': True},
+                                     errback=self.errback)
 
         finally:
             if page:

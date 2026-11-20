@@ -1,6 +1,6 @@
 import scrapy
 
-from spiders.austender_common import AusTenderListingMixin, notice_guid, page_details
+from spiders.austender_common import AusTenderListingMixin, notice_guid, page_details, field_value
 
 ATM_LIST = 'https://www.tenders.gov.au/Atm'
 
@@ -56,10 +56,13 @@ class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
 
     def parse(self, response):
         yield from super().parse(response)
-        if response.css('li.next a::attr(href)').get() or response.meta.get('listing_kind') != 'published':
+        window = response.meta.get('window', response.url)
+        if (response.css('li.next a::attr(href)').get()
+                or response.meta.get('listing_kind') != 'published'
+                or len(self.window_seen.get(window, set())) < self.window_totals.get(window, 0)):
             return
         # Last page of the list: anything stored as open but no longer listed has closed.
-        listed = self.window_seen.get(response.meta.get('window'), set())
+        listed = self.window_seen.get(window, set())
         dropped = [url for guid, url in self.stored_urls.items()
                    if '/ShowClosed/' not in url and guid not in listed and guid not in self.gone]
         self.logger.info('Current ATM list: %s listed; re-checking %s stored ATMs no longer listed',
@@ -80,13 +83,13 @@ class AusTenderSpider(AusTenderListingMixin, scrapy.Spider):
         Updated with tested selectors for ATM Documents and Addenda links
         """
         def get_value(label, all_text=False):
-            selector = f'//div[@class="list-desc"][span/label[normalize-space(text())="{label}"]]/div[@class="list-desc-inner"]'
+            selector = f'//div[contains(concat(" ",normalize-space(@class)," ")," list-desc ")][normalize-space(span)="{label}" or normalize-space(span)="{label}:"]/div[contains(concat(" ",normalize-space(@class)," ")," list-desc-inner ")]'
             if all_text:
                 parts = response.xpath(selector + '//text()').getall()
                 cleaned_parts = [part.strip() for part in parts if part.strip() and part.strip() not in ['(ACT Local Time)', 'Show close time for other time zones']]
                 return " ".join(cleaned_parts)
             else:
-                return response.xpath(selector + '/text()[1]').get(default="").strip()
+                return field_value(response, label)
 
         close_date_raw = get_value("Close Date & Time", all_text=True)
         close_date = close_date_raw

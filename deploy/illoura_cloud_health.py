@@ -24,6 +24,31 @@ TRANSIENT_MAIL_ERRORS = (
     "TransportError", "ConnectionError", "Timeout", "ConnectTimeout", "ReadTimeout",
     "ChunkedEncodingError", "TimeoutError",
 )
+
+SOURCE_NAMES = {'contract_api', 'aus_contract', 'aus_tender', 'planned_procurement',
+                'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender'}
+
+
+def source_diagnostics(run):
+    """Expose bounded source statuses, never log text, URLs, contacts or paths."""
+    try:
+        report = json.loads((run / 'source_refresh.json').read_text())
+        rows = report['results']
+        if not isinstance(rows, list):
+            return {'source_report': 'unavailable'}
+        statuses, failed = {}, set()
+        for row in rows:
+            if not isinstance(row, dict) or row.get('spider') not in SOURCE_NAMES:
+                continue
+            name = row['spider']
+            status = row.get('status')
+            statuses[name] = status if status in {'OK', 'FAIL', 'PARTIAL', 'TIMEOUT', 'ERROR'} else 'unknown'
+            if status != 'OK' or row.get('crawl_failed') or row.get('errors'):
+                failed.add(name)
+        return {'sources': statuses, 'failed_sources': sorted(failed),
+                'missing_sources': sorted(SOURCE_NAMES - statuses.keys())}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {'source_report': 'unavailable'}
 RUN_LIMIT_SECONDS = 5 * 3600  # a morning run normally finishes in about two hours
 CERT = Path("/etc/letsencrypt/live/illoura-api/cert.pem")
 # The certificate lives about 6.7 days and certbot renews it with roughly 2 days left,
@@ -258,6 +283,7 @@ def check(
             else "attention",
             "phase": state.get("status"),
         }
+        checks['last_run'].update(source_diagnostics(run))
         if isinstance(state.get("source_gaps"), list) and state["source_gaps"]:
             # Sources that had a problem while the run still completed (the brief uses BuyICT only).
             checks["last_run"]["source_gaps"] = [str(name)[:40] for name in state["source_gaps"][:8]]

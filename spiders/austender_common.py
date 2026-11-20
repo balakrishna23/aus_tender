@@ -55,6 +55,16 @@ def _clean(parts):
     return ' '.join(' '.join(parts).split())
 
 
+def field_value(response, label):
+    """Read a labelled value independent of CSS token order or nested label text."""
+    wanted = label.strip().rstrip(':').casefold()
+    for block in response.css('div.list-desc'):
+        actual = _clean(block.xpath('./span//text()').getall()).rstrip(' :').casefold()
+        if actual == wanted:
+            return _clean(block.css('div.list-desc-inner ::text').getall())
+    return ''
+
+
 def page_details(response):
     """Every labelled field on a notice page ({label: text}), including the contact block,
     so whatever the site shows is kept even when a spider has no column for it yet."""
@@ -93,6 +103,7 @@ class AusTenderListingMixin:
         self.stored_urls = {}
         self.window_totals = {}
         self.window_seen = {}
+        self.window_roots = {}
         self.empty_windows = set()
         self.skipped_known = 0
         self.recent_fetched = 0
@@ -128,9 +139,12 @@ class AusTenderListingMixin:
                               meta={'listing_kind': kind, 'page_no': 1, 'quiet_pages': 0})
 
     def _notice_links(self, response):
-        return response.xpath(
-            f'//div[@class="list-desc" and ./span/text()="{self.id_label}:"]/div[@class="list-desc-inner"]/a/@href'
-        ).getall()
+        links = []
+        for block in response.css('div.list-desc'):
+            label = _clean(block.xpath('./span//text()').getall()).rstrip(' :')
+            if label.casefold() == self.id_label.casefold():
+                links.extend(block.css('div.list-desc-inner a::attr(href)').getall())
+        return links
 
     def _is_known(self, guid, kind):
         stored = self.stored_urls.get(guid) if guid else None
@@ -165,8 +179,11 @@ class AusTenderListingMixin:
         meta = response.request.meta if response.request is not None else {}
         kind = meta.get('listing_kind', 'default')
         window = meta.get('window', response.url)
+        self.window_roots.setdefault(window, response.url)
+        if meta.get('coverage_reset'):
+            self.window_seen[window] = set()
         total = TOTAL_RE.search(response.text)
-        if total and window not in self.window_totals:
+        if total and (window not in self.window_totals or meta.get('coverage_reset')):
             reported = int(total.group(1).replace(',', ''))
             self.window_totals[window] = reported
             if reported >= SEARCH_CAP:
@@ -197,7 +214,15 @@ class AusTenderListingMixin:
         next_page = response.css('li.next a::attr(href)').get()
         if next_page:
             yield response.follow(next_page, callback=self.parse,
-                                  meta={'listing_kind': kind, 'window': window})
+                                  dont_filter=bool(meta.get('coverage_recheck')),
+                                  meta={'listing_kind': kind, 'window': window,
+                                        'coverage_recheck': meta.get('coverage_recheck', False)})
+        elif len(seen) < self.window_totals.get(window, 0) and not meta.get('coverage_recheck'):
+            # Notices can be withdrawn while paging. Rewalk once against fresh totals.
+            self.logger.warning('Rechecking changed listing total for %s', window)
+            yield scrapy.Request(self.window_roots[window], callback=self.parse, dont_filter=True,
+                                 meta={'listing_kind': kind, 'window': window,
+                                       'coverage_recheck': True, 'coverage_reset': True})
 
     def _record_failure(self, message, *args):
         self.logger.error(message, *args)

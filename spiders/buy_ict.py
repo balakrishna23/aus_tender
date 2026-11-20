@@ -63,6 +63,8 @@ class BuyIctApiSpider(scrapy.Spider):
         self.reported_total = None
         self.db_manager = DatabaseManager()
         self.stored = {}
+        self.stored_rfq_ids = {}
+        self.validated_empty = False
         self.expected_pages = None
         self.detail_requests = 0
         self.closed_skipped = 0
@@ -76,9 +78,10 @@ class BuyIctApiSpider(scrapy.Spider):
         """sys_id -> (status, captured_while_open) for every saved opportunity."""
         self.db_manager.initialize_database(self.name)
         with self.db_manager.get_connection(self.name) as conn:
-            rows = conn.execute('SELECT sys_id, status, scraped_at, rfq_closing_date '
+            rows = conn.execute('SELECT sys_id, status, scraped_at, rfq_closing_date, rfq_id '
                                 'FROM buy_ict_tenders WHERE sys_id IS NOT NULL').fetchall()
-        for sys_id, status, scraped_at, closing in rows:
+        for sys_id, status, scraped_at, closing, rfq_id in rows:
+            self.stored_rfq_ids[sys_id] = rfq_id
             closing_day = self._parse_day(closing)
             captured_open = closing_day is None or str(scraped_at or '')[:10] <= closing_day.isoformat()
             self.stored[sys_id] = (status, captured_open)
@@ -111,8 +114,10 @@ class BuyIctApiSpider(scrapy.Spider):
         if self.expected_pages is not None and self.pages_seen < self.expected_pages:
             self._record_failure('BuyICT listing incomplete: loaded %s of %s pages',
                                  self.pages_seen, self.expected_pages)
-        if not self.seen_detail_urls and reason == 'finished':
+        if not self.seen_detail_urls and reason == 'finished' and not self.validated_empty:
             self._record_failure('BuyICT listing returned no opportunities')
+        if self.validated_empty and not self.seen_detail_urls and reason == 'finished':
+            self.crawler.stats.set_value('crawl/nothing_due', 1)
         self.logger.info(
             "BuyICT listing coverage: pages=%s/%s public_opportunities=%s reported_total=%s "
             "(remainder visible to logged-in sellers only) reason=%s",
@@ -245,7 +250,10 @@ class BuyIctApiSpider(scrapy.Spider):
         if not isinstance(data, dict) or 'pageItems' not in data:
             self._record_failure('Missing BuyICT listing payload on page %s', page_num)
             return
-        items = data.get("pageItems", []) or []
+        items = data['pageItems']
+        if not isinstance(items, list) or any(not isinstance(row, dict) for row in items):
+            self._record_failure('Invalid BuyICT listing rows on page %s', page_num)
+            return
         self.pages_seen += 1
         self.reported_total = data.get("totalItems", self.reported_total)
         self.logger.info(
@@ -288,9 +296,13 @@ class BuyIctApiSpider(scrapy.Spider):
 
         raw_total = data.get("totalItems")
         # Do not truncate floats, accept booleans as integers, or trust negative totals.
-        total_items = (int(str(raw_total).strip()) if not isinstance(raw_total, bool) and
-                       re.fullmatch(r'\d+', str(raw_total).strip()) else None)
+        total_items = (int(str(raw_total).strip().replace(',', '')) if not isinstance(raw_total, bool) and
+                       re.fullmatch(r'\d+|\d{1,3}(?:,\d{3})+', str(raw_total).strip()) else None)
         if page_num == 1 and total_items is not None:
+            if total_items == 0 and items:
+                self._record_failure('BuyICT zero total contradicts nonempty listing rows')
+                return
+            self.validated_empty = total_items == 0 and not items
             last_page = (total_items + self.page_size - 1) // self.page_size
             if self.max_pages is not None:
                 last_page = min(last_page, self.max_pages)
@@ -387,7 +399,9 @@ class BuyIctApiSpider(scrapy.Spider):
         detail_url = response.meta.get("detail_url", response.url)
         result_data = self._safe_json(response.text).get("result", {}).get("data", {})
         opp_widget_data = (result_data.get("opp_widget") or {}).get("data") or result_data
-        if not isinstance(opp_widget_data, dict) or not opp_widget_data.get("mainDetails"):
+        main_details = opp_widget_data.get('mainDetails') if isinstance(opp_widget_data, dict) else None
+        if not isinstance(main_details, list) or not any(
+                isinstance(row, dict) and row.get('label') for row in main_details):
             if not response.meta.get("fallback_attempted"):
                 self.logger.info("Direct detail API unavailable; loading detail page for %s", detail_url)
                 yield scrapy.Request(
@@ -433,7 +447,9 @@ class BuyIctApiSpider(scrapy.Spider):
         yield {
             "title": opp_widget_data.get("title") or summary.get("short_description"),
             "rfq_type": main_details_map.get("RFQ type") or main_details_map.get("RFI type"),
-            "rfq_id": main_details_map.get("RFQ ID") or main_details_map.get("RFI ID"),
+            "rfq_id": main_details_map.get("RFQ ID") or main_details_map.get("RFI ID")
+            or self.stored_rfq_ids.get(summary.get('sys_id') or
+                (parse_qs(urlparse(detail_url).query).get('sys_id') or [None])[0]),
             "rfq_published_date": main_details_map.get("RFQ published date")
             or main_details_map.get("RFI published date"),
             "deadline_for_asking_questions": main_details_map.get("Deadline for asking questions"),
@@ -494,12 +510,12 @@ class BuyIctApiSpider(scrapy.Spider):
                 if k not in self.UI_KEYS and not isinstance(v, bool) and v not in (None, "", [], {})}
 
     def _extract_g_ck(self, html_text):
-        match = re.search(r"window\.g_ck\s*=\s*'([^']+)'", html_text or "")
-        return match.group(1) if match else None
+        match = re.search(r'''window\.g_ck\s*=\s*(['"])(.*?)\1''', html_text or "")
+        return match.group(2) if match else None
 
     def _extract_portal_id(self, html_text):
-        match = re.search(r"portal_id\s*=\s*'([^']+)'", html_text or "")
-        return match.group(1) if match else None
+        match = re.search(r'''\bportal_id\s*=\s*(['"])(.*?)\1''', html_text or "")
+        return match.group(2) if match else None
 
     def _sp_headers(self, token, json_post=False):
         headers = {
@@ -564,7 +580,16 @@ class BuyIctApiSpider(scrapy.Spider):
             label = row.get("label")
             value = row.get("value")
             if label:
-                mapping[label] = html_to_text(value)
+                label = ' '.join(str(label).split()).rstrip(' :')
+                # Keep canonical field names and preserve unfamiliar labels as evidence.
+                canonical = {name.casefold(): name for name in (
+                    'RFQ ID', 'RFI ID', 'RFQ type', 'RFI type', 'RFQ published date',
+                    'RFI published date', 'RFQ closing date', 'RFI closing date',
+                    'Deadline for asking questions', 'Buyer', 'Buyer contact',
+                    'Estimated start date', 'Initial contract duration', 'Extension term',
+                    'Number of extensions', 'Location of work', 'Working arrangements',
+                    'Industry briefing')}
+                mapping[canonical.get(label.casefold(), label)] = html_to_text(value)
         return mapping
 
     def _discover_opportunities_rectangle_ids(self, sp_page_result):
@@ -602,13 +627,35 @@ class BuyIctApiSpider(scrapy.Spider):
         """
         if not html_text:
             return None
-        marker = '"id":"opportunity_rfq_details"'
-        idx = html_text.find(marker)
-        if idx == -1:
+        # Decode bootstrap objects and bind instance_id to its own widget wrapper.
+        # A nearby instance can belong to an entirely different widget.
+        decoder = json.JSONDecoder()
+        def find(value):
+            if isinstance(value, dict):
+                widget = value.get('widget')
+                if isinstance(widget, dict) and widget.get('id') == 'opportunity_rfq_details':
+                    iid = value.get('instance_id')
+                    if isinstance(iid, str) and re.fullmatch(r'[a-f0-9]{32}', iid):
+                        return iid
+                for child in value.values():
+                    result = find(child)
+                    if result:
+                        return result
+            elif isinstance(value, list):
+                for child in value:
+                    result = find(child)
+                    if result:
+                        return result
             return None
-        window = html_text[max(0, idx - 5000): idx + 5000]
-        m = re.search(r'"instance_id":"([a-f0-9]{32})"', window)
-        return m.group(1) if m else None
+        for match in re.finditer(r'\{', html_text):
+            try:
+                value, _ = decoder.raw_decode(html_text, match.start())
+            except ValueError:
+                continue
+            result = find(value)
+            if result:
+                return result
+        return None
 
     def _collect_instance_ids(self, obj):
         ids = []

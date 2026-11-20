@@ -1,6 +1,6 @@
 # Architecture
 
-How the Illoura IT Revenue Intelligence system fits together, as of 13 November 2026.
+How the Illoura IT Revenue Intelligence system fits together, as of 15 November 2026.
 Module-by-module detail is in [reference/](reference/README.md); day-to-day operation is in
 [cloud_operations.md](cloud_operations.md) and [runbook.md](runbook.md).
 
@@ -71,7 +71,7 @@ flowchart LR
 | 09:00 | Health expects today's receipt; otherwise `/readyz` fails and the alarm emails after 30 minutes | `deploy/illoura_cloud_health.py` |
 | 09:00-12:00 | If the morning service is still working (retry, slow source) the brief is `pending` and no alarm is raised; after 12:00 a brief that was not sent is `missed` | `deploy/illoura_cloud_health.py` |
 | 12:00 | Cutoff: a brief not ready by now is kept for review, never sent late | |
-| (after wave 5 is deployed) | Each stage has a time limit; a failed collection or composition is retried once if it starts by 09:30 and can finish before 12:00; the send is never retried | `routine/run_once.py`, `deploy/illoura_daily_brief.py` |
+| bounded morning retries | Each stage has a time limit; collection retries after 5/20/40/60-minute pauses, composition once after 5 minutes. Retries must start by 09:30 and finish before 12:00; the send is never blindly retried | `routine/run_once.py`, `deploy/illoura_daily_brief.py` |
 | every 15 min | Health: freshness, last run, daily brief, coordinator, disk, retention, Gmail authorisation, HTTPS certificate | `deploy/illoura_cloud_health.py` |
 | 00:00 and 12:00 (+random) | Certificate renewal check | `illoura-cert-renew.timer` |
 | 23:00 UTC | Lightsail automatic snapshot of the whole server (newest 7 kept) | AWS |

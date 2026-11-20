@@ -72,6 +72,31 @@ class CloudHealth(unittest.TestCase):
         self.assertEqual(result["checks"]["coordinator"]["status"], "attention")
         self.assertEqual(result["status"], "attention")
 
+    def test_source_diagnostics_explain_failure_without_private_log_data(self):
+        self.write(self.run / 'source_refresh.json', {'results': [
+            {'spider': 'buy_ict', 'status': 'FAIL', 'errors': 1,
+             'log': 'private-path', 'error': 'private-detail'},
+            {'spider': 'aus_tender', 'status': 'OK'}]})
+        result = self.check()['checks']['last_run']
+        self.assertEqual(result['failed_sources'], ['buy_ict'])
+        self.assertEqual(result['sources'], {'buy_ict': 'FAIL', 'aus_tender': 'OK'})
+        self.assertIn('nsw_tender', result['missing_sources'])
+        self.assertNotIn('private-', json.dumps(result))
+
+    def test_malformed_optional_source_report_does_not_hide_run_health(self):
+        self.write(self.run / 'source_refresh.json', {'results': None})
+        result = self.check()['checks']['last_run']
+        self.assertEqual(result['status'], 'ok')
+        self.assertEqual(result['source_report'], 'unavailable')
+
+    def test_source_report_cannot_echo_untrusted_names_or_statuses(self):
+        self.write(self.run / 'source_refresh.json', {'results': [
+            {'spider': 'private-name', 'status': 'private-status'},
+            {'spider': 'buy_ict', 'status': 'private-status'}]})
+        result = self.check()['checks']['last_run']
+        self.assertEqual(result['sources'], {'buy_ict': 'unknown'})
+        self.assertNotIn('private-', json.dumps(result))
+
     def test_hung_coordinator_requires_attention(self):
         self.write(
             self.work / "coordinator_status.json",

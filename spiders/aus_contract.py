@@ -221,18 +221,14 @@ class AusContractSpider(AusTenderListingMixin, scrapy.Spider):
             return
 
         def get_detail(label):
-            xpath = f'//div[@class="list-desc"][span/text()="{label}:"]/div[@class="list-desc-inner"]//text()'
-            results = response.xpath(xpath).getall()
-            for result in results:
-                if result.strip():
-                    return result.strip()
-            return ""
+            from spiders.austender_common import field_value
+            return field_value(response, label)
 
         def get_agency_detail(label):
             return response.xpath(f'//div[@class="contact-long"]//p[normalize-space(span) = "{label}:"]/text()[last()]').get(default="").strip()
 
         def get_supplier_detail(label):
-            return response.xpath(f'//div[@class="list-desc"][span/text()="{label}:"]/div[@class="list-desc-inner"]//text()').get(default="").strip()
+            return get_detail(label)
 
         publish_date = get_detail("Publish Date") or get_detail("Amendment Publish Date")
         son_link = response.xpath('//div[@class="list-desc"][span/text()="SON ID:"]//a/@href').get()

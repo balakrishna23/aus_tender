@@ -72,7 +72,8 @@ class PlannedProcurementSpider(scrapy.Spider):
             pp_id = item.attrib['id'][3:]
             row = item.xpath('./ancestor::div[contains(@class, "row")][1]')
             title = ' '.join(t.strip() for t in row.xpath(
-                './/p[contains(@class, "lead")]/text()').getall() if t.strip())
+                './/p[contains(@class, "lead")]//text()[not(ancestor::*[contains(concat(" ", '
+                'normalize-space(@class), " "), " changes ")])]').getall() if t.strip())
 
             def get_detail(label):
                 inner = item.xpath(f'./div[@class="list-desc"][normalize-space(span)="{label}:"]'

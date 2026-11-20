@@ -195,6 +195,45 @@ class SenderTests(unittest.TestCase):
             self.send()
         self.session.post.assert_not_called()
 
+    def test_existing_sent_matches_exact_addresses_ignoring_case(self):
+        self.existing_message('SENDER@EXAMPLE.COM', 'Reader <READER@EXAMPLE.ORG>')
+        self.send()
+        self.session.post.assert_not_called()
+        self.assertTrue(json.loads((self.out/'send_receipt.json').read_text())['reconciled_existing_sent'])
+
+    def existing_message(self, sender, recipient, labels=None):
+        def get(url, **kwargs):
+            if url.endswith('/profile'):
+                return self.response({'emailAddress':'sender@example.com'})
+            if url.endswith('/messages'):
+                return self.response({'messages':[{'id':'existing'}]})
+            return self.response({'id':'existing', 'labelIds': labels if labels is not None else ['SENT'],
+                'payload':{'headers':[{'name':'Subject','value':'Example brief'},
+                                      {'name':'From','value':sender},{'name':'To','value':recipient}]}})
+        self.session.get.side_effect = get
+
+    def test_address_substring_and_non_sent_message_cannot_settle_attempt(self):
+        self.write('send_attempt.json', {})
+        for sender, recipient, labels in (
+            ('not-sender@example.com','reader@example.org',['SENT']),
+            ('sender@example.com','not-reader@example.org',['SENT']),
+            ('sender@example.com','reader@example.org',['DRAFT'])):
+            with self.subTest(sender=sender,recipient=recipient,labels=labels):
+                self.existing_message(sender,recipient,labels)
+                with self.assertRaisesRegex(ValueError,'Unresolved'):
+                    self.send()
+                self.assertFalse((self.out/'send_receipt.json').exists())
+        self.session.post.assert_not_called()
+
+    def test_success_flag_does_not_override_failed_feed(self):
+        report=json.loads((self.out/'source_refresh.json').read_text())
+        for feed in ('releases feed: FAILED (disk error)', True, ''):
+            with self.subTest(feed=feed):
+                self.write('source_refresh.json',dict(report,feed=feed))
+                with self.assertRaises(ValueError):
+                    self.send()
+        self.session.post.assert_not_called()
+
     def test_wrong_recipient_refuses_post(self):
         self.write('newsletter_editorial.json', {'from': 'sender@example.com', 'to': 'other@example.org', 'subject': 'Example brief'})
         self.approve()
