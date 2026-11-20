@@ -111,7 +111,8 @@
       "licence_evidence_url": "https://www.apsc.gov.au/copyright",
       "commercial_reuse": "yes",
       "refresh": "publisher_release",
-      "status": "loaded_2025_06_30"
+      "status": "loaded_2025_06_30",
+      "acquisition": "python -m market_intelligence.acquire_aps --year 2026 (server only; APSC did not answer from the admin PC on 20 Nov 2026). 30 June 2026 release listed 30 Sep 2026; workbook layout, licence scope and live links not yet validated"
     },
     "rap_directory": {
       "source_url": "https://www.reconciliation.org.au/reconciliation-action-plans/who-has-a-rap/",

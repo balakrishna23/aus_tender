@@ -11,7 +11,7 @@ The figures are counts of APS employees only: contractors and labour hire are no
 """
 from collections import defaultdict
 import csv
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 import html
 import json
 from pathlib import Path
@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from .ingest import file_hash
 from .parsers import SourceError, name_key
+from .resources import verified_resource
 
 PARSER_REVISION = '1'
 DATASET = 'aps_employment'
@@ -33,29 +34,18 @@ OUR_TAGS = ('ict_labour', 'ict_services', 'recruitment', 'labour_hire_general', 
 
 
 def verified_workbook(manifest):
-    manifest = Path(manifest).resolve(strict=True)
-    data = json.loads(manifest.read_text(encoding='utf-8'))
-    if data.get('status') != 'complete':
-        raise SourceError('Acquisition manifest is not complete')
-    entries = [f for f in data['files'] if f['dataset'] == DATASET and f.get('status') == 'complete'
-               and Path(f['path']).suffix.lower() == '.xlsx']
-    if len(entries) != 1:
-        raise SourceError('Expected exactly one APS workbook')
-    item = entries[0]
-    path = Path(item['path']).resolve(strict=True)
-    if not path.is_relative_to(manifest.parent):
-        raise SourceError('Resource is outside acquisition directory')
-    if item.get('licence') not in LICENCES:
-        raise SourceError('Resource licence is outside approved scope')
-    if path.stat().st_size != item['bytes'] or file_hash(path) != item['sha256']:
-        raise SourceError('Resource checksum/size mismatch')
-    retrieved = datetime.fromisoformat(item['retrieved_at'])
-    if retrieved.tzinfo is None:
-        raise SourceError('Retrieval timestamp must include timezone')
-    dataset = next(d for d in data['datasets'] if d['key'] == DATASET)
-    return path, dict(sha256=item['sha256'], retrieved_at=retrieved, source_url=dataset['source_url'],
-                      download_url=item.get('download_url') or dataset['source_url'],
-                      licence=item['licence'], licence_url=item['licence_url'])
+    path, meta = verified_resource(manifest, DATASET, lambda f: Path(f['path']).suffix.lower() == '.xlsx')
+    meta.pop('source')
+    # Old 2025 manifests do not carry a reference date. New acquisitions must
+    # agree with the workbook title; acquisition time is never its reference date.
+    data = json.loads(Path(manifest).resolve(strict=True).read_text(encoding='utf-8'))
+    item = next(f for f in data['files'] if f.get('dataset') == DATASET
+                and f.get('status') == 'complete' and Path(f['path']).suffix.lower() == '.xlsx')
+    if 'reference_date' in item:
+        reference = date.fromisoformat(item['reference_date'])
+        if reference != parse_aps(path)[2]:
+            raise SourceError('Manifest reference date differs from workbook')
+    return path, meta
 
 
 def _number(value, where):
