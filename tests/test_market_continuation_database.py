@@ -8,6 +8,8 @@ import sqlite3
 import tempfile
 import unittest
 
+RAP_REVIEWER='00000000-0000-4000-8000-000000000001'
+
 
 @unittest.skipUnless(os.getenv('ILLOURA_MARKET_TEST_DATABASE_URL'),'Disposable PostgreSQL test database not configured')
 class ContinuationDatabaseTests(unittest.TestCase):
@@ -28,28 +30,42 @@ class ContinuationDatabaseTests(unittest.TestCase):
             conn.execute(text('TRUNCATE market.current_forward_snapshot,market.forward_observations,market.forward_snapshots'))
         self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
 
-    def bundle(self,source,records):
-        path=self.root/(source+'.json')
-        path.write_text(json.dumps(dict(source=source,observed_at='2026-11-19T12:00:00+00:00',contains_contact_data=False,
-                                       provenance={'licence':'Test fixture; no real organisation'},records=records)))
+    def bundle(self,source,records,cleared=False):
+        path=self.root/(source+'.json');provenance={'licence':'Test fixture; no real organisation'}
+        data=dict(source=source,observed_at='2026-11-19T12:00:00+00:00',contains_contact_data=False,provenance=provenance,records=records)
+        if cleared:
+            # RAP exports need an accountable human privacy clearance bound to the exact records.
+            from market_intelligence.rap_extract import digest
+            data['privacy_review']=dict(reviewer_id=RAP_REVIEWER,contains_personal_data=False,
+                                        payload_sha256=digest({'records':records,'provenance':provenance}))
+        path.write_text(json.dumps(data))
         return path
 
     def test_rap_same_document_evidence_and_idempotency(self):
+        from unittest.mock import patch
+        from market_intelligence.parsers import SourceError
         from market_intelligence.research import import_research,build_rap
         sha='a'*64
         base=dict(organisation='Fictional Research Company',rap_type='Innovate',period_as_published='April 2026 to April 2028',
                   document_url='https://example.invalid/rap.pdf',source_url='https://example.invalid/directory',document_sha256=sha,
                   collection_date='2026-10-27',licence='Test fixture')
-        directory=self.bundle('rap_directory',[dict(base,record_key='current'),dict(base,record_key='expired',period_as_published='April 2020 to April 2022',document_sha256='b'*64)])
+        rows=[dict(base,record_key='current'),dict(base,record_key='expired',period_as_published='April 2020 to April 2022',document_sha256='b'*64)]
         finding=dict(record_key='finding',organisation=base['organisation'],reviewed_on='2026-11-05',action='Procurement',pdf_page=4,
                      summary='Review Indigenous procurement opportunities',timeline='2026',source_url=base['document_url'],
                      period_start='2026-04-01',period_end='2028-04-30',candidate_abns=[],document_sha256=sha,review_method='Test fixture',
                      entity_scope='unconfirmed',target_completion='unknown')
-        self.assertEqual(import_research(self.engine,directory)['status'],'complete')
-        self.assertEqual(import_research(self.engine,directory)['status'],'unchanged')
-        import_research(self.engine,self.bundle('rap_commitments',[finding]))
-        report=build_rap(self.engine,date(2026,11,19));current,expired=report['targets']
-        self.assertEqual((current['commitment_count'],expired['commitment_count'],expired['score']),(1,0,0))
+        with patch.dict(os.environ,{'ILLOURA_RAP_REVIEWER_IDS':RAP_REVIEWER}):
+            with self.assertRaises(SourceError):import_research(self.engine,self.bundle('rap_directory',rows))
+            directory=self.bundle('rap_directory',rows,cleared=True)
+            self.assertEqual(import_research(self.engine,directory)['status'],'complete')
+            self.assertEqual(import_research(self.engine,directory)['status'],'unchanged')
+            import_research(self.engine,self.bundle('rap_commitments',[finding],cleared=True))
+            report=build_rap(self.engine,date(2026,11,19))
+        targets={r['record_key']:r for r in report['targets']}
+        current,expired=targets['current'],targets['expired']
+        # Legacy manual commitments have no exact-document approval event, so they stay out of reports.
+        self.assertEqual((current['commitment_count'],expired['commitment_count'],expired['score']),(0,0,0))
+        self.assertEqual((current['period_status'],expired['period_status']),('within_published_period','expired'))
         self.assertEqual(current['delivery_shortfall'],'unknown')
 
     def test_forward_missing_title_retained_and_reimport_unchanged(self):
