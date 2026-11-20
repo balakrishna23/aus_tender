@@ -33,6 +33,12 @@ from project_paths import PROJECT_DIR, database_directory
 WA_SEARCH = 'https://catalogue.data.wa.gov.au/api/3/action/package_search'
 WA_TITLE = re.compile(r'tenders wa .*contract.*(award|details)', re.I)
 HEADERS = {'User-Agent': 'Mozilla/5.0 (compatible; IllouraTenderFeed/1.0)'}
+WA_COLUMNS = {
+    'Public_Authority', 'Title', 'Description', 'Reference_Number', 'Procurement_Method',
+    'UNSPSC_Code_1', 'Award_Date', 'Commencement_Date', 'Final_Expiry_Date',
+    'Initial_Expiry_Date', 'Original_Contract_Value', 'Supplier_Name', 'Supplier_Address',
+    'CUA_Number', 'Panel_Contract',
+}
 QLD_INBOX = PROJECT_DIR / 'inputs' / 'state_contracts' / 'qld'
 
 SCHEMA = '''
@@ -197,32 +203,81 @@ def store(conn, state, source_file, rows, raws, source):
                       source.get('publisher'), source.get('modified'), source.get('size'), len(rows), now))
 
 
+class PublisherChallenge(ValueError):
+    """The publisher returned a bot challenge instead of data."""
+
+
+def validate_wa_response(response):
+    headers = {key.lower(): value for key, value in response.headers.items()}
+    body = response.content
+    prefix = body[:4096].lstrip(b'\xef\xbb\xbf \t\r\n').lower()
+    if ('x-amzn-waf-action' in headers or
+            'text/html' in headers.get('content-type', '').lower() or
+            b'<html' in prefix or b'<!doctype' in prefix):
+        raise PublisherChallenge('publisher bot challenge; not stored')
+    if response.status_code != 200:
+        raise ValueError(f'HTTP {response.status_code}; not stored')
+    if not body.strip():
+        raise ValueError('empty response body; not stored')
+
+
+def wa_csv_rows(response):
+    validate_wa_response(response)
+    reader = csv.DictReader(io.StringIO(response.content.decode('utf-8-sig')), strict=True)
+    headers = reader.fieldnames or []
+    missing = WA_COLUMNS.difference(headers)
+    if missing or len(headers) != len(set(headers)):
+        raise ValueError(f'invalid WA CSV header (missing: {", ".join(sorted(missing))}); not stored')
+    raws = []
+    for raw in reader:
+        if None in raw or any(value is None for value in raw.values()):
+            raise ValueError('WA CSV row width mismatch; not stored')
+        if any(value.strip() for value in raw.values()):
+            raws.append(raw)
+    if not raws:
+        raise ValueError('WA CSV contains no data rows; not stored')
+    return raws
+
+
 def fetch_wa(conn, http=requests, sleep=time.sleep):
     found = http.get(WA_SEARCH, params={'q': '"Tenders WA"', 'rows': 100}, headers=HEADERS, timeout=60)
-    found.raise_for_status()
+    validate_wa_response(found)
     loaded = 0
+    files = []
     for package in found.json()['result']['results']:
         if not WA_TITLE.search(package['title']):
             continue
         for resource in package['resources']:
             if (resource.get('format') or '').lower().strip('.') != 'csv':
                 continue
-            name = resource['url'].rsplit('/', 1)[-1]
-            modified = resource.get('last_modified') or package['metadata_modified']
-            known = conn.execute('SELECT modified, size FROM sources WHERE source_file=?', (name,)).fetchone()
-            if known and known == (modified, resource.get('size')):
-                print(f'WA {name}: unchanged, skipped')
-                continue
-            sleep(2)
+            files.append((package, resource))
+    for index, (package, resource) in enumerate(files):
+        name = resource['url'].rsplit('/', 1)[-1]
+        modified = resource.get('last_modified') or package['metadata_modified']
+        known = conn.execute('SELECT modified, size FROM sources WHERE source_file=?', (name,)).fetchone()
+        held = conn.execute('SELECT COUNT(*) FROM contracts WHERE state=? AND source_file=?',
+                            ('WA', name)).fetchone()[0]
+        if held and known and known == (modified, resource.get('size')):
+            print(f'WA {name}: unchanged, skipped')
+            continue
+        sleep(2)
+        try:
             response = http.get(resource['url'], headers=HEADERS, timeout=300)
-            response.raise_for_status()
-            raws = list(csv.DictReader(io.StringIO(response.content.decode('utf-8-sig', errors='replace'))))
-            store(conn, 'WA', name, [wa_row(r) for r in raws], raws, dict(
-                title=package['title'], url=resource['url'], licence=package.get('license_title'),
-                publisher=(package.get('organization') or {}).get('title'), modified=modified,
-                size=resource.get('size')))
-            print(f'WA {name}: {len(raws)} contracts')
-            loaded += len(raws)
+            raws = wa_csv_rows(response)
+        except PublisherChallenge as exc:
+            print(f'WA {name}: {exc}')
+            pending = [r['url'].rsplit('/', 1)[-1] for _, r in files[index:]]
+            print(f'WA run stopped; files not loaded: {", ".join(pending)}')
+            break
+        except (requests.RequestException, ValueError, csv.Error) as exc:
+            print(f'WA {name}: download failed; not stored ({exc})')
+            continue
+        store(conn, 'WA', name, [wa_row(r) for r in raws], raws, dict(
+            title=package['title'], url=resource['url'], licence=package.get('license_title'),
+            publisher=(package.get('organization') or {}).get('title'), modified=modified,
+            size=resource.get('size')))
+        print(f'WA {name}: {len(raws)} contracts')
+        loaded += len(raws)
     return loaded
 
 
