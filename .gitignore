@@ -31,6 +31,7 @@ service-account-*.json
 credentials.json
 # Public AusTender API responses used as test fixtures
 !tests/fixtures/*.json
+!market_intelligence/scoring.json
 
 # Scrapy specific
 scrapy.log
@@ -71,3 +72,7 @@ dashboard/
 
 # Business inputs (spec section 13: confidential research, lists, exports)
 inputs/
+
+# Editable market intelligence rules: official public figures with sources, no private data
+!market_intelligence/rules/*.json
+!market_intelligence/rules/*.csv

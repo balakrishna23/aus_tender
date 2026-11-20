@@ -1,0 +1,3 @@
+# Test-only dependencies (CI and local verification). Not installed on the server.
+# reportlab builds small fixture PDFs for the RAP extraction tests.
+reportlab==5.0.1

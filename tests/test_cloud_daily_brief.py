@@ -211,6 +211,7 @@ class SendSafetyTests(unittest.TestCase):
         systemctl = Mock(return_value=SimpleNamespace(returncode=0, stdout=enabled))
         output = io.StringIO()
         with (patch.object(brief, 'bounded_command'), patch.object(brief, 'scraper') as scraper,
+              patch.object(brief, 'refresh_market_research', return_value={'status':'disabled'}),
               patch.object(brief, 'utc_now', side_effect=[moments[0]] * 3 + moments), patch.object(brief.time, 'sleep') as sleep,
               redirect_stdout(output)):
             brief.run(systemctl=systemctl)
@@ -535,6 +536,7 @@ class RetryTests(unittest.TestCase):
     def test_send_failure_never_retried(self):
         scraper = Mock(side_effect=[None, self.failure('uncertain send')])
         with (patch.object(brief, 'utc_now', return_value=NOW + timedelta(hours=2)),
+              patch.object(brief, 'refresh_market_research', return_value={'status':'disabled'}),
               patch.object(brief, 'bounded_command') as collect, patch.object(brief, 'scraper', scraper),
               self.assertRaises(brief.subprocess.CalledProcessError)):
             brief.run(systemctl=Mock(return_value=SimpleNamespace(returncode=0, stdout='enabled')))

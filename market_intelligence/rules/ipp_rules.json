@@ -1,0 +1,80 @@
+{
+  "_about": "Indigenous Procurement Policy rules used for flags. Every value is copied from the cited official document; change a value only together with its source and retrieved date.",
+  "retrieved": "2026-11-19",
+  "sources": {
+    "ipp_guidelines": "https://www.niaa.gov.au/sites/default/files/documents/2026-05/IPP-Guidelines-12-May-2026.pdf",
+    "msa_factsheet": "https://www.niaa.gov.au/sites/default/files/documents/publications/ipp-mandatory-set-aside-factsheet.pdf",
+    "ipp_page": "https://www.niaa.gov.au/our-work/employment-and-economic-development/indigenous-procurement-policy-ipp"
+  },
+  "mandatory_set_aside": {
+    "min_value_gst_inclusive": 80000,
+    "max_value_gst_inclusive": 200000,
+    "applies_to": "All remote procurements, and all other procurement wholly delivered in Australia with an estimated value between $80,000 and $200,000 (GST inclusive).",
+    "does_not_apply_to": [
+      "Procurements otherwise exempt from Division 2 of the Commonwealth Procurement Rules",
+      "Procurement made through a mandated coordinated procurement arrangement"
+    ],
+    "remote_definition": "Delivery point for the majority of the goods and services (by value) is in a remote area on the NIAA remote map; includes Darwin, Alice Springs, Geraldton, Kalgoorlie, Esperance, Whyalla, Port Augusta, Port Lincoln, Mt Isa and Broome.",
+    "source": "msa_factsheet"
+  },
+  "mandatory_minimum_requirements": {
+    "threshold_gst_inclusive": 7500000,
+    "contract_target_percent": 4,
+    "organisation_target_percent": 3,
+    "applies_to": "Contracts wholly delivered in Australia valued at $7.5 million (GST inclusive) or more in the specified UNSPSC segments.",
+    "segments": {
+      "64": "Financial Instruments, Products, Contracts and Agreements",
+      "70": "Farming and fishing and forestry and wildlife contracting services",
+      "71": "Mining and oil and gas services",
+      "72": "Building construction and maintenance services",
+      "73": "Industrial Production and Manufacturing Services",
+      "76": "Industrial cleaning services",
+      "77": "Environmental Services",
+      "78": "Transportation, storage and mail services",
+      "80": "Management and Business Professionals and Administrative Services",
+      "81": "Engineering and Research and Technology Based Services",
+      "82": "Editorial and design and graphic and fine art services",
+      "84": "Financial and Insurance Services",
+      "85": "Healthcare Services",
+      "86": "Education and training services",
+      "90": "Travel and food and lodging and entertainment services",
+      "91": "Personal and Domestic Services",
+      "92": "National Defence and Public Order and Security and Safety Services",
+      "93": "Politics and civic affairs services",
+      "94": "Organisations and Clubs"
+    },
+    "sub_category_exemptions": [
+      "80131500",
+      "80131501",
+      "80131503",
+      "84130000",
+      "84131800",
+      "92110000",
+      "92111700"
+    ],
+    "source": "ipp_guidelines"
+  },
+  "eligibility": {
+    "rule": "From 1 July 2026 an Indigenous business must be 51 per cent or more First Nations owned and controlled, or registered with ORIC. Transition arrangements for 2026-27 also accept the original 50 per cent criterion.",
+    "effective_from": "2026-07-01",
+    "oric_registered_is_eligible": true,
+    "source": "ipp_guidelines"
+  },
+  "exemption_16": {
+    "rule": "Exemption 16 of the Commonwealth Procurement Rules: procurement of goods and services from an SME that meets the IPP definition of an Indigenous enterprise.",
+    "source": "ipp_guidelines"
+  },
+  "coordinated_arrangements": {
+    "rule": "Non-corporate Commonwealth entities must use coordinated procurements (whole-of-government arrangements).",
+    "source": "ipp_guidelines"
+  },
+  "austender_value_basis": "AusTender contract values are treated as GST inclusive for these bands; not yet confirmed against the AusTender reporting guidance.",
+  "portfolio_renames": {
+    "_about": "Portfolios renamed by the Administrative Arrangements Order of May 2025. NIAA reports 2024-25 results under the old names and 2025-26 targets under the new ones; AGOR uses the new ones.",
+    "source": "ipp_page",
+    "names": {
+      "Health and Aged Care": "Health, Disability and Ageing",
+      "Infrastructure, Transport, Regional Development, Communications and the Arts": "Infrastructure, Transport, Regional Development, Communications, Sport and the Arts"
+    }
+  }
+}

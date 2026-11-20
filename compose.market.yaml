@@ -1,0 +1,21 @@
+services:
+  market-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: illoura_market
+      POSTGRES_USER: market_admin
+      POSTGRES_PASSWORD: ${MARKET_ADMIN_PASSWORD:?Set MARKET_ADMIN_PASSWORD in your private environment}
+      MARKET_DB_PASSWORD: ${MARKET_DB_PASSWORD:?Set MARKET_DB_PASSWORD in your private environment}
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - market-postgres:/var/lib/postgresql/data
+      - ./market_intelligence/compose-init.sh:/docker-entrypoint-initdb.d/001-market.sh:ro
+    command: ["postgres", "-c", "shared_buffers=256MB", "-c", "work_mem=4MB", "-c", "max_connections=20"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U illoura_market -d illoura_market"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+volumes:
+  market-postgres:

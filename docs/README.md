@@ -10,6 +10,7 @@ to Claude Desktop through a read-only API. This page lists every document and wh
 |---|---|
 | [architecture.md](architecture.md) | What the system does, where each part runs, the morning timeline, safety rules |
 | [graduate-guide.md](graduate-guide.md) | Detailed graduate introduction to the technologies, every subsystem, data flow and reliability techniques |
+| [market_intelligence.md](market_intelligence.md) | New isolated PostgreSQL federal-buyer research layer, evidence rules, imports, review workflow and tests |
 | [project-audit-20261115.md](project-audit-20261115.md) | Verified 15 November audit results, deployed corrections and remaining limits |
 | [SETUP_AND_OPERATIONS.md](SETUP_AND_OPERATIONS.md) | Setting up a Windows PC, getting data, running the collectors locally |
 | [../README.md](../README.md) | Collector commands and options |
