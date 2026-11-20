@@ -87,7 +87,8 @@
       "licence": "CC BY 4.0",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "parser_verified_on_retained_2026_10_release"
+      "status": "parser_verified_on_retained_2026_10_release",
+      "acquisition": "python -m market_intelligence.acquire_jsa (run on the Sydney server; the publisher site did not answer from the admin PC on 20 Nov 2026); live robots/licence/link validation pending"
     },
     "jsa_shortages": {
       "source_url": "https://www.jobsandskills.gov.au/data/occupation-shortage",
@@ -101,7 +102,8 @@
       "licence": "CC BY 4.0",
       "commercial_reuse": "yes",
       "refresh": "monthly",
-      "status": "parser_verified_on_retained_2026_05_release"
+      "status": "parser_verified_on_retained_2026_05_release",
+      "acquisition": "python -m market_intelligence.acquire_jsa (run on the Sydney server; the publisher site did not answer from the admin PC on 20 Nov 2026); live robots/licence/link validation pending"
     },
     "aps_employment": {
       "source_url": "https://www.apsc.gov.au/employment-data/aps-employment-data-30-june-2025",
