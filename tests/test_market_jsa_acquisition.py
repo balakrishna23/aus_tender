@@ -300,6 +300,7 @@ class JSAAcquisitionTests(unittest.TestCase):
                      html(jsa.LICENCE_URL, 'https://creativecommons.org/licenses/by-nd/4.0/', licence=False),
                      html(jsa.LICENCE_URL, 'https://creativecommons.org/licenses/by/3.0/', licence=False),
                      html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Attribution 3.0 International',
+                     html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Attribution 3.0 Australia',
                      html('https://creativecommons.org/', licence=False) + b'Creative Commons Attribution 4.0 International; CC BY-ND 4.0',
                      html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Zero',
                      html(jsa.LICENCE_URL, licence=False) + b'Creative Commons Attribution ShareAlike 4.0',
@@ -314,6 +315,53 @@ class JSAAcquisitionTests(unittest.TestCase):
         fixture.routes[copyright] = html(jsa.LICENCE_URL, licence=False)
         with self.assertRaises(jsa.AcquisitionError):
             jsa.licence_evidence(fixture.client(), html() + b'CC BY-ND 4.0', TNV)
+
+    def test_unrelated_numbers_and_restriction_words_are_not_licence_conflicts(self):
+        fixture = FixturePublisher()
+        unrelated = (b'<p>Vacancies rose 2.5 per cent; version 3.0 of the dashboard. '
+                     b'Non-commercial respondents supplied no derivatives; share-alike trends.</p>')
+        source = html('/copyright-and-disclaimer', licence=False)
+        copyright = jsa.ORIGIN + '/copyright-and-disclaimer'
+        for dataset_text, copyright_text in [(unrelated, b''), (b'', unrelated)]:
+            with self.subTest(dataset_text=bool(dataset_text)):
+                fixture.routes[copyright] = copyright_text + html(jsa.LICENCE_URL, licence=False)
+                evidence = jsa.licence_evidence(fixture.client(), dataset_text + source, TNV)
+                self.assertEqual(evidence['evidence_type'], 'deed_link')
+
+    def test_copyright_exception_list_items_preserve_four_exceptions(self):
+        fixture = FixturePublisher()
+        copyright = jsa.ORIGIN + '/copyright-and-disclaimer'
+        fixture.routes[copyright] = (
+            b'<p>Creative Commons Attribution 4.0 International Licence '
+            b'with the exception of:</p><ul>'
+            b'<li>content supplied by <strong>third parties</strong></li>'
+            b'<li>the Commonwealth Coat of Arms</li>'
+            b'<li>material protected by a trade mark</li>'
+            b'<li>any images and/or photographs.</li></ul>'
+            b'<p>Details of the Creative Commons BY 4.0 licence are available.</p>')
+        evidence = jsa.licence_evidence(
+            fixture.client(), html('/copyright-and-disclaimer', licence=False), TNV)
+        self.assertEqual(evidence['exceptions'], ['content supplied by third parties',
+            'the Commonwealth Coat of Arms', 'material protected by a trade mark',
+            'any images and/or photographs'])
+
+    def test_restrictions_and_versions_in_licence_context_rejected(self):
+        fixture = FixturePublisher()
+        copyright = jsa.ORIGIN + '/copyright-and-disclaimer'
+        for wording in [b'CC BY-NC 4.0', b'CC-BY 2.5',
+                        b'Creative Commons Attribution 3.0 Australia',
+                        b'Licence: non-commercial use only',
+                        b'Licence: no derivatives', b'Licence: share-alike']:
+            for on_dataset in (False, True):
+                with self.subTest(wording=wording, on_dataset=on_dataset):
+                    fixture.routes[copyright] = html(jsa.LICENCE_URL, licence=False)
+                    body = html('/copyright-and-disclaimer', licence=False)
+                    if on_dataset:
+                        body += wording
+                    else:
+                        fixture.routes[copyright] += wording
+                    with self.assertRaisesRegex(jsa.AcquisitionError, 'Conflicting'):
+                        jsa.licence_evidence(fixture.client(), body, TNV)
 
     def test_previous_failed_manifest_and_invalid_options_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

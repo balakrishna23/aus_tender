@@ -63,7 +63,8 @@ class RapReviewTests(unittest.TestCase):
         for suffix in ['Ltd','Limited','Pty Ltd','Inc.','Incorporated','Co','Company','PLC','LLP']:
             self.assertEqual(legal_name_key('The Invented Group '+suffix),'invented group')
         ctx['entities'].append(entity('Invented Group Inc',abn='22222222222'))
-        self.assertEqual(identity_reason('The Invented Group Pty Limited',identity_index(ctx)),'ambiguous_register_match')
+        self.assertEqual(identity_assessment('The Invented Group Pty Limited',identity_index(ctx)),
+                         (None,'register_multiple_non_individual'))
         ctx['entities'][-1]['is_individual']=True
         self.assertEqual(identity_reason('Invented Group',identity_index(ctx)),'individual_register_match')
         ctx['entities']=[entity('Synthetic Person Limited')]
@@ -78,13 +79,42 @@ class RapReviewTests(unittest.TestCase):
         ctx=context();ctx['entities']=[entity(None,individual=True),entity('Synthetic Firm',source='acnc')]
         self.assertEqual(identity_reason('Synthetic Firm',identity_index(ctx)),'individual_register_match')
 
-    def test_conflicting_entities_quarantined_same_abn_across_registers_supported(self):
+    def test_multiple_non_individual_entities_clear_same_abn_is_one_candidate(self):
         ctx=context();ctx['entities']=[entity('Synthetic Firm'),entity('Synthetic Firm',abn='22222222222')]
-        self.assertEqual(identity_reason('Synthetic Firm',identity_index(ctx)),'ambiguous_register_match')
+        self.assertEqual(identity_assessment('Synthetic Firm',identity_index(ctx)),
+                         (None,'register_multiple_non_individual'))
         ctx['entities'][1]=entity('Synthetic Firm',source='acnc')
         self.assertIsNone(identity_reason('Synthetic Firm',identity_index(ctx)))
         ctx['entities'].append(entity('Synthetic Firm',individual=True))
         self.assertEqual(identity_reason('Synthetic Firm',identity_index(ctx)),'individual_register_match')
+
+    def test_multiple_register_candidates_audited_without_abn_association(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);collection(root);bundle=load_collection(root)
+            name=bundle['records'][0]['organisation']
+            for normalised in (False,True):
+                ctx=context();ctx['entities']=[entity(name),entity(
+                    name+' Pty Ltd' if normalised else name,abn='22222222222')]
+                for individual in (False,True):
+                    with self.subTest(normalised=normalised,individual=individual):
+                        ctx['entities'][1]['is_individual']=individual
+                        with patch('market_intelligence.rap_review.load_collection',return_value=copy.deepcopy(bundle)):
+                            reviewed,audit=evaluate(root,ctx)
+                        decision=audit['decisions'][0]
+                        self.assertEqual(audit['policy_version'],'rap-directory-privacy-3')
+                        self.assertEqual(reviewed['provenance']['privacy_policy'],'rap-directory-privacy-3')
+                        self.assertEqual(decision['register_candidate_count'],2)
+                        self.assertEqual(decision['cleared'],not individual)
+                        self.assertEqual(decision['reasons'],['individual_register_match'] if individual else [])
+                        self.assertEqual(decision['identity_basis'],
+                            'register_exact' if individual else 'register_multiple_non_individual')
+                        if not individual:
+                            self.assertEqual(reviewed['records'][0],bundle['records'][0])
+                        self.assertNotIn('abn',decision)
+            ctx=context();ctx['entities']=[entity(name),entity(name,source='acnc')]
+            decision=partition(bundle,ctx)[1][0]
+            self.assertEqual(decision['register_candidate_count'],1)
+            self.assertEqual(decision['identity_basis'],'register_exact')
 
     def test_plan_url_adversaries(self):
         for url in ['http://reconciliation.my.salesforce.com/a','https://evil.invalid/a',

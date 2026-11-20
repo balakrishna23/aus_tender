@@ -13,6 +13,7 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import html
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -82,6 +83,26 @@ def discover(body, source_url, dataset):
     return winners[0]
 
 
+class LicenceText(HTMLParser):
+    """Keep list-item boundaries for exception extraction, including inline markup."""
+    def __init__(self, body):
+        super().__init__()
+        self.parts = []
+        self.feed(body.decode('utf-8', errors='replace'))
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def handle_starttag(self, tag, attrs):
+        self.parts.append(' ')
+
+    def handle_endtag(self, tag):
+        self.parts.append(';' if tag == 'li' else ' ')
+
+    def text(self):
+        return re.sub(r'\s+', ' ', ''.join(self.parts)).strip()
+
+
 def licence_evidence(client, body, source_url):
     """Retain one official licence page, accepting only unambiguous CC BY 4.0."""
     pages = set()
@@ -111,18 +132,24 @@ def licence_evidence(client, body, source_url):
         # Remove the sole accepted wording before rejecting other CC statements.
         remainder = visible.replace(statement, '')
         remainder = re.sub(r'Creative Commons BY 4\.0|CC[ -]BY[ -]4\.0', '', remainder, flags=re.I)
+        contexts = [visible[m.start():m.end() + 60] for m in re.finditer(
+            r'Creative Commons|\bCC[ -]BY\b|\bAttribution\b|\blicen[cs]e\b', visible, re.I)]
+        conflict = re.compile(
+            r'\b(?:[123]\.0|2\.5|BY[- ](?:NC|ND|SA)|non[- ]?commercial|'
+            r'no[- ]?derivatives|share[- ]?alike|Zero|Public Domain)\b', re.I)
         if (re.search(r'(?:Creative Commons|\bCC[ -]BY)\s+(?:Attribution|BY|[0-9])', remainder, re.I)
-                or re.search(r'\b(?:BY[- ](?:NC|ND|SA)|non[- ]?commercial|no[- ]?derivatives|share[- ]?alike|CC0)\b', visible, re.I)
-                or re.search(r'Creative Commons\s+(?:Zero|Public Domain|NonCommercial|NoDerivatives|ShareAlike)', visible, re.I)
-                or re.search(r'\b(?:[123]\.0|2\.5)\b', visible)):
+                or re.search(r'\bCC0\b', visible, re.I)
+                or any(conflict.search(context) for context in contexts)):
             raise AcquisitionError('Conflicting Creative Commons licence evidence; review required')
     deed = any(urljoin(resolved, href).rstrip('/') == LICENCE_URL.rstrip('/')
                for href in Anchors(page).links)
     if not deed and statement not in texts[1]:
         raise AcquisitionError('Publisher licence page does not link to CC BY 4.0 or state its explicit licence; review required')
-    exceptions = re.search(r'exception(?:s)? of:\s*(.*?)(?:\s*Details of|$)', texts[1], re.I)
+    exceptions = re.search(r'exception(?:s)? of:\s*(.*?)(?:\s*Details of|$)',
+                           LicenceText(page).text(), re.I)
     return dict(body=page, url=resolved, evidence_type='deed_link' if deed else 'explicit_statement',
-                exceptions=[s.strip().rstrip('.') for s in exceptions[1].split(';')] if exceptions else [])
+                exceptions=[s.strip().rstrip('.') for s in exceptions[1].split(';')
+                            if s.strip()] if exceptions else [])
 
 
 def earlier_hashes(manifests):

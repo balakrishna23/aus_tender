@@ -14,7 +14,7 @@ from .parsers import EMAIL_PATTERN, SourceError, name_key
 from .rap_extract import PHONE, digest, privacy_check, reviewer_id
 from .research import SCHEMAS, period_range
 
-POLICY = 'rap-directory-privacy-2'
+POLICY = 'rap-directory-privacy-3'
 HOSTS = {'reconciliation.my.salesforce.com', 'recaus.my.salesforce.com', 'www.reconciliation.org.au'}
 # Evidence tokens, not an allowlist for every word in a name. Brands can accompany
 # organisational evidence; an unexplained personal-looking name still needs a register match.
@@ -140,19 +140,25 @@ def is_individual(entity):
     return bool(entity['is_individual'] or re.search(r'^IND$|individual|sole\s*(?:trader|proprietor)', entity.get('entity_type') or '', re.I))
 
 
-def identity_assessment(organisation, index):
+def register_candidates(organisation, index):
     exact = index.get('exact', {}).get(name_key(organisation), [])
     normalised = index.get('normalised', {}).get(legal_name_key(organisation), [])
     # Include normalised candidates even with an exact hit so a suffix collision or
     # an individual entity cannot be hidden by a more convenient exact spelling.
-    matches = normalised or exact
+    matches = exact + normalised
+    identities = {('abn', e['abn']) if e.get('abn') else (e['source'], e['record_id']) for e in matches}
+    return exact, matches, len(identities)
+
+
+def identity_assessment(organisation, index):
+    exact, matches, candidate_count = register_candidates(organisation, index)
     basis = 'register_exact' if exact else 'register_legal_normalised'
     if matches:
         if any(is_individual(e) for e in matches):
             return 'individual_register_match', basis
-        identities = {('abn', e['abn']) if e.get('abn') else (e['source'], e['record_id']) for e in matches}
-        if len(identities) != 1:
-            return 'ambiguous_register_match', basis
+        if candidate_count > 1:
+            # Privacy clearance does not resolve which entity/ABN owns this name.
+            return None, 'register_multiple_non_individual'
         return None, basis
     tokens = name_key(organisation).split()
     # Public office descriptions can still identify an individual representative.
@@ -211,7 +217,9 @@ def partition(bundle, context):
             cleared.append(row)
         # Quarantine records stay in the private retained collection, not in another names file.
         decisions.append(dict(index=number, record_sha256=digest(row), reasons=sorted(reasons),
-            identity_basis=match_basis, cleared=not reasons, period_valid=valid_period,
+            identity_basis=match_basis,
+            register_candidate_count=register_candidates(row.get('organisation', ''), index)[2],
+            cleared=not reasons, period_valid=valid_period,
             missing_plan_link=not row.get('document_url')))
     return cleared, decisions
 
