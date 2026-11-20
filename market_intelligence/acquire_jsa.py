@@ -15,6 +15,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import time  # noqa: F401 - tests patch acquire_jsa.time (sleep/monotonic)
 from urllib.parse import unquote, urljoin, urlsplit
 import uuid
 
