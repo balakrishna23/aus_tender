@@ -15,6 +15,7 @@ from .analytics import build_report,write_report
 from .brief import build_brief,write_brief
 from .readiness import readiness
 from .reporting import json_value
+from .crm import build_crm,export_crm
 
 
 def refresh(db,procurement_export,forward_export,directory,as_of):
@@ -45,6 +46,7 @@ def refresh(db,procurement_export,forward_export,directory,as_of):
         step('forward',lambda:import_forward(db,forward_export))
         step('buyer_report',lambda:write_report(build_report(db,as_of),directory/'buyers'))
         step('forward_report',lambda:write_forward(build_forward(db,as_of),directory/'forward'))
+        step('crm_export',lambda:export_crm(build_crm(db,as_of),directory/'crm'))
         ready=readiness(db,as_of)
         (directory/'readiness.json').write_text(json.dumps(ready,default=json_value,indent=2),encoding='utf-8')
         # This is the last output: failed imports/reports never produce a publishable result.

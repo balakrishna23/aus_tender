@@ -28,6 +28,7 @@ from .brief import build_brief,write_brief
 from .geography import LAYERS,import_geography,build_geography,write_geography
 from .changes import build_changes,write_changes
 from .readiness import readiness
+from .crm import build_crm,export_crm
 
 
 def main(argv=None):
@@ -134,6 +135,10 @@ def main(argv=None):
     changes.add_argument('--since',required=True,type=date.fromisoformat)
     changes.add_argument('--as-of',required=True,type=date.fromisoformat)
     changes.add_argument('--output',required=True)
+    crm=commands.add_parser('crm-export',help='Contact-free per-lane account export with CRM relationship reconciliation')
+    crm.add_argument('--as-of',required=True,type=date.fromisoformat)
+    crm.add_argument('--output',required=True)
+    crm.add_argument('--limit',type=int,default=20)
     args=parser.parse_args(argv)
     try:
         if args.command=='input-templates':
@@ -201,6 +206,8 @@ def main(argv=None):
             result=readiness(db,args.as_of)
         elif args.command=='changes-report':
             result=write_changes(build_changes(db,args.since,args.as_of),args.output)
+        elif args.command=='crm-export':
+            result=export_crm(build_crm(db,args.as_of,args.limit),args.output)
         elif args.command=='aps-report':
             result=write_aps_report(build_aps_report(db,args.as_of),args.output)
         elif args.command=='bridge-buyers':
