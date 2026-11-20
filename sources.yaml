@@ -130,6 +130,13 @@
       "commercial_reuse": "unclear",
       "refresh": "daily_after_verified_source_refresh"
     },
+    "aged_care_star_ratings": {
+      "source_url": "https://www.health.gov.au/resources/publications/star-ratings-quarterly-data-extract-october-2026",
+      "licence_evidence_url": "https://www.health.gov.au/using-our-websites/copyright",
+      "commercial_reuse": "permission_required",
+      "status": "download_verified_not_imported_due_to_commercial_reuse_restriction",
+      "refresh": "quarterly_after_reuse_permission"
+    },
     "ndis_providers": {
       "source_url": "https://www.ndiscommission.gov.au/provider-registration/find-registered-provider",
       "licence_evidence_url": "https://www.ndiscommission.gov.au/copyright-and-disclaimer",

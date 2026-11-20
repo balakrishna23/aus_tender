@@ -2,6 +2,19 @@
 
 This extends the isolated federal research build. It does not claim completion of the full 48-source specification. `python -m market_intelligence readiness --as-of DATE` reports measured coverage and missing inputs. Acquisition dates and licences remain attached to the data. `sources.yaml` records available and pending sources, with intended cadences rather than enabled schedules.
 
+## Latest continuation paused on 19 November
+
+The user stopped work at 17:19 UTC. Production remains schema 018 and the existing
+automatic-refresh build. New RAP extraction/cost-review, CRM export, REOS/TNV parsers,
+reports and migrations 019/020 are implemented but not deployed. Metabase is installed
+and privately queryable. Deployment stopped during an isolated restore drill; its new
+backup/restore is not verified. The source changes remain uncommitted.
+
+Read [the complete pause handoff](engineering_pause_20261119.md) for verified state,
+test results, private evidence locations, incomplete steps and the exact resume order.
+Do not resume until the user asks. The historical details below describe the previously
+deployed milestone unless explicitly updated.
+
 ## Implemented data
 
 | Data | Scope |
@@ -66,6 +79,6 @@ This automatic stage refreshes current collector snapshots and derived research.
 
 The full-active-ABN target, 95% reviewed buyer-value coverage, panel marking, broad RAP matching/extraction accuracy and business review of top targets remain unmet. Register scope is still procurement ABNs. Broad category fallback accounts for 79.3% of original award value in the two broad ICT/labour-hire families and needs tuning against real examples.
 
-NDIS bulk acquisition returned an HTTP error from the VM and a local probe timed out; no NDIS coverage is claimed. Other states, current named healthcare providers/ratings, grants, budget/insourcing and annual-report feeds still need verified acquisition and source-specific parsers. Full RAP LLM extraction/cost accounting, Metabase, outbound CRM sync and automatic acquisition of the remaining external publishers remain unimplemented. Public provider purpose/registration is not evidence of workforce need. Commercial reuse must be checked per source; retained RAP and ORIC evidence stays internal.
+NDIS bulk acquisition returned an HTTP error from the VM and a local probe timed out; no NDIS coverage is claimed. Other states, current named healthcare providers/ratings, grants, budget/insourcing and annual-report feeds still need verified acquisition and source-specific parsers. RAP extraction/cost accounting and CRM CSV interchange have since been implemented but remain pending production deployment and real-data/provider validation; Metabase is installed privately. Direct outbound CRM sync and automatic acquisition of the remaining external publishers remain unimplemented. Public provider purpose/registration is not evidence of workforce need. Commercial reuse must be checked per source; retained RAP and ORIC evidence stays internal.
 
 The pipeline does not send buyer/partner outreach. Any later outreach is a separate authorized workflow subject to the Spam Act and Privacy Act.
