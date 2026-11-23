@@ -208,7 +208,12 @@ def import_aged_care(engine, manifest):
         previous = conn.execute(text('''SELECT id FROM market.aged_care_snapshots
             WHERE sha256=:sha AND parser_revision=:revision'''), dict(sha=meta['sha256'], revision=PARSER_REVISION)).scalar()
         if previous:
-            return dict(status='unchanged', snapshot_id=str(previous), **parsed['metrics'])
+            current = conn.execute(text('''SELECT s.id, s.reference_period
+                FROM market.current_aged_care_snapshot c
+                JOIN market.aged_care_snapshots s ON s.id=c.snapshot_id''')).first()
+            return dict(status='unchanged', snapshot_id=str(previous), current_advanced=False,
+                        is_current=bool(current and str(current[0]) == str(previous)),
+                        current_period=current[1] if current else None, **parsed['metrics'])
         conn.execute(text('''INSERT INTO market.aged_care_snapshots
             (id,sha256,parser_revision,reference_period,retrieved_at,provenance,metrics)
             VALUES (:id,:sha,:revision,:period,:retrieved,CAST(:provenance AS jsonb),CAST(:metrics AS jsonb))'''),
@@ -219,9 +224,18 @@ def import_aged_care(engine, manifest):
             VALUES (:snapshot_id,:row_identity,:key_ordinal,:content_sha256,:source_row,:provider_name,
                     :provider_name_key,CAST(:payload AS jsonb))'''),
             [dict(r, snapshot_id=snapshot, payload=json.dumps(r['payload'])) for r in parsed['rows']])
-        conn.execute(text('''INSERT INTO market.current_aged_care_snapshot(singleton,snapshot_id) VALUES (true,:id)
-            ON CONFLICT(singleton) DO UPDATE SET snapshot_id=excluded.snapshot_id'''), dict(id=snapshot))
-    return dict(status='imported', snapshot_id=snapshot, **parsed['metrics'])
+        # Preserve same-period publisher corrections, but never replace a newer period.
+        advanced = conn.execute(text('''INSERT INTO market.current_aged_care_snapshot AS current
+            (singleton,snapshot_id) VALUES (true,:id)
+            ON CONFLICT(singleton) DO UPDATE SET snapshot_id=excluded.snapshot_id
+            WHERE (SELECT reference_period FROM market.aged_care_snapshots WHERE id=excluded.snapshot_id)
+               >= (SELECT reference_period FROM market.aged_care_snapshots WHERE id=current.snapshot_id)
+            RETURNING snapshot_id'''), dict(id=snapshot)).scalar() is not None
+        current_period = conn.execute(text('''SELECT s.reference_period
+            FROM market.current_aged_care_snapshot c
+            JOIN market.aged_care_snapshots s ON s.id=c.snapshot_id''')).scalar()
+    return dict(status='imported', snapshot_id=snapshot, current_advanced=advanced,
+                is_current=advanced, current_period=current_period, **parsed['metrics'])
 
 
 LIMITATIONS = [
