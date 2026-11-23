@@ -278,6 +278,36 @@ transaction. Changed identity evidence, stale proposal context and source confli
 appear before straightforward proposals. Exporting a packet records no decisions.
 Saved packets can become stale; recheck the current queue before recording a review.
 
+## RAP directory, APS 2026, aged care and automatic refresh (23 November 2026)
+
+- **RAP directory** (`acquire_rap.py`, `rap_review.py`; commands `acquire-rap`,
+  `review-rap`, `verify-rap`, `import-research --rap-collection`). It downloads the
+  public Reconciliation Australia directory after a robots check and retains the
+  responses privately. A directory-only service account (its UUID comes from
+  `ILLOURA_RAP_DIRECTORY_REVIEWER_IDS`) clears only rows that pass every check:
+  organisation-name heuristics, register cross-matches, URL rules, RAP type and
+  period, and duplicates. Everything else is quarantined with reasons, and an
+  independent verifier replays the evidence and the payload digest before import.
+  The project owner approved this automated reviewer on 20 Nov 2026.
+- **APS 2026** (`aps.py` parser revision 2) reads the 30 June 2026 job-family model.
+  ICT family comparisons with earlier years are flagged as not like-for-like.
+- **Aged care** (`acquire_health.py`, `aged_care.py`, migration 022; commands
+  `acquire-health`, `import-aged-care`, `aged-care-report`) imports the quarterly
+  Star Ratings extract as quality evidence only. An older quarter is kept as
+  history and never replaces a newer current quarter. Same-period corrections
+  replace it.
+- **Freshness and automatic refresh** (`freshness.py`, `research_refresh.py`,
+  `acquire_wa.py`, migration 023; commands `freshness-report`, `research-refresh`,
+  `inbox-status`). Each source has a cadence and is either automatic or manual.
+  data.gov.au sources (ABN, ASIC, ACNC, AGOR, government directory, ORIC) are
+  manual because its robots.txt disallows all automated access. A person drops the
+  release into the private inbox, and the refresher validates and imports it with
+  no network requests. `deploy/illoura_research_refresh.py` and the
+  `illoura-research-refresh` timer (10:15 Sydney) take the shared morning lock and
+  skip the 05:30–09:30 Sydney brief window. They run for at most 45 minutes and
+  are installed disabled. See `deploy/research-refresh-handoff.md` for install
+  and validation steps.
+
 ## Tests and operations
 
 ```text
