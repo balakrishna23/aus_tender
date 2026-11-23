@@ -6,7 +6,7 @@ import io
 import socket
 import time
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlencode
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.robotparser import RobotFileParser
 import zipfile
@@ -63,7 +63,7 @@ class PublisherClient:
         # for host/scheme, then the resulting policy applies to all other URLs.
         return self.robots is None or self.robots.can_fetch(USER_AGENT, url)
 
-    def fetch(self, url, limit=None):
+    def fetch(self, url, limit=None, *, form=None):
         official_url(url, self.origin)
         if not self.allowed(url):
             raise AcquisitionError('robots.txt disallows publisher resource')
@@ -73,7 +73,12 @@ class PublisherClient:
         for attempt in range(self.attempts):
             try:
                 deadline = time.monotonic() + self.timeout
-                request = Request(url, headers={'User-Agent': USER_AGENT})
+                headers = {'User-Agent': USER_AGENT}
+                data = None
+                if form is not None:
+                    data = urlencode(form).encode('utf-8')
+                    headers['Content-Type'] = 'application/x-www-form-urlencoded'
+                request = Request(url, data=data, headers=headers)
                 with self.opener.open(request, timeout=self.timeout) as response:
                     resolved = official_url(response.geturl(), self.origin)
                     if response.status != 200:

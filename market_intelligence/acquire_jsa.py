@@ -12,6 +12,8 @@ from its directory, and observation periods remain the workbook parser's concern
 import argparse
 from datetime import datetime, timezone
 import hashlib
+import html
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
@@ -81,30 +83,73 @@ def discover(body, source_url, dataset):
     return winners[0]
 
 
+class LicenceText(HTMLParser):
+    """Keep list-item boundaries for exception extraction, including inline markup."""
+    def __init__(self, body):
+        super().__init__()
+        self.parts = []
+        self.feed(body.decode('utf-8', errors='replace'))
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+    def handle_starttag(self, tag, attrs):
+        self.parts.append(' ')
+
+    def handle_endtag(self, tag):
+        self.parts.append(';' if tag == 'li' else ' ')
+
+    def text(self):
+        return re.sub(r'\s+', ' ', ''.join(self.parts)).strip()
+
+
 def licence_evidence(client, body, source_url):
-    """Require a CC BY 4.0 link on the dataset or its official copyright page.
-
-    This verifies the publisher's statement, not legal applicability to individual
-    tables. The operator must review scope/exclusions and terms on the server.
-    """
-    def cc_link(page, base):
-        return any(urljoin(base, href).rstrip('/') == LICENCE_URL.rstrip('/')
-                   for href in Anchors(page).links)
-
-    if cc_link(body, source_url):
-        return source_url
+    """Retain one official licence page, accepting only unambiguous CC BY 4.0."""
     pages = set()
     for href in Anchors(body).links:
         url = urljoin(source_url, href)
+        if urlsplit(url).hostname in ('creativecommons.org', 'www.creativecommons.org'):
+            continue
         if re.search(r'copyright|licen[cs]', urlsplit(url).path, re.I):
             official_url(url)
             pages.add(urlsplit(url)._replace(fragment='').geturl())
     if len(pages) != 1:
         raise AcquisitionError('Publisher licence evidence missing or ambiguous; review licence page')
     page, resolved = client.fetch(pages.pop(), limit=2_000_000)
-    if not cc_link(page, resolved):
-        raise AcquisitionError('Publisher licence page does not link to CC BY 4.0; review required')
-    return resolved
+    official_url(resolved)
+    statement = 'Creative Commons Attribution 4.0 International'
+    texts = []
+    for content, base in ((body, source_url), (page, resolved)):
+        visible = html.unescape(re.sub(r'<[^>]*>', ' ', content.decode('utf-8', errors='replace')))
+        visible = re.sub(r'\s+', ' ', visible).strip()
+        texts.append(visible)
+        # Check every licence link, including conflicts alongside a valid deed.
+        for href in Anchors(content).links:
+            link = urlsplit(urljoin(base, href))
+            if link.hostname in ('creativecommons.org', 'www.creativecommons.org'):
+                if unquote(link.path).rstrip('/') not in ('', '/licenses/by/4.0') or link.query:
+                    raise AcquisitionError('Conflicting Creative Commons licence evidence; review required')
+        # Remove the sole accepted wording before rejecting other CC statements.
+        remainder = visible.replace(statement, '')
+        remainder = re.sub(r'Creative Commons BY 4\.0|CC[ -]BY[ -]4\.0', '', remainder, flags=re.I)
+        contexts = [visible[m.start():m.end() + 60] for m in re.finditer(
+            r'Creative Commons|\bCC[ -]BY\b|\bAttribution\b|\blicen[cs]e\b', visible, re.I)]
+        conflict = re.compile(
+            r'\b(?:[123]\.0|2\.5|BY[- ](?:NC|ND|SA)|non[- ]?commercial|'
+            r'no[- ]?derivatives|share[- ]?alike|Zero|Public Domain)\b', re.I)
+        if (re.search(r'(?:Creative Commons|\bCC[ -]BY)\s+(?:Attribution|BY|[0-9])', remainder, re.I)
+                or re.search(r'\bCC0\b', visible, re.I)
+                or any(conflict.search(context) for context in contexts)):
+            raise AcquisitionError('Conflicting Creative Commons licence evidence; review required')
+    deed = any(urljoin(resolved, href).rstrip('/') == LICENCE_URL.rstrip('/')
+               for href in Anchors(page).links)
+    if not deed and statement not in texts[1]:
+        raise AcquisitionError('Publisher licence page does not link to CC BY 4.0 or state its explicit licence; review required')
+    exceptions = re.search(r'exception(?:s)? of:\s*(.*?)(?:\s*Details of|$)',
+                           LicenceText(page).text(), re.I)
+    return dict(body=page, url=resolved, evidence_type='deed_link' if deed else 'explicit_statement',
+                exceptions=[s.strip().rstrip('.') for s in exceptions[1].split(';')
+                            if s.strip()] if exceptions else [])
 
 
 def earlier_hashes(manifests):
@@ -149,11 +194,20 @@ def acquire(output_root, datasets, previous_manifests=(), client=None):
             path = run / (dataset + '.xlsx')
             with path.open('xb') as stream:
                 stream.write(payload)
+            evidence_path = run / (dataset + '_copyright.html')
+            evidence_path.write_bytes(evidence['body'])
             manifest['datasets'].append({'key': dataset, 'source_url': source_url})
             manifest['files'].append(dict(
                 dataset=dataset, status='complete', path=str(path), url=url, resolved_url=resolved,
                 source_url=source_url, page_resolved_url=page_url,
-                licence='CC BY 4.0', licence_url=LICENCE_URL, licence_evidence_url=evidence,
+                licence='CC BY 4.0', licence_url=LICENCE_URL, licence_evidence_url=evidence['url'],
+                evidence_type=evidence['evidence_type'],
+                licence_evidence=[dict(path=str(evidence_path), url=evidence['url'],
+                                      bytes=len(evidence['body']), sha256=hashlib.sha256(evidence['body']).hexdigest(),
+                                      evidence_type=evidence['evidence_type'])],
+                licence_exceptions=evidence['exceptions'],
+                licence_scope_review='Exception scope reviewed by Claude on 20 Nov 2026: workbooks are JSA own data; '
+                                     'not third-party, Coat of Arms, trade mark, image or photograph content.',
                 bytes=len(payload), sha256=digest, retrieved_at=retrieved_at,
                 reference_month=reference, upload_month=upload, page_observed_at=page_observed_at,
                 acquisition_status='unchanged' if (dataset, digest) in previous else 'downloaded'))

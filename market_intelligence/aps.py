@@ -3,7 +3,7 @@
 Three tables are read:
   Table 2   all employees by agency and employment category, for two years (headcount, growth, non-ongoing)
   Table 13  all employees by agency and location (state or territory)
-  Table 88  all employees by agency and job family ('ICT and Digital Solutions' is one family)
+  Table 88  all employees by agency and release-specific job family (2026 changes the model)
 A row starting with '- ' is an agency inside the portfolio of the department row above it; '(NC)' marks an
 agency that no longer exists. '.' means nothing was published and is stored as NULL, never as zero.
 Every table must add up to its own Total row, or the import stops and nothing is written.
@@ -24,13 +24,33 @@ from .ingest import file_hash
 from .parsers import SourceError, name_key
 from .resources import verified_resource
 
-PARSER_REVISION = '1'
+PARSER_REVISION = '2'
 DATASET = 'aps_employment'
 LICENCES = ['Creative Commons Attribution 4.0 International']
 TABLES = {'headcount': 'Table 2', 'location': 'Table 13', 'job_family': 'Table 88'}
 ICT_FAMILY = 'ICT and Digital Solutions'
 NO_DATA = 'No Data'
+COMMON_FAMILIES = {
+    'Accounting and Finance', 'Compliance and Regulation', 'Data and Research',
+    'Engineering and Technical', 'Human Resources', 'Legal and Parliamentary', 'Policy',
+    'Portfolio, Program and Project Management', 'Service Delivery', 'Trades and Labour',
+}
+MODEL_FAMILIES = {
+    'pre_2026': COMMON_FAMILIES | {'Administration', 'Communications and Marketing',
+        'ICT and Digital Solutions', 'Information and Knowledge Management', 'Intelligence',
+        'Monitoring and Audit', 'Science and Health', 'Senior Executive'},
+    '2026_onwards': COMMON_FAMILIES | {'Business and Organisational Management',
+        'Communications and Engagement', 'Health', 'ICT and Digital',
+        'Intelligence and Information Management', 'Science'},
+}
 OUR_TAGS = ('ict_labour', 'ict_services', 'recruitment', 'labour_hire_general', 'healthcare_staffing', 'nursing_agency')
+
+
+def job_family_model(year):
+    """Closed publisher labels; the 2026 model is not comparable to 2025."""
+    return dict(ict_family_label=ICT_FAMILY if year <= 2025 else 'ICT and Digital',
+                job_family_model='pre_2026' if year <= 2025 else '2026_onwards',
+                ict_family_comparison_like_for_like=year != 2026)
 
 
 def verified_workbook(manifest):
@@ -117,6 +137,7 @@ def parse_aps(path):
         if not years or int(years[2]) != int(years[1]) + 1:
             raise SourceError('Table 2 years not found in its title')
         prev, year = years[1], years[2]
+        model = job_family_model(int(year))
         expected = [('Ongoing', prev), ('Ongoing', year), ('Non-ongoing', prev), ('Non-ongoing', year), ('Total', prev), ('Total', year)]
         if labels != expected:
             raise SourceError('Table 2 columns changed')
@@ -125,8 +146,14 @@ def parse_aps(path):
             t, lab, rows, _ = _table(workbook, key)
             if lab[-1] != ('Total', '') or year not in t:
                 raise SourceError(TABLES[key] + ' layout or year changed')
-            if key == 'job_family' and ICT_FAMILY not in [l[1] for l in lab]:
-                raise SourceError('Table 88 no longer has the ' + ICT_FAMILY + ' job family')
+            if key == 'job_family':
+                family_labels = [l[1] for l in lab[:-1]]
+                if (model['ict_family_label'] not in family_labels
+                        or len(set(s.casefold() for s in family_labels)) != len(family_labels)
+                        or any(group != 'Job Family' or not label for group, label in lab[:-1])
+                        or any(label not in MODEL_FAMILIES[model['job_family_model']]
+                               and label.casefold() != NO_DATA.casefold() for label in family_labels)):
+                    raise SourceError('Table 88 job family layout changed; expected ' + model['ict_family_label'])
             extra[key] = {agency: (dict(zip([l[1] for l in lab[:-1]], values[:-1])), values[-1]) for agency, values in rows}
     finally:
         workbook.close()
@@ -160,7 +187,7 @@ def parse_aps(path):
                             is_department_row=not is_sub and not ceased, ceased=ceased,
                             **dict(zip(['ongoing_prev', 'ongoing', 'non_ongoing_prev', 'non_ongoing', 'total_prev', 'total'], values)),
                             by_location=location, by_job_family=families, issues=issues))
-    metrics.update(total_prev=total[4], total=total[5])
+    metrics.update(total_prev=total[4], total=total[5], **model)
     return records, dict(metrics), date(int(year), 6, 30), date(int(prev), 6, 30)
 
 
@@ -244,11 +271,12 @@ def build_aps_report(engine, as_of):
             GROUP BY 1'''), {'d12': d12, 'asof': as_of, 'tags': list(OUR_TAGS)}).mappings()}
     if not agencies:
         raise ValueError('No APS snapshot imported')
+    model = job_family_model(agencies[0]['as_at'].year)
     out = []
     for a in agencies:
         fam = a['by_job_family'] or {}
-        known = sum(v or 0 for k, v in fam.items() if k != NO_DATA)
-        ict = fam.get(ICT_FAMILY)
+        known = sum(v or 0 for k, v in fam.items() if k.casefold() != NO_DATA.casefold())
+        ict = fam.get(model['ict_family_label'])
         s = spend.get(a['organisation_id']) if a['organisation_id'] else None
         value = float(s['value']) if s and s['value'] is not None else None
         out.append(dict(
@@ -256,7 +284,7 @@ def build_aps_report(engine, as_of):
             match_basis=a['match_basis'], headcount=a['total'], headcount_prev=a['total_prev'],
             growth=round(a['total'] / a['total_prev'] - 1, 4) if a['total'] is not None and a['total_prev'] else None,
             non_ongoing_share=round(a['non_ongoing'] / a['total'], 4) if a['total'] and a['non_ongoing'] is not None else None,
-            ict_digital=ict, job_family_coverage=round(known / a['total'], 4) if a['total'] else None,
+            ict_digital=ict, **model, job_family_coverage=round(known / a['total'], 4) if a['total'] else None,
             ict_share_of_known=round(ict / known, 4) if ict is not None and known else None,
             largest_location=max(((k, v) for k, v in (a['by_location'] or {}).items() if v), key=lambda kv: kv[1], default=(None, None))[0],
             our_category_contracts_12m=s['contracts'] if s else None, our_category_value_12m=value,
@@ -264,7 +292,7 @@ def build_aps_report(engine, as_of):
             identity_reviewed=bool(s and s['reviewed']), issues=a['issues']))
     out.sort(key=lambda r: -(r['headcount'] or 0))
     as_at = agencies[0]['as_at']
-    return dict(as_of=as_of, status='draft_for_review', headcount_as_at=as_at, comparison_as_at=agencies[0]['prev_as_at'],
+    return dict(as_of=as_of, status='draft_for_review', headcount_as_at=as_at, comparison_as_at=agencies[0]['prev_as_at'], **model,
                 provenance={k: snapshot[k] for k in ('id','sha256','parser_revision','source_url','download_url','licence','licence_url','retrieved_at')},
                 headcount_age_days=(as_of-as_at).days,
                 agencies=out,
@@ -274,7 +302,9 @@ def build_aps_report(engine, as_of):
                 limitations=['Headcounts are APS employees on ' + str(as_at) + ' (APSC); contractors and labour hire are not counted.',
                              "Job family is not reported for every employee ('No Data'); ICT shares use the employees with a job family.",
                              'Spend joins APS agencies to AusTender buyers through machine-proposed identities until people approve them.',
-                             'A department row covers the department only; agencies in its portfolio are listed separately.'])
+                             'A department row covers the department only; agencies in its portfolio are listed separately.',
+                             'ICT family label: ' + model['ict_family_label'] + '; job_family_model: ' + model['job_family_model'] + '.',
+                             'ICT-family comparisons across the 2025 to 2026 model change are not like-for-like; no ICT change is computed.'])
 
 
 def write_aps_report(report, directory):
@@ -283,7 +313,7 @@ def write_aps_report(report, directory):
     (directory/'aps_agencies.json').write_text(json.dumps(report, default=str, indent=2), encoding='utf-8')
     fields = ['agency', 'portfolio', 'headcount', 'headcount_prev', 'growth', 'non_ongoing_share', 'ict_digital', 'ict_share_of_known',
               'job_family_coverage', 'largest_location', 'our_category_contracts_12m', 'our_category_value_12m', 'our_category_value_per_employee',
-              'match_basis']
+              'match_basis', 'ict_family_label', 'job_family_model', 'ict_family_comparison_like_for_like']
     with open(directory/'aps_agencies.csv', 'w', newline='', encoding='utf-8') as stream:
         w = csv.DictWriter(stream, fieldnames=fields, extrasaction='ignore')
         w.writeheader()

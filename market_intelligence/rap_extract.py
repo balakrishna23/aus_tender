@@ -52,11 +52,15 @@ def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True).encode()).hexdigest()
 
 
-def reviewer_id(value):
+def reviewer_id(value, scope='rap_extract'):
     # An accountable reviewer account UUID; resolve identity in the access directory, never store a person's name.
     try:account=str(uuid.UUID(value))
     except (ValueError,TypeError,AttributeError):raise SourceError('Reviewer account UUID required') from None
+    directory={v.strip() for v in os.environ.get('ILLOURA_RAP_DIRECTORY_REVIEWER_IDS','').split(',') if v.strip()}
     allowed={v.strip() for v in os.environ.get('ILLOURA_RAP_REVIEWER_IDS','').split(',') if v.strip()}
+    if scope == 'rap_directory':allowed=directory
+    elif scope != 'rap_extract' or account in directory:
+        raise SourceError('Reviewer account is not authorised for PDF review')
     if account not in allowed:raise SourceError('Reviewer account is not registered for RAP review')
     return account
 
@@ -69,7 +73,7 @@ def public_url(value):
 
 
 def privacy_check(value):
-    # Defence in depth only. Human clearance is mandatory: patterns cannot identify all personal names/addresses.
+    # Defence in depth only. PDF text needs human clearance; directory automation adds identity checks.
     if not isinstance(value,str) or EMAIL_PATTERN.search(value) or PHONE.search(value) or re.search(
         r'https?://|www\.|\bABN\b|(?<!\d)(?:\d[ -]*){11}(?!\d)|\b(?:PO Box|P\.?O\.? Box)\b|'
         r'\b\d+\s+[^\n,]{1,60}\b(?:Street|St|Road|Rd|Avenue|Ave|Lane|Drive|Crescent)\b',value,re.I):

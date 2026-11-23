@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import MagicMock
 
 try:
     import openpyxl
@@ -15,7 +16,7 @@ except ImportError:  # the market requirements pin it; the plain collector envir
 ABN = '51824753556'
 
 
-def workbook(path, total_2025=165):
+def workbook(path, total_2025=165, year=2025):
     """A small workbook shaped like the APSC release tables (titles, two header rows, '.', (NC), Total, Source)."""
     wb = openpyxl.Workbook()
     wb.active.title = 'Table of Contents'
@@ -46,6 +47,13 @@ def workbook(path, total_2025=165):
     t88.append(['Finance', 30, 50, 40, 120])
     t88.append(['- Example Federal Agency', 10, '.', 35, 45])
     t88.append(['Total', 40, 50, 75, 165])
+    if year != 2025:
+        for sheet in (t2, t13, t88):
+            sheet['A1'] = sheet['A1'].value.replace('2025', str(year)).replace('2024', str(year - 1))
+        for column in range(2, 8):
+            t2.cell(4, column, year - 1 if column % 2 == 0 else year)
+        t88['B4'] = 'ICT and Digital'
+        t88['D4'] = 'No data'
     wb.save(path)
     return path
 
@@ -80,12 +88,95 @@ class ApsParserTests(unittest.TestCase):
         self.assertEqual(agency['by_location'], {'ACT': 45, 'NSW': None})
         self.assertEqual((ceased['agency'], ceased['ceased'], ceased['portfolio'], ceased['total']), ('Old Body', True, None, None))
         self.assertEqual((metrics['agencies'], metrics['ceased'], metrics['issues'], metrics['total']), (3, 1, 0, 165))
+        self.assertEqual((metrics['ict_family_label'], metrics['job_family_model']),
+                         ('ICT and Digital Solutions', 'pre_2026'))
+
+    def test_2026_model_and_closed_ict_label_mapping(self):
+        from market_intelligence.aps import parse_aps
+        from market_intelligence.parsers import SourceError
+        path = workbook(self.root/'aps.xlsx', year=2026)
+        rows, metrics, as_at, prev = parse_aps(path)
+        self.assertEqual((as_at, prev), (date(2026, 6, 30), date(2025, 6, 30)))
+        self.assertEqual(rows[0]['by_job_family']['ICT and Digital'], 30)
+        self.assertEqual(metrics['job_family_model'], '2026_onwards')
+        self.assertFalse(metrics['ict_family_comparison_like_for_like'])
+        for year, wrong in [(2025, 'ICT and Digital'), (2026, 'ICT and Digital Solutions'),
+                            (2026, 'ICT & Digital')]:
+            workbook(path, year=year)
+            wb = openpyxl.load_workbook(path)
+            wb['Table 88']['B4'] = wrong
+            wb.save(path)
+            wb.close()
+            with self.subTest(year=year, wrong=wrong), self.assertRaises(SourceError):
+                parse_aps(path)
 
     def test_tables_must_add_up(self):
         from market_intelligence.aps import parse_aps
         from market_intelligence.parsers import SourceError
         with self.assertRaisesRegex(SourceError, 'does not add up'):
             parse_aps(workbook(self.root/'aps.xlsx', total_2025=166))
+
+    def test_reports_use_release_label_and_exclude_no_data_in_both_models(self):
+        from market_intelligence.aps import parse_aps, build_aps_report, write_aps_report
+        for year in (2025, 2026):
+            with self.subTest(year=year):
+                rows, metrics, as_at, prev = parse_aps(workbook(self.root/'aps.xlsx', year=year))
+                agencies = [dict(r, as_at=as_at, prev_as_at=prev, organisation_id=None, match_basis='unmatched')
+                            for r in rows if not r['ceased']]
+                engine = MagicMock()
+                conn = engine.connect.return_value.execution_options.return_value.__enter__.return_value
+                agency_result, snapshot_result, spend_result = MagicMock(), MagicMock(), MagicMock()
+                agency_result.mappings.return_value = agencies
+                snapshot_result.mappings.return_value.first.return_value = dict.fromkeys(
+                    ('id', 'sha256', 'parser_revision', 'source_url', 'download_url', 'licence', 'licence_url', 'retrieved_at'))
+                spend_result.mappings.return_value = []
+                conn.execute.side_effect = [agency_result, snapshot_result, spend_result]
+                report = build_aps_report(engine, date(2026, 11, 20))
+                self.assertEqual(report['ict_family_label'], metrics['ict_family_label'])
+                self.assertEqual(report['job_family_model'], metrics['job_family_model'])
+                self.assertEqual(report['ict_family_comparison_like_for_like'], year != 2026)
+                agency = report['agencies'][1]
+                self.assertEqual((agency['ict_digital'], agency['ict_share_of_known'], agency['job_family_coverage']),
+                                 (10, 1.0, round(10 / 45, 4)))
+                write_aps_report(report, self.root/'report')
+                self.assertIn(metrics['job_family_model'], (self.root/'report/aps_agencies.html').read_text())
+                self.assertIn(metrics['ict_family_label'], (self.root/'report/aps_agencies.csv').read_text())
+
+    def test_full_models_and_unexpected_family_layouts(self):
+        from market_intelligence.aps import job_family_model, parse_aps
+        from market_intelligence.parsers import SourceError
+        family_labels = {
+            2025: 'Accounting and Finance;Administration;Communications and Marketing;Compliance and Regulation;'
+                  'Data and Research;Engineering and Technical;Human Resources;ICT and Digital Solutions;'
+                  'Information and Knowledge Management;Intelligence;Legal and Parliamentary;Monitoring and Audit;'
+                  'Policy;Portfolio, Program and Project Management;Science and Health;Senior Executive;'
+                  'Service Delivery;Trades and Labour;No Data',
+            2026: 'Accounting and Finance;Business and Organisational Management;Communications and Engagement;'
+                  'Compliance and Regulation;Data and Research;Engineering and Technical;Health;Human Resources;'
+                  'ICT and Digital;Intelligence and Information Management;Legal and Parliamentary;Policy;'
+                  'Portfolio, Program and Project Management;Science;Service Delivery;Trades and Labour;No data',
+        }
+        for year in (2025, 2026):
+            path = workbook(self.root/'aps.xlsx', year=year)
+            model = job_family_model(year)
+            families = family_labels[year].split(';')
+            wb = openpyxl.load_workbook(path)
+            sheet = wb['Table 88']
+            sheet.delete_rows(3, sheet.max_row)
+            sheet.append(['Agency', 'Job Family'] + [None] * (len(families) - 1) + ['Total'])
+            sheet.append([None] + families + [None])
+            for agency, ict, policy, unknown in [('Finance', 30, 50, 40), ('- Example Federal Agency', 10, 0, 35), ('Total', 40, 50, 75)]:
+                counts = [ict if label == model['ict_family_label'] else policy if label == 'Policy'
+                          else unknown if label.lower() == 'no data' else 0 for label in families]
+                sheet.append([agency] + counts + [sum(counts)])
+            wb.save(path)
+            with self.subTest(year=year):
+                self.assertEqual(parse_aps(path)[1]['total'], 165)
+            sheet['B4'] = 'Unexpected family'
+            wb.save(path)
+            wb.close()
+            with self.subTest(year=year), self.assertRaises(SourceError):
+                parse_aps(path)
 
     def test_manifest_needs_approved_licence_and_matching_hash(self):
         from market_intelligence.aps import verified_workbook
