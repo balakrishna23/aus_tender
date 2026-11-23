@@ -81,6 +81,8 @@ class PublisherClient:
                 request = Request(url, data=data, headers=headers)
                 with self.opener.open(request, timeout=self.timeout) as response:
                     resolved = official_url(response.geturl(), self.origin)
+                    if response.status == 202 or response.headers.get('x-amzn-waf-action') is not None:
+                        raise AcquisitionError('Publisher WAF challenge; review required')
                     if response.status != 200:
                         raise AcquisitionError('Unexpected publisher HTTP status')
                     length = response.headers.get('Content-Length')
@@ -101,7 +103,10 @@ class PublisherClient:
                         raise AcquisitionError('Publisher resource length mismatch')
                     return b''.join(chunks), resolved
             except HTTPError as exc:
+                challenge = exc.code == 202 or (exc.headers and exc.headers.get('x-amzn-waf-action') is not None)
                 exc.close()
+                if challenge:
+                    raise AcquisitionError('Publisher WAF challenge; review required') from None
                 if exc.code not in (408, 429, 500, 502, 503, 504):
                     raise AcquisitionError('Publisher HTTP error ' + str(exc.code)) from None
                 # Do not retry rate limiting; leave scheduling to the operator.

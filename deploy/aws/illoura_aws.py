@@ -1020,6 +1020,38 @@ def schedule(remote, action, *, yes=False):
             "stopped_running_brief": stopped, "list_timers": listing.strip()}
 
 
+def research_refresh(remote, action, *, yes=False, repo=REPO):
+    """Install after staging tests; timer enablement is always a separate action."""
+    timer = 'illoura-research-refresh.timer'
+    if action == 'status':
+        _, enabled, _ = remote.run(['systemctl', 'is-enabled', timer])
+        _, listing, _ = remote.run(['systemctl', 'list-timers', timer, '--no-pager'])
+        return dict(timer=timer, enabled=enabled.strip(), list_timers=listing.strip())
+    if action not in ('install', 'enable', 'disable'):
+        raise ValueError('Unknown research refresh action')
+    if not yes:
+        raise OperationError('Research refresh changes require --yes')
+    if action in ('enable', 'disable'):
+        must(remote, ['sudo', 'systemctl', action, '--now', timer], action + ' research timer')
+        return research_refresh(remote, 'status')
+    files = { 'deploy/' + n: lf_bytes(repo / 'deploy' / n) for n in
+              ('illoura_research_refresh.py', 'illoura-research-refresh.service', 'illoura-research-refresh.timer') }
+    files['tests/test_cloud_research_refresh.py'] = lf_bytes(repo / 'tests/test_cloud_research_refresh.py')
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, files)
+        run_tests(remote, [OPS_PYTHON, '-m', 'unittest', 'discover', '-s', stage + '/tests',
+                          '-p', 'test_cloud_research_refresh.py'], 'staged research wrapper tests')
+        for name in ('illoura_research_refresh.py', 'illoura-research-refresh.service', 'illoura-research-refresh.timer'):
+            destination = (OPS_DIR + '/' + name) if name.endswith('.py') else '/etc/systemd/system/' + name
+            must(remote, ['sudo', 'install', '-o', 'root', '-g', 'root', '-m', '0644',
+                          stage + '/deploy/' + name, destination], 'install ' + name)
+        must(remote, ['sudo', 'systemctl', 'daemon-reload'], 'reload research units')
+    finally:
+        remove_stage(remote, stage)
+    return dict(installed=True, timer_changed=False)
+
+
 # --------------------------------------------------------------------------- OS upkeep
 
 # deploy/system/<name> -> installed path. See harden_os.
@@ -1315,6 +1347,9 @@ def build_parser():
     timer = sub.add_parser("schedule", help="Enable or disable the 08:15 Sydney daily brief")
     timer.add_argument("timer_action", choices=["enable", "disable"])
     timer.add_argument("--yes", action="store_true")
+    research_timer = sub.add_parser('research-refresh', help='Install or manage the independent research timer')
+    research_timer.add_argument('research_action', choices=['install', 'enable', 'disable', 'status'])
+    research_timer.add_argument('--yes', action='store_true')
     sub.add_parser(
         "harden-os",
         help="Keep Ubuntu updates and service restarts out of the 06:15-08:15 Sydney brief window",
@@ -1386,6 +1421,8 @@ def main(argv=None, remote_factory=SshRemote):
             result = daily_brief_dry_run(remote)
         elif args.action == "schedule":
             result = schedule(remote, args.timer_action, yes=args.yes)
+        elif args.action == 'research-refresh':
+            result = research_refresh(remote, args.research_action, yes=args.yes)
         elif args.action == "harden-os":
             result = harden_os(remote, yes=args.yes)
         elif args.action == "os-update":

@@ -37,6 +37,12 @@ def main(argv=None):
     commands=parser.add_subparsers(dest='command',required=True)
     commands.add_parser('migrate')
     commands.add_parser('status')
+    commands.add_parser('freshness-report', help='Informational publisher checks and imported editions')
+    research_refresh=commands.add_parser('research-refresh', help='Refresh publishers and private inboxes; never sends')
+    research_refresh.add_argument('--data-root',required=True)
+    research_refresh.add_argument('--source',action='append')
+    research_refresh.add_argument('--force',action='store_true')
+    commands.add_parser('inbox-status',help='Private manual inbox file counts').add_argument('--data-root',required=True)
     quality=commands.add_parser('quality')
     quality.add_argument('--as-of',required=True,type=date.fromisoformat)
     queue=commands.add_parser('review-queue')
@@ -162,6 +168,10 @@ def main(argv=None):
     aged.add_argument('--output',required=True)
     args=parser.parse_args(argv)
     try:
+        if args.command=='inbox-status':
+            from .research_refresh import inbox_status
+            print(json.dumps(inbox_status(args.data_root),indent=2))
+            return 0
         if args.command=='acquire-health':
             from .acquire_health import main as acquire_health
             return acquire_health(['--output-root',args.output_root])
@@ -173,7 +183,13 @@ def main(argv=None):
             print(json.dumps(templates(args.output),indent=2))
             return 0
         db=engine()
-        if args.command=='review-rap':
+        if args.command=='freshness-report':
+            from .freshness import report
+            result=report(db)
+        elif args.command=='research-refresh':
+            from .research_refresh import refresh
+            result=refresh(db,args.data_root,args.source,force=args.force)
+        elif args.command=='review-rap':
             from .rap_review import review as review_directory
             result=review_directory(db,args.collection,args.output,args.by)
         elif args.command=='verify-rap':
@@ -181,7 +197,7 @@ def main(argv=None):
             result=verify(db,args.collection,args.json)
         elif args.command=='migrate':
             migrate(db)
-            result={'schema':'022_aged_care','status':'ready'}
+            result={'schema':'023_research_freshness','status':'ready'}
         elif args.command=='import-aged-care':
             from .aged_care import import_aged_care
             result=import_aged_care(db,args.manifest)

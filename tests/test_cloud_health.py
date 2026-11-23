@@ -72,6 +72,37 @@ class CloudHealth(unittest.TestCase):
         self.assertEqual(result["checks"]["coordinator"]["status"], "attention")
         self.assertEqual(result["status"], "attention")
 
+    def test_research_freshness_never_changes_overall_health_or_sends(self):
+        with patch.object(health, 'research_freshness', return_value={'informational_only': True, 'sources': {}}):
+            before = self.check()
+        for status in ('failed', 'blocked', 'check_overdue', 'manual_refresh_needed', 'new_edition_pending'):
+            summary = {'informational_only': True, 'sources': {'jsa_ivi': status}}
+            with patch.object(health, 'research_freshness', return_value=summary):
+                after = self.check()
+            self.assertEqual(after['status'], before['status'])
+            self.assertEqual(after['checks'], before['checks'])
+            self.assertFalse(after['email_sent'])
+            self.assertEqual(after['research_freshness'], summary)
+
+    def test_research_summary_rejects_large_malformed_or_private_values(self):
+        path = self.root / 'research.json'
+        self.write(path, {'freshness': {'private-source': 'failed', 'jsa_ivi': 'private-value', 'abn': 'manual_refresh_needed'}})
+        summary = health.research_freshness(path)
+        self.assertEqual(summary['sources'], {'abn': 'manual_refresh_needed'})
+        self.assertNotIn('private-', json.dumps(summary))
+        for body in ('invalid', 'x' * 16_385, '[]', '{"freshness":[]}'):
+            path.write_text(body)
+            self.assertEqual(health.research_freshness(path)['availability'], 'unavailable')
+
+    def test_old_research_summary_exposes_check_age_informationally(self):
+        path = self.root / 'research.json'
+        self.write(path, {'checked_at': (datetime.now(timezone.utc) - timedelta(days=3)).isoformat(),
+                          'freshness': {'jsa_ivi': 'latest_available'}})
+        summary = health.research_freshness(path)
+        self.assertEqual(summary['availability'], 'check_overdue')
+        self.assertGreaterEqual(summary['summary_age_hours'], 72)
+        self.assertTrue(summary['informational_only'])
+
     def test_source_diagnostics_explain_failure_without_private_log_data(self):
         self.write(self.run / 'source_refresh.json', {'results': [
             {'spider': 'buy_ict', 'status': 'FAIL', 'errors': 1,

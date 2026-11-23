@@ -56,6 +56,35 @@ CERT = Path("/etc/letsencrypt/live/illoura-api/cert.pem")
 CERT_WARN_SECONDS = 24 * 3600
 
 
+def research_freshness(path=Path('/var/lib/illoura-research-refresh/status.json')):
+    """Bounded informational data; deliberately outside the failing checks map."""
+    allowed_sources = {'abn', 'asic_companies', 'asic_business_names', 'acnc', 'agor', 'government_directory',
+        'oric', 'jsa_ivi', 'jsa_projections', 'jsa_shortages', 'jsa_reos', 'jsa_tnv', 'aps_employment',
+        'aged_care_star_ratings', 'rap_directory', 'wa_contracts', 'procurement', 'tender_feed'}
+    statuses = {'latest_available', 'new_edition_pending', 'check_overdue', 'blocked', 'failed', 'manual_refresh_needed'}
+    try:
+        if path.stat().st_size > 16_384:
+            raise ValueError('Summary exceeds bounds')
+        value = json.loads(path.read_text(encoding='utf-8'))
+        sources = value.get('freshness', {})
+        if not isinstance(sources, dict):
+            raise ValueError('Invalid summary')
+        result = dict(informational_only=True, sources={k: v for k, v in sources.items()
+                      if k in allowed_sources and isinstance(v, str) and v in statuses})
+        if value.get('checked_at'):
+            checked = datetime.fromisoformat(value['checked_at'])
+            if checked.tzinfo is None:
+                raise ValueError('Summary timestamp must include timezone')
+            age = (datetime.now(timezone.utc) - checked).total_seconds()
+            if age < -300:
+                raise ValueError('Summary timestamp is in the future')
+            result.update(checked_at=checked.isoformat(), summary_age_hours=round(max(0, age) / 3600, 1),
+                          availability='check_overdue' if age > 48 * 3600 else 'available')
+        return result
+    except (OSError, ValueError, TypeError, AttributeError):
+        return dict(informational_only=True, sources={}, availability='unavailable')
+
+
 def cert_not_after(path):
     """Expiry of a PEM certificate, read with openssl (no extra Python packages)."""
     if not Path(path).exists():
@@ -356,6 +385,7 @@ def check(
         "status": "ok" if ok else "attention",
         "checked_at_utc": utc(),
         "checks": checks,
+        "research_freshness": research_freshness(),
         "email_sent": False,
         "monitoring_note": "Poll independently of this instance and Gmail to detect silence. A health file alone is not an external alert.",
     }
