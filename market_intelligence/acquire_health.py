@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, parse_qs
 import uuid
 
 from . import acquire_common as common
@@ -40,9 +40,9 @@ def discover_publication(body, base):
         match = re.fullmatch('/resources/publications/(' + TITLE + ')', parts.path, re.I)
         if match:
             common.official_url(url, ORIGIN)
-            if parts.query:
+            if parts.query and parse_qs(parts.query) != {'language': ['en']}:
                 raise AcquisitionError('Ambiguous publication URL')
-            candidates.add((reference_from_title(match[1]), parts._replace(fragment='').geturl()))
+            candidates.add((reference_from_title(match[1]), parts._replace(query='', fragment='').geturl()))
     if not candidates:
         raise AcquisitionError('No quarterly publication links')
     newest = max(p for p, _ in candidates)
@@ -50,6 +50,41 @@ def discover_publication(body, base):
     if len(winners) != 1:
         raise AcquisitionError('Ambiguous newest publication')
     return winners[0], newest
+
+
+def discover_latest(client, body, base, max_pages=20):
+    """Traverse only collection pagination; never silently truncate discovery."""
+    pending, seen, candidates, evidence = [(base, body)], set(), [], []
+    while pending:
+        url, content = pending.pop(0)
+        if url in seen:
+            continue
+        if len(seen) >= max_pages:
+            raise AcquisitionError('Health pagination exceeds bounded discovery')
+        seen.add(url)
+        if content is None:
+            content, resolved = client.fetch(url, limit=2_000_000)
+            common.official_url(resolved, ORIGIN)
+            if urlsplit(resolved).path != urlsplit(COLLECTION).path:
+                raise AcquisitionError('Collection redirect changed product')
+        evidence.append((url, content))
+        if any(re.search(TITLE, href, re.I) for href in Anchors(content).links):
+            candidates.append(discover_publication(content, url))
+        for href in Anchors(content).links:
+            link = urljoin(url, href)
+            parts = urlsplit(link)
+            if parts.path == urlsplit(COLLECTION).path and 'page' in parse_qs(parts.query):
+                common.official_url(link, ORIGIN)
+                query = parse_qs(parts.query)
+                if set(query) - {'page', 'language'} or not re.fullmatch(r'\d{1,3}', query['page'][0]):
+                    raise AcquisitionError('Unexpected Health pagination')
+                link = parts._replace(fragment='').geturl()
+                if link not in seen and all(p[0] != link for p in pending):
+                    pending.append((link, None))
+    if not candidates:
+        raise AcquisitionError('No quarterly publication links')
+    publication, reference = max(candidates, key=lambda item: item[1])
+    return publication, reference, evidence
 
 
 def discover_workbook(body, base, reference):
@@ -84,7 +119,14 @@ def acquire(output_root, client=None):
         client.load_robots()
         collection, collection_url = client.fetch(COLLECTION, limit=2_000_000)
         common.official_url(collection_url, ORIGIN)
-        publication, reference = discover_publication(collection, collection_url)
+        publication, reference, pages = discover_latest(client, collection, collection_url)
+        # The existing importer replays one retained collection page. Give it
+        # the actual pagination page containing the globally newest publication.
+        for candidate_url, candidate_body in pages:
+            if any(re.search(TITLE, href, re.I) for href in Anchors(candidate_body).links):
+                if discover_publication(candidate_body, candidate_url) == (publication, reference):
+                    collection, collection_url = candidate_body, candidate_url
+                    break
         page, page_url = client.fetch(publication, limit=2_000_000)
         common.official_url(page_url, ORIGIN)
         if urlsplit(page_url).path != urlsplit(publication).path:
@@ -110,6 +152,8 @@ def acquire(output_root, client=None):
                     publication_evidence=retain('publication.html', page, page_url),
                     collection_evidence=retain('collection.html', collection, collection_url))
         manifest.update(status='complete', files=[item])
+        manifest['pagination_evidence'] = [retain('collection-page-' + str(i) + '.html', body, url)
+                                           for i, (url, body) in enumerate(pages)]
     except Exception:
         manifest['error'] = 'acquisition_failed'
         raise

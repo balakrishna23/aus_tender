@@ -1,0 +1,11 @@
+[Unit]
+Description=Illoura daily publisher check after the Sydney brief
+
+[Timer]
+OnCalendar=*-*-* 10:15:00 Australia/Sydney
+RandomizedDelaySec=600
+Persistent=false
+Unit=illoura-research-refresh.service
+
+[Install]
+WantedBy=timers.target

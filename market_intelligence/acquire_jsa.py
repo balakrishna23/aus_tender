@@ -1,4 +1,4 @@
-"""Server-side, direct HTTP acquisition of official REOS and TNV workbooks.
+"""Server-side, direct HTTP acquisition of official JSA demand workbooks.
 
 Example (run on the server, after reviewing publisher terms)::
 
@@ -26,6 +26,12 @@ ORIGIN = 'https://www.jobsandskills.gov.au'
 USER_AGENT = 'OpenData-Acquisition/1.0'
 LICENCE_URL = 'https://creativecommons.org/licenses/by/4.0/'
 DATASETS = {
+    'jsa_ivi': ('/data/internet-vacancy-index',
+                r'internet_vacancies_anzsco4_occupations_states_and_territories_-_({month})_(\d{{4}})\.xlsx'),
+    'jsa_projections': ('/data/employment-projections',
+                        r'employment_projections_-_({month})_(\d{{4}})_to_may_\d{{4}}\.xlsx'),
+    'jsa_shortages': ('/data/occupation-shortage',
+                     r'(\d{{4}})_unit_group_shortage_list_-_4_digit_anzsco\.xlsx'),
     'jsa_reos': ('/data/recruitment-experiences-and-outlook-survey',
                  r'recruitment_insights_report_-_({month})_(\d{{4}})(?:_data_file)?\.xlsx'),
     'jsa_tnv': ('/data/total-new-vacancies',
@@ -70,7 +76,10 @@ def discover(body, source_url, dataset):
         if parts.query:
             raise AcquisitionError('Ambiguous workbook URL with query')
         url = parts._replace(fragment='').geturl()
-        reference = f'{int(filename[2]):04d}-{MONTHS.index(filename[1].lower()) + 1:02d}'
+        if dataset == 'jsa_shortages':
+            reference = f'{int(filename[1]):04d}-01'
+        else:
+            reference = f'{int(filename[2]):04d}-{MONTHS.index(filename[1].lower()) + 1:02d}'
         if reference.startswith('0000'):
             raise AcquisitionError('Invalid reference month')
         candidates[url] = (reference, match[1])
@@ -171,7 +180,7 @@ def earlier_hashes(manifests):
 def acquire(output_root, datasets, previous_manifests=(), client=None):
     datasets = list(dict.fromkeys(datasets))
     if not datasets or any(d not in DATASETS for d in datasets):
-        raise ValueError('Choose jsa_reos and/or jsa_tnv')
+        raise ValueError('Choose registered JSA workbook contracts')
     previous = earlier_hashes(previous_manifests)
     root = Path(output_root).resolve()
     run = root / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '_' + uuid.uuid4().hex)
@@ -188,10 +197,13 @@ def acquire(output_root, datasets, previous_manifests=(), client=None):
             evidence = licence_evidence(client, body, page_url)
             payload, resolved = client.fetch(url)
             official_url(resolved)
+            if discover(('<a href="' + resolved + '">Resource</a>').encode(), page_url, dataset)[1] != reference:
+                raise AcquisitionError('Redirect changed workbook edition or parser contract')
             check_workbook(payload)
             retrieved_at = observed_now()
             digest = hashlib.sha256(payload).hexdigest()
-            path = run / (dataset + '.xlsx')
+            # Preserve the filename: IVI and shortage importers select exact contracts.
+            path = run / unquote(urlsplit(url).path).rsplit('/', 1)[-1]
             with path.open('xb') as stream:
                 stream.write(payload)
             evidence_path = run / (dataset + '_copyright.html')

@@ -165,8 +165,24 @@ def earlier_hashes(manifests):
     return hashes
 
 
+def latest_release(body, base):
+    candidates = set()
+    for href in Anchors(body).links:
+        url = urljoin(base, href)
+        parts = urlsplit(url)
+        match = re.fullmatch(r'/employment-data/aps-employment-data-30-june-(\d{4})/?', parts.path)
+        if match:
+            official_url(url)
+            if parts.query:
+                raise AcquisitionError('Ambiguous APS release URL')
+            candidates.add(int(match[1]))
+    if not candidates:
+        raise AcquisitionError('No June APS releases discovered')
+    return max(candidates)
+
+
 def acquire(output_root, year=2026, previous_manifests=(), client=None):
-    if isinstance(year, bool) or not isinstance(year, int) or not 2000 <= year <= 9999:
+    if year is not None and (isinstance(year, bool) or not isinstance(year, int) or not 2000 <= year <= 9999):
         raise ValueError('Choose a four-digit APS release year from 2000')
     previous = earlier_hashes(previous_manifests)
     run = Path(output_root).resolve() / (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '_' + uuid.uuid4().hex)
@@ -175,6 +191,22 @@ def acquire(output_root, year=2026, previous_manifests=(), client=None):
     client = client or PublisherClient()
     try:
         client.load_robots()
+        if year is None:
+            listing, listing_url = client.fetch(ORIGIN + '/employment-data', limit=2_000_000)
+            official_url(listing_url)
+            year = latest_release(listing, listing_url)
+            listing_path = run / 'employment-data.html'
+            listing_path.write_bytes(listing)
+            manifest['release_listing'] = dict(path=str(listing_path), url=listing_url, bytes=len(listing),
+                sha256=hashlib.sha256(listing).hexdigest())
+            december = []
+            for href in Anchors(listing).links:
+                link = urljoin(listing_url, href)
+                match = re.fullmatch(r'/employment-data/aps-employment-data-31-december-(\d{4})/?', urlsplit(link).path)
+                if match:
+                    official_url(link)
+                    december.append(int(match[1]))
+            manifest['monitored_december_release'] = f'{max(december):04d}-12-31' if december else None
         source = ORIGIN + f'/employment-data/aps-employment-data-30-june-{year}'
         body, page_url = client.fetch(source, limit=2_000_000)
         official_url(page_url)

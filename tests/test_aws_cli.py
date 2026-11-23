@@ -102,6 +102,29 @@ class FakeRemote:
 
 
 class SafetyTests(unittest.TestCase):
+    def test_research_install_is_staged_and_never_enables_timer(self):
+        remote = FakeRemote()
+        result = cli.research_refresh(remote, 'install', yes=True)
+        self.assertTrue(result['installed'])
+        test_index = next(i for i, call in enumerate(remote.calls) if 'unittest' in call)
+        install_index = next(i for i, call in enumerate(remote.calls) if call[:2] == ['sudo', 'install'])
+        self.assertLess(test_index, install_index)
+        self.assertFalse(any('enable' in call or 'disable' in call for call in remote.calls))
+        self.assertTrue(any(call[-1] == '/etc/systemd/system/illoura-research-refresh.timer' for call in remote.installs()))
+
+    def test_research_failed_staging_tests_install_nothing(self):
+        remote = FakeRemote(tests_ok=False)
+        with self.assertRaises(cli.OperationError):
+            cli.research_refresh(remote, 'install', yes=True)
+        self.assertEqual(remote.installs(), [])
+
+    def test_research_timer_changes_require_explicit_yes(self):
+        remote = FakeRemote()
+        for action in ('install', 'enable', 'disable'):
+            with self.assertRaises(cli.OperationError):
+                cli.research_refresh(remote, action)
+        self.assertEqual(remote.calls, [])
+
     def test_shell_syntax_is_refused(self):
         for bad in (
             ["ls", "/tmp; rm -rf /"],

@@ -1,0 +1,24 @@
+[Unit]
+Description=Illoura publisher research refresh (no email)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=-/etc/illoura-market/research-refresh.env
+ExecStart=/opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_research_refresh.py
+UMask=0077
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=2700
+KillMode=control-group
+SendSIGKILL=yes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
