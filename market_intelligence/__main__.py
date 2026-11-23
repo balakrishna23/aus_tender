@@ -155,8 +155,16 @@ def main(argv=None):
     remoteness=commands.add_parser('remoteness-report')
     remoteness.add_argument('--as-of',required=True,type=date.fromisoformat)
     remoteness.add_argument('--output',required=True)
+    health=commands.add_parser('acquire-health',help='Server-side official quarterly Star Ratings acquisition')
+    health.add_argument('--output-root',required=True)
+    commands.add_parser('import-aged-care',help='Verified quarterly Star Ratings manifest').add_argument('--manifest',required=True)
+    aged=commands.add_parser('aged-care-report',help='Published quality evidence and care-minutes facts')
+    aged.add_argument('--output',required=True)
     args=parser.parse_args(argv)
     try:
+        if args.command=='acquire-health':
+            from .acquire_health import main as acquire_health
+            return acquire_health(['--output-root',args.output_root])
         if args.command=='acquire-rap':
             from .acquire_rap import acquire
             print(json.dumps(acquire(args.output),indent=2))
@@ -173,7 +181,13 @@ def main(argv=None):
             result=verify(db,args.collection,args.json)
         elif args.command=='migrate':
             migrate(db)
-            result={'schema':'021_remoteness','status':'ready'}
+            result={'schema':'022_aged_care','status':'ready'}
+        elif args.command=='import-aged-care':
+            from .aged_care import import_aged_care
+            result=import_aged_care(db,args.manifest)
+        elif args.command=='aged-care-report':
+            from .aged_care import build_aged_care_report,write_aged_care_report
+            result=write_aged_care_report(build_aged_care_report(db),args.output)
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
         elif args.command=='import-register':

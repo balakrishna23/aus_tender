@@ -28,7 +28,7 @@ def readiness(engine,as_of):
                          'Panel candidate marking, portal facts and Illoura eligibility evidence are incomplete.',
                          'RAP matching/extraction does not yet meet the full-directory 90% match and spot-check targets.',
                          'State coverage is retained WA history; other states and current disclosure sources remain incomplete.',
-                         'Healthcare source registers do not establish workforce need, ratings or comprehensive provider coverage.',
+                         'Healthcare registers and quarterly Star Ratings provide identity and quality evidence; comprehensive provider coverage, buying intent and workforce need remain unestablished.',
                          'Budget, grants, insourcing and annual-report feeds require source-specific acquisition and parsers.',
                          'National business register scope remains procurement ABNs; the full-active-ABN target is not claimed.',
                          'This command neither fabricates approvals nor changes schedules or sends mail.'])
