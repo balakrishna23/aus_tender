@@ -24,6 +24,7 @@ Files covered:
 - `deploy/illoura-cloud-health.service`, `deploy/illoura-cloud-health.timer`
 - `deploy/illoura-daily-brief.service`, `deploy/illoura-daily-brief.timer`
 - `deploy/illoura_research_refresh.py`, `deploy/illoura-research-refresh.service`, `deploy/illoura-research-refresh.timer`, `deploy/research-refresh-handoff.md`
+- `deploy/illoura_research_export.py`
 - `deploy/system/apt-daily-upgrade-illoura.conf`
 - `deploy/system/needrestart-illoura.conf`
 - `deploy/aws/illoura_aws.py`
@@ -51,7 +52,8 @@ The daily path is timer → source collection and research → evidence gates �
 
 | Deployment module | Responsibility |
 |---|---|
-| `illoura_cloud_collect.py` | Reconciles unresolved prior sends against Gmail Sent as the scraper user, runs source/evidence coordination and publishes a validated generation. Collection/publication sends no new brief. Records unresolved reconciliation failures for attention. |
+| `illoura_cloud_collect.py` | Reconciles unresolved prior sends against Gmail Sent as the scraper user, runs source/evidence coordination and publishes a validated generation. Collection/publication sends no new brief. Records unresolved reconciliation failures for attention. Before publication it refreshes `research.db` (best effort; see below). |
+| `illoura_research_export.py` | `export` (as `ubuntu`): one read-only transaction over the research database, current state only, individuals in business registers excluded, written to SQLite with `export_info` and `sources`. `install` (root): runs the export unprivileged, validates it and atomically replaces `/opt/aus_tender/databases/research.db`; bounded, skips when the morning budget is short, never raises, keeps the previous file on failure. Served by the API as the `research` dataset. |
 | `illoura_cloud_ops.py` | Linux locks coordinate publication/recovery/retention. Validates all source results and evidence/build timestamps; uses SQLite backup into a staged immutable generation, integrity/hash checks and atomic `current`/`previous` pointers. Implements publication, rollback, operations backup, isolated restore drill and retention. Restore preserves send receipts, unresolved attempts and explicit reconciliation decisions without credentials. |
 | `illoura_research_refresh.py` | Root wrapper for the daily research refresh (timer 10:15 Sydney, installed disabled). Takes the shared `/var/lib/illoura-market-refresh/refresh.lock` without waiting, skips the 05:30–09:30 Sydney brief window (checked again after locking), runs `market_intelligence research-refresh` as ubuntu with nice/ionice and a 45-minute process-group limit, and writes `/var/lib/illoura-research-refresh/status.json`. Health reads that file as `research_freshness`, which is informational only: it never changes health status or sends mail. |
 | `illoura_cloud_health.py` | Writes private health JSON and exits nonzero on attention. Reads source/publication/run/coordinator state, timer/delivery status, disk/retention/certificate state and Gmail identity authorization. It may refresh OAuth and query Gmail profile but never sends mail. False-alarm guards (14 Nov): a receipt dated on or after the due day counts; while `illoura-daily-brief.service` is still active the brief is `pending` until 12:00 Sydney and a late publication (up to 32 h old) is `in_progress`; a network or Google-side error in the Gmail check is tolerated for 6 h after the last confirmed check (`verified_at_utc`), while a revoked or expired grant fails at once. |

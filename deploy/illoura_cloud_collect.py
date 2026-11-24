@@ -76,6 +76,15 @@ def reconcile_confirmed_sends(reports=WORK / "reports", runner=subprocess.run):
     return results
 
 
+def refresh_research_dataset():
+    """Refresh /opt/aus_tender/databases/research.db for the read API. Never raises."""
+    try:
+        from illoura_research_export import install
+    except Exception as error:  # noqa: BLE001 - recorded, never fatal
+        return {"status": "unavailable", "error_code": type(error).__name__}
+    return install()
+
+
 if __name__ == "__main__":
     state = {
         "started_at_utc": utc(),
@@ -99,6 +108,10 @@ if __name__ == "__main__":
                     str(WORK / "run_once.py"),
                 ]
             )
+            # Best effort and bounded: a failed or skipped research export keeps the
+            # previous research.db, so publication goes ahead either way.
+            state["research_dataset"] = refresh_research_dataset()
+            atomic_json(WORK / "coordinator_status.json", state)
             # Hold all publication-side locks continuously across backup and publish.
             # Only this coordinator is a supported cloud write entry point. A source
             # CLI invoked independently by an administrator is outside that contract;

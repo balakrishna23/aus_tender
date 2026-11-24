@@ -63,6 +63,35 @@ ALLOWED = {
     "planned_procurement": ["planned_procurements"],
     "rap_evidence": ["company_reviews", "commitments"],
     "releases": ["releases"],
+    # Current state of the private research database (deploy/illoura_research_export.py).
+    "research": [
+        "contracts",
+        "register_entities",
+        "register_names",
+        "organisations",
+        "organisation_observations",
+        "directory_edges",
+        "agency_unit_map",
+        "buyer_resolution",
+        "register_identity_conflicts",
+        "aps_agencies",
+        "demand",
+        "demand_signals",
+        "forward",
+        "geography",
+        "remoteness",
+        "research_records",
+        "agency_spend",
+        "supplier_profile",
+        "healthcare_accounts",
+        "panel_calendar",
+        "panel_watchlist",
+        "panels",
+        "panel_links",
+        "illoura_profile",
+        "sources",
+        "export_info",
+    ],
     "standing_offer": ["standing_offers"],
     "state_contracts": ["contracts", "sources"],
 }
@@ -141,6 +170,8 @@ def catalog():
         + [
             "Availability and derived statuses reflect snapshot time; compare deadlines against the current date.",
             "Public contact details are source evidence, not permission to contact a buyer.",
+            "research is Illoura's internal research database (registers, APS, demand, remoteness, RAP, panels, business inputs); "
+            "research.contracts repeats contract_api, so do not add their counts. See research.export_info and research.sources.",
         ],
         "datasets": {
             name: {

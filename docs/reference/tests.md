@@ -35,6 +35,7 @@ Files covered:
 - `tests/test_build_intelligence.py`
 - `tests/test_classify.py`
 - `tests/test_cloud_collect.py`
+- `tests/test_cloud_research_export.py`
 - `tests/test_cloud_daily_brief.py`
 - `tests/test_cloud_health.py`
 - `tests/test_cloud_ops.py`
@@ -138,6 +139,7 @@ The API suite additionally needs `api/requirements.txt`; optional Gmail authoriz
 | `tests/test_cloud_collect.py` | Only unresolved sends reconcile before collection, with errors/not-found preserved rather than retried as new sends. | Unit/fixture suite; dependencies required. |
 | `tests/test_cloud_daily_brief.py` | RFQ selection, editorial fields, restricted-access warnings, Sydney send window, cross-run send locks/gates and exact reconciliation. | Cross-platform fixtures; real flock cases Linux-only. |
 | `tests/test_cloud_research_refresh.py` | Refresh wrapper: lock contention, Sydney blackout boundaries including DST, timeout termination, atomic status file. | Unit suite; no network. |
+| `tests/test_cloud_research_export.py` | Research dataset export: value conversion, streamed SQLite writing, validation refusals (missing/empty tables), individuals excluded, read-only queries, install keeps the previous file on failure, morning-budget skip, hook before publication, API allow-list equals the exported tables. | Unit suite; install cases need POSIX; no database or network. |
 | `tests/test_market_freshness.py` | Freshness registry and orchestrator: due checks, robots denial, cross-host redirects, bot challenges, unchanged hashes, publisher corrections, crash recovery, failed promotion, manual inbox with no network. | Unit suite; PostgreSQL parts need the test database. |
 | `tests/test_cloud_health.py` | Failed/hung current runs remain visible; mail identity, certificate, retention and morning/delivery grace checks. | Unit/fixture suite; dependencies required. |
 | `tests/test_cloud_ops.py` | Validated atomic publication, rollback and restore integrity with preserved receipt/attempt/reconciliation state. | Cross-platform fixtures; atomic symlink publication/rollback cases Linux-only. |
