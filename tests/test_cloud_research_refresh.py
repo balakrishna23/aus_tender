@@ -142,5 +142,21 @@ class WrapperTests(unittest.TestCase):
             self.assertEqual((root / 'status.json').stat().st_mode & 0o777, 0o600)
 
 
+    def test_own_build_configuration_preferred_when_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            own, shared = Path(tmp) / 'research-refresh.json', Path(tmp) / 'refresh.json'
+            shared.write_text('{}')
+            self.assertEqual(worker.chosen_config(own, shared), shared)
+            own.write_text('{}')
+            self.assertEqual(worker.chosen_config(own, shared), own)
+
+    def test_own_configuration_gets_the_same_checks(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            own = Path(tmp) / 'research-refresh.json'
+            own.write_text(json.dumps({'data_root': tmp, 'build': tmp, 'tools': tmp, 'extra': 1}))
+            with self.assertRaises(ValueError):
+                worker.configuration(own)
+
+
 if __name__ == '__main__':
     unittest.main()

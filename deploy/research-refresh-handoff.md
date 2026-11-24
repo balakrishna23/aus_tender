@@ -207,6 +207,12 @@ build or config until isolated live validation and server staging tests pass.
    only `build` to the validated staged build path. Keep its existing `tools` path.
    This config is shared with the morning helper, so validate that helper against
    the new build before changing the path. Use a private atomic config replacement.
+
+   Alternative (added 25 November 2026): leave the shared file alone and give the
+   refresher its own `/etc/illoura-market/research-refresh.json` with the same three
+   fields, root-owned mode 0600, naming the new build. The wrapper uses that file when
+   it exists, so the morning helper keeps its proven build (the new build's morning
+   refresh measured about 400 seconds against the 210-second morning limit).
 5. As root, create the inbox directories and reviewer environment file. Set only
    `ILLOURA_RAP_DIRECTORY_REVIEWER_IDS=<provided directory reviewer UUID>` in
    `/etc/illoura-market/research-refresh.env`, owner root, mode 0600. It is loaded
