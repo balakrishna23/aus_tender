@@ -9,7 +9,8 @@ Two halves:
            replaces /opt/aus_tender/databases/research.db. Any failure leaves the previous file in
            place, so publication always finds a complete research.db once one exists. Never raises.
 
-Individuals (sole traders and other people) in the business registers are left out. Raw history
+Individuals (sole traders and other people) in the business registers are included since 25 Nov 2026
+(Sirish's instruction) and flagged in register_entities.is_individual. Raw history
 (every past snapshot) stays in PostgreSQL; this file holds the current state only.
 """
 import argparse
@@ -32,6 +33,7 @@ EXPORT_TIMEOUT_SECONDS = 300
 # Leave this much of the morning budget untouched for the brief itself.
 MORNING_RESERVE_SECONDS = 900
 
+# Marks a register record that is a person; used for the flag and count, never as a filter.
 INDIVIDUAL = (
     "(coalesce(e.is_individual, false) OR coalesce(e.entity_type,'') ~* "
     "'^IND$|individual|sole[[:space:]]*(trader|proprietor)')"
@@ -44,13 +46,13 @@ TABLES = {
         category_family, original_value, current_value, start_date, current_end_date, first_published,
         source_url, retrieved_at, issues FROM market.current_contracts""",
     "register_entities": """SELECT e.source, e.effective_date, e.scope_kind, e.snapshot_id, e.record_id,
-        e.abn, e.acn, e.icn, e.name, e.name_key, e.status, e.status_from, e.registered_on,
-        e.deregistered_on, e.entity_type, e.state, e.postcode, e.attributes, e.issues
-        FROM market.current_register_entities e WHERE NOT """ + INDIVIDUAL,
+        e.abn, e.acn, e.icn, e.name, e.name_key, """ + INDIVIDUAL + """ AS is_individual, e.status,
+        e.status_from, e.registered_on, e.deregistered_on, e.entity_type, e.state, e.postcode,
+        e.attributes, e.issues
+        FROM market.current_register_entities e""",
     "register_names": """SELECT e.source, n.snapshot_id, n.record_id, n.name_type, n.name, n.name_key
         FROM market.register_names n JOIN market.current_register_entities e
-          ON e.snapshot_id = n.snapshot_id AND e.record_id = n.record_id
-        WHERE NOT """ + INDIVIDUAL,
+          ON e.snapshot_id = n.snapshot_id AND e.record_id = n.record_id""",
     "organisations": "SELECT * FROM market.organisations",
     "organisation_observations": "SELECT * FROM market.organisation_observations",
     "directory_edges": "SELECT * FROM market.directory_edges",
@@ -209,7 +211,7 @@ def export(environment, destination):
                 conn.exec_driver_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
                 conn.exec_driver_sql("SET LOCAL statement_timeout = '600s'")
                 revision = conn.exec_driver_sql("SELECT version_num FROM public.alembic_version").scalar()
-                excluded = conn.exec_driver_sql(
+                individuals = conn.exec_driver_sql(
                     "SELECT count(*) FROM market.current_register_entities e WHERE " + INDIVIDUAL).scalar()
                 for name, query in TABLES.items():
                     result = conn.execution_options(stream_results=True, yield_per=5000).execute(sa.text(query))
@@ -221,9 +223,10 @@ def export(environment, destination):
         finish(db, counts, {
             "exported_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "schema_revision": revision,
-            "individual_register_records_excluded": excluded,
+            "individual_register_records_included": individuals,
             "scope": "Current state of the Illoura research database (one consistent read). "
-                     "Raw history and individuals in business registers are not included.",
+                     "Raw history is not included. Individuals in business registers are included and "
+                     "flagged in register_entities.is_individual.",
             "overlap": "contracts repeats contract_api for joins inside this dataset; do not add the two counts.",
         })
     finally:
