@@ -85,6 +85,46 @@ def research_freshness(path=Path('/var/lib/illoura-research-refresh/status.json'
         return dict(informational_only=True, sources={}, availability='unavailable')
 
 
+def research_monitor(work=Path('/opt/illoura-routine'), now=None,
+                     state=Path('/var/lib/illoura-market-refresh/status.json'),
+                     config=Path('/etc/illoura-market/refresh.json')):
+    """Independent research readiness; never changes procurement checks or sends mail."""
+    if not config.is_file():
+        return dict(status='ok', configured=False)
+    now = now or datetime.now(timezone.utc)
+    checks = {}
+    try:
+        value = json.loads(state.read_text(encoding='utf-8'))
+        checked = datetime.fromisoformat(value['checked_at'])
+        age = (now - checked).total_seconds()
+        checks['refresh'] = dict(status='ok' if value.get('status') == 'complete'
+                                and 0 <= age <= 32 * 3600 else 'attention',
+                                last_result=value.get('status') if value.get('status') in
+                                {'complete', 'failed', 'busy', 'disabled'} else 'unknown',
+                                age_hours=round(age / 3600, 1))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        checks['refresh'] = dict(status='unavailable')
+    try:
+        package = work / 'market_research.json'
+        if package.stat().st_size > 1_000_000:
+            raise ValueError('Package exceeds bounds')
+        value = json.loads(package.read_text(encoding='utf-8'))
+        stamp = datetime.fromisoformat(value['generated_at'])
+        age = (now - stamp).total_seconds()
+        checks['package'] = dict(status='ok' if 0 <= age <= 32 * 3600 else 'attention',
+                                age_hours=round(age / 3600, 1))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        checks['package'] = dict(status='unavailable')
+    publisher = research_freshness()
+    sources = publisher.get('sources', {})
+    checks['publishers'] = dict(status='ok' if publisher.get('availability') == 'available'
+                               and sources and all(v == 'latest_available' for v in sources.values())
+                               else 'attention',
+                               source_gaps=sorted(k for k, v in sources.items() if v != 'latest_available'))
+    return dict(status='ok' if all(v['status'] == 'ok' for v in checks.values()) else 'attention',
+                configured=True, checks=checks)
+
+
 def cert_not_after(path):
     """Expiry of a PEM certificate, read with openssl (no extra Python packages)."""
     if not Path(path).exists():
@@ -386,6 +426,7 @@ def check(
         "checked_at_utc": utc(),
         "checks": checks,
         "research_freshness": research_freshness(),
+        "research_monitor": research_monitor(work, now),
         "email_sent": False,
         "monitoring_note": "Poll independently of this instance and Gmail to detect silence. A health file alone is not an external alert.",
     }
