@@ -152,6 +152,41 @@ notices when the API has nothing new or every new notice has no page on the site
 yet (up to 25; see [workstream 8](workstreams/08-reliability.md)). Any other empty
 or failed source still stops publication and the day's brief.
 
+### Research dataset (`research`)
+
+Added 24 November 2026. The read API and the Claude Desktop connector also serve the
+private research database (PostgreSQL) as the `research` dataset, so an API key reaches
+registers, APS headcount, hiring demand, remoteness, the RAP directory, panels and the
+mailbox business inputs as well as the tender data.
+
+The same day the API also began serving three internal workflow files that were already
+in `/opt/aus_tender/databases` and published with each generation: `actions` (BD action
+items), `activity` (collection runs, scrapes and change records) and `research_sources`
+(checked source pages, reviewed findings, BuyICT news). Every enabled key sees every
+dataset; there is no per-key scope.
+
+`deploy/illoura_research_export.py` writes it. Before each publication the coordinator
+runs `install`. That runs `export` as `ubuntu` with the research interpreter: one
+`REPEATABLE READ, READ ONLY` transaction, current state only (no raw snapshot history),
+individuals and sole traders in the business registers left out. `install` then checks
+the file (integrity, every table present, core tables not empty) and atomically replaces
+`/opt/aus_tender/databases/research.db`. It is bounded (300 seconds), skips itself when
+the morning budget is short, and never stops publication. On any failure the previous
+`research.db` is published unchanged, so the data can be up to a day older than the tender
+tables. Check `research.export_info` for the export time and `research.sources` for each
+source's snapshot, date and licence.
+
+Refresh it by hand (root, outside 05:30-09:30 Sydney), then publish or wait for the next
+morning's publication:
+
+```sh
+sudo /opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_research_export.py install
+```
+
+`research.db` must exist before `policy.json` lists `research`. The publish step requires
+every listed file, so create it by hand once before the first `deploy-ops` that ships this
+policy.
+
 ### Publication exit status
 
 `publish` exits **1** when retention requires attention even if the new generation

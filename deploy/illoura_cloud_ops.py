@@ -508,7 +508,7 @@ def publish(data, served, run, policy, api_group=None, *, backups=None):
             "AWS collector is the procurement source of truth for this generation.",
             "Independent consistent SQLite backups taken while source run locks are held.",
             "Source dates may predate this snapshot; inspect retrieval fields and current deadlines.",
-            "Private workflow data is not part of the authorised procurement API.",
+            "Internal workflow and research datasets are served to authorised Illoura keys only.",
         ],
     }
     # Any failure before the pointer switch below leaves the staging directory as
