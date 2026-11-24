@@ -12,6 +12,9 @@ import time
 from zoneinfo import ZoneInfo
 
 CONFIG = Path('/etc/illoura-market/refresh.json')
+# Optional: the refresher's own build, same fields and protection as the shared file. When present, the
+# morning helper can stay on its proven build while this job runs a newer one against the same database.
+OWN_CONFIG = Path('/etc/illoura-market/research-refresh.json')
 LOCK = Path('/var/lib/illoura-market-refresh/refresh.lock')
 STATE = Path('/var/lib/illoura-research-refresh')
 HARD_LIMIT = 45 * 60
@@ -92,6 +95,11 @@ SOURCE_NAMES = frozenset(('abn', 'asic_companies', 'asic_business_names', 'acnc'
     'aged_care_star_ratings', 'rap_directory', 'wa_contracts', 'procurement', 'tender_feed'))
 
 
+def chosen_config(own=OWN_CONFIG, shared=CONFIG):
+    """The refresher's own configuration when it exists, otherwise the shared morning one."""
+    return own if own.exists() or own.is_symlink() else shared
+
+
 def refresh(config=CONFIG, timeout=HARD_LIMIT, now=None):
     import fcntl
     if not 10 <= timeout <= HARD_LIMIT:
@@ -119,7 +127,7 @@ def main(argv=None):
     parser.add_argument('--timeout', type=int, default=HARD_LIMIT)
     args = parser.parse_args(argv)
     try:
-        result = refresh(timeout=args.timeout)
+        result = refresh(config=chosen_config(), timeout=args.timeout)
     except Exception as exc:
         result = dict(status='failed', reason=type(exc).__name__)
     atomic_status(dict(result, checked_at=datetime.now(timezone.utc).isoformat()))
