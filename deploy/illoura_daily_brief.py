@@ -49,6 +49,10 @@ RETRY_PAUSES = {'collect': (RETRY_PAUSE_SECONDS, 1200, 2400, 3600), 'compose': (
 COLLECT_TIMEOUT_SECONDS = 7200  # Include the 105-minute routine and publication overhead.
 COMPOSE_TIMEOUT_SECONDS = 900  # Bound live checks, composition and browser layout checks.
 SEND_MARGIN_SECONDS = 900  # Leave 15 minutes before noon for the single send attempt.
+# Optional morning research step (25 Nov 2026: raised from 210 s; the newer research build needs about 400 s).
+RESEARCH_CAP_SECONDS = 900
+# The research step must also end early enough that the full compose bound plus this reserve fits before 08:15.
+SEND_ON_TIME_RESERVE_SECONDS = 300
 MAX_SELECTED = 8
 MIN_HOURS_AHEAD = 18
 AUTHORIZATION = 'User requested the Illoura routine and email on AWS'
@@ -586,15 +590,22 @@ def run_stage(stage, action, cutoff):
                 raise
 
 
-def refresh_market_research(cutoff):
-    """An optional research failure is recorded; it never prevents the RFQ composition stage."""
+def refresh_market_research(cutoff, target=None):
+    """An optional research failure is recorded; it never prevents the RFQ composition stage.
+
+    Bounded by the noon cutoff and, when given, by the 08:15 send target: it ends early enough for the
+    whole compose bound plus a reserve before the send, or it is skipped (yesterday's package stays).
+    """
     helper=OPS/'illoura_market_refresh.py'
     if not helper.is_file() or not Path('/etc/illoura-market/refresh.json').is_file():
         return {'status':'disabled'}
-    remaining=(cutoff-utc_now()).total_seconds()-SEND_MARGIN_SECONDS-COMPOSE_TIMEOUT_SECONDS
+    now=utc_now()
+    remaining=(cutoff-now).total_seconds()-SEND_MARGIN_SECONDS-COMPOSE_TIMEOUT_SECONDS
+    if target is not None:
+        remaining=min(remaining,(target-now).total_seconds()-COMPOSE_TIMEOUT_SECONDS-SEND_ON_TIME_RESERVE_SECONDS)
     if remaining<35:
-        return {'status':'skipped','reason':'morning budget reserved for live RFQs'}
-    limit=min(210,int(remaining)-5)
+        return {'status':'skipped','reason':'morning budget reserved for live RFQs and the on-time send'}
+    limit=min(RESEARCH_CAP_SECONDS,int(remaining)-5)
     try:
         bounded_command([str(PYTHON),str(helper),'--timeout',str(limit)],limit+5,cwd=str(PROJECT))
         return {'status':'completed'}
@@ -604,13 +615,13 @@ def refresh_market_research(cutoff):
 
 def run(systemctl=None):
     """Root, from the timer: collect + publish, compose as scraper, wait for 08:15, send as scraper."""
-    _, morning_cutoff = send_window(utc_now())
+    send_target, morning_cutoff = send_window(utc_now())
     env = dict(os.environ, ILLOURA_MORNING_DEADLINE=str(
         (morning_cutoff - timedelta(seconds=SEND_MARGIN_SECONDS + COMPOSE_TIMEOUT_SECONDS)).timestamp()))
     run_stage('collect', lambda timeout: bounded_command(
         [str(PYTHON), str(OPS / 'illoura_cloud_collect.py')], timeout, cwd=str(PROJECT), env=env), morning_cutoff)
     out = json.loads((WORK / 'latest_run.json').read_text())['run_dir']
-    print(json.dumps({'event':'market_research_refresh',**refresh_market_research(morning_cutoff)}),flush=True)
+    print(json.dumps({'event':'market_research_refresh',**refresh_market_research(morning_cutoff,send_target)}),flush=True)
     run_stage('compose', lambda timeout: scraper(
         str(OPS / 'illoura_daily_brief.py'), 'compose', '--out', out, timeout=timeout), morning_cutoff)
     target, cutoff = send_window(utc_now())
