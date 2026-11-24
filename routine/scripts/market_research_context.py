@@ -39,7 +39,15 @@ def read_market_context(path,edition_day,now=None):
                     url=urlsplit(link['url'])
                     if url.scheme!='https' or not url.hostname or url.username or url.password:raise ValueError('unsafe source URL')
                 items.append(item)
-            cleaned.append(dict(title=section['title']+' · research as of '+str(as_of),items=items))
-        return cleaned,dict(status='included',as_of=str(as_of),generated_at=generated.isoformat(),sections=len(cleaned))
+            cleaned.append(dict(title=section['title']+' Â· research as of '+str(as_of),items=items))
+        age_hours=max(0,(now-generated).total_seconds()/3600)
+        if age_hours>32:
+            cleaned.insert(0,dict(title='Research freshness',items=[dict(
+                heading='Older research supplement',
+                paragraphs=[f'This research package was generated {age_hours:.0f} hours ago '
+                            f'and is dated {as_of}. Its publisher editions may be older. '
+                            'Check current evidence before acting; RFQ checks are recorded separately.'],links=[])]))
+        return cleaned,dict(status='included',as_of=str(as_of),generated_at=generated.isoformat(),
+                            age_hours=round(age_hours,1),degraded=age_hours>32,sections=len(cleaned))
     except (ValueError,KeyError,TypeError,OSError,OverflowError):
         return [],dict(status='unavailable',reason='market research package failed validation')
