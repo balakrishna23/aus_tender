@@ -247,7 +247,7 @@ def query_data(dataset, sql, params=None, limit=100, root=None):
     ):
         raise HTTPException(400, "Only one SELECT or WITH query is accepted")
     if not 1 <= limit <= 200:
-        raise HTTPException(400, "Row limit must be 1â€“200")
+        raise HTTPException(400, "Row limit must be 1–200")
     if params is None:
         params = []
     if not isinstance(params, (list, dict)):
@@ -327,7 +327,7 @@ def search_data(dataset, table, term, limit=25):
     if dataset not in ALLOWED or table not in ALLOWED[dataset]:
         raise HTTPException(404, "Unknown dataset/table")
     if not 2 <= len(term) <= 200:
-        raise HTTPException(400, "Search term must be 2â€“200 characters")
+        raise HTTPException(400, "Search term must be 2–200 characters")
     root = generation()
     columns = [
         c["name"]
