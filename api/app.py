@@ -494,7 +494,7 @@ async def authenticate(request: Request, call_next):
             status = (health.get("research_monitor", {}).get("status")
                       if request.url.path == "/research-readyz" else health.get("status"))
             ok = status == "ok" and 0 <= age < 1800
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
             ok = False
         return JSONResponse(
             {"status": "ok" if ok else "attention"},
