@@ -140,8 +140,36 @@ def connect(dataset, root=None):
     return db
 
 
+def research_metadata(root):
+    """Export age and publisher evidence stay separate from generation age."""
+    result = {"status": "unavailable", "stale": True, "source_editions": []}
+    db = None
+    try:
+        db = connect("research", root)
+        started = time.monotonic()
+        db.set_progress_handler(lambda: int(time.monotonic() - started > 0.5), 1000)
+        info = dict(db.execute("SELECT key,value FROM export_info"))
+        stamp = datetime.fromisoformat(info["exported_at_utc"])
+        if stamp.tzinfo is None:
+            return result
+        age = (datetime.now(timezone.utc) - stamp).total_seconds()
+        result.update(status="available", exported_at_utc=stamp.isoformat(),
+                      age_seconds=round(age), stale=not -300 <= age <= 26 * 3600,
+                      schema_revision=info.get("schema_revision"),
+                      note="A recent export does not establish that every publisher edition is current.")
+        result["source_editions"] = [dict(r) for r in db.execute(
+            "SELECT kind,source,effective_date,imported_at FROM sources LIMIT 64")]
+    except (HTTPException, sqlite3.Error, OSError, ValueError, KeyError, TypeError):
+        result.update(status="unavailable", stale=True)
+    finally:
+        if db is not None:
+            db.close()
+    return result
+
+
 def catalog():
-    meta = manifest()
+    root = generation()
+    meta = manifest(root)
     try:
         age = max(
             0,
@@ -186,6 +214,7 @@ def catalog():
                     if t in ALLOWED.get(name, [])
                 },
                 "backup_finished_utc": item["backup_finished_utc"],
+                **({"freshness": research_metadata(root)} if name == "research" else {}),
             }
             for name, item in meta["datasets"].items()
             if name in ALLOWED
@@ -218,7 +247,7 @@ def query_data(dataset, sql, params=None, limit=100, root=None):
     ):
         raise HTTPException(400, "Only one SELECT or WITH query is accepted")
     if not 1 <= limit <= 200:
-        raise HTTPException(400, "Row limit must be 1–200")
+        raise HTTPException(400, "Row limit must be 1â€“200")
     if params is None:
         params = []
     if not isinstance(params, (list, dict)):
@@ -282,6 +311,7 @@ def query_data(dataset, sql, params=None, limit=100, root=None):
             "elapsed_ms": round((time.monotonic() - started) * 1000),
             "snapshot_finished_utc": meta["snapshot_finished_utc"],
             "generation_id": meta.get("generation_id"),
+            **({"dataset_freshness": research_metadata(root)} if dataset == "research" else {}),
             "note": "Snapshot data; datasets overlap. Include source URLs and check current deadlines when presenting records.",
         }
     except (sqlite3.Error, ValueError, TypeError, OverflowError):
@@ -297,7 +327,7 @@ def search_data(dataset, table, term, limit=25):
     if dataset not in ALLOWED or table not in ALLOWED[dataset]:
         raise HTTPException(404, "Unknown dataset/table")
     if not 2 <= len(term) <= 200:
-        raise HTTPException(400, "Search term must be 2–200 characters")
+        raise HTTPException(400, "Search term must be 2â€“200 characters")
     root = generation()
     columns = [
         c["name"]
@@ -454,14 +484,16 @@ async def authenticate(request: Request, call_next):
     keyname = "anonymous"
     if request.url.path == "/healthz":
         return JSONResponse({"status": "ok", "service": "illoura-read-api"})
-    if request.url.path == "/readyz":
+    if request.url.path in ("/readyz", "/research-readyz"):
         try:
             health = json.loads(HEALTH.read_text())
             age = (
                 datetime.now(timezone.utc)
                 - datetime.fromisoformat(health["checked_at_utc"])
             ).total_seconds()
-            ok = health.get("status") == "ok" and 0 <= age < 1800
+            status = (health.get("research_monitor", {}).get("status")
+                      if request.url.path == "/research-readyz" else health.get("status"))
+            ok = status == "ok" and 0 <= age < 1800
         except (OSError, ValueError, KeyError, TypeError):
             ok = False
         return JSONResponse(
