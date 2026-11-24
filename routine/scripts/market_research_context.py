@@ -39,7 +39,7 @@ def read_market_context(path,edition_day,now=None):
                     url=urlsplit(link['url'])
                     if url.scheme!='https' or not url.hostname or url.username or url.password:raise ValueError('unsafe source URL')
                 items.append(item)
-            cleaned.append(dict(title=section['title']+' Â· research as of '+str(as_of),items=items))
+            cleaned.append(dict(title=section['title']+' · research as of '+str(as_of),items=items))
         age_hours=max(0,(now-generated).total_seconds()/3600)
         if age_hours>32:
             cleaned.insert(0,dict(title='Research freshness',items=[dict(
