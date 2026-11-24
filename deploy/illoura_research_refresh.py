@@ -60,7 +60,7 @@ def run_application(root, build, timeout=HARD_LIMIT):
     with tempfile.TemporaryFile() as output:
         process = subprocess.Popen(argv, cwd=build, stdout=output, stderr=subprocess.DEVNULL, start_new_session=True)
         try:
-            process.wait(timeout=max(0.01, deadline - time.monotonic() - 5))
+            process.wait(timeout=max(0.01, min(timeout - 5, deadline - time.monotonic() - 5)))
         except subprocess.TimeoutExpired:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
