@@ -8,11 +8,11 @@ URL structure (confirmed):
   /tender/view?id=X  = Individual tender detail (Cloudflare-challenges concurrent hits)
 
 Strategy: extract ALL fields from listing table rows in a single page.evaluate()
-call — no detail-page follows needed. Confirmed row cell structure:
-  td[0] = "GS2514706\nOpen\nRequest for Tender"       → ref, status, category
-  td[1] = "Private Provider Program\nIssued by: CHS"  → title, agency
-  td[2] = "Released\nThu, 07 May 2026\nClosing\nTue..." → pub_date, close_date
-  <a href="/tender/view?id=320403">                    → url
+call â€” no detail-page follows needed. Confirmed row cell structure:
+  td[0] = "GS2514706\nOpen\nRequest for Tender"       â†’ ref, status, category
+  td[1] = "Private Provider Program\nIssued by: CHS"  â†’ title, agency
+  td[2] = "Released\nThu, 07 May 2026\nClosing\nTue..." â†’ pub_date, close_date
+  <a href="/tender/view?id=320403">                    â†’ url
 """
 import re
 import scrapy
@@ -238,18 +238,23 @@ class ActTenderSpider(scrapy.Spider):
                 meta=PW_META, errback=self.errback,
             )
 
+    async def start(self):
+        # Scrapy 2.13+ consumes start(); preserve both browser listing requests.
+        for request in self.start_requests():
+            yield request
+
     async def parse(self, response):
         page = response.meta.get('playwright_page')
         try:
             self.logger.info(f"ACT listing: {response.url} (HTTP {response.status})")
 
-            # ── Wait for table rows to appear (up to 15s) ────────────────
+            # â”€â”€ Wait for table rows to appear (up to 15s) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             try:
                 await page.wait_for_selector('table tbody tr td', timeout=15000)
             except Exception as e:
                 self.logger.warning(f"Table row wait timed out on {response.url}: {e}")
 
-            # ── Extract all rows in one JS call ──────────────────────────
+            # â”€â”€ Extract all rows in one JS call â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             rows = await page.evaluate(EXTRACT_ROWS_JS)
             self.logger.info(f"Rows found: {len(rows)} on {response.url}")
 
@@ -335,7 +340,7 @@ class ActTenderSpider(scrapy.Spider):
                     'scraped_at':       datetime.utcnow().isoformat(),
                 }
 
-            # ── Pagination ───────────────────────────────────────────────
+            # â”€â”€ Pagination â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             next_href = await page.evaluate(NEXT_PAGE_JS)
             if next_href and next_href != '#':
                 next_url = response.urljoin(next_href)
