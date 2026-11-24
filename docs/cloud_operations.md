@@ -159,6 +159,12 @@ private research database (PostgreSQL) as the `research` dataset, so an API key 
 registers, APS headcount, hiring demand, remoteness, the RAP directory, panels and the
 mailbox business inputs as well as the tender data.
 
+The same day the API also began serving three internal workflow files that were already
+in `/opt/aus_tender/databases` and published with each generation: `actions` (BD action
+items), `activity` (collection runs, scrapes and change records) and `research_sources`
+(checked source pages, reviewed findings, BuyICT news). Every enabled key sees every
+dataset; there is no per-key scope.
+
 `deploy/illoura_research_export.py` writes it. Before each publication the coordinator
 runs `install`. That runs `export` as `ubuntu` with the research interpreter: one
 `REPEATABLE READ, READ ONLY` transaction, current state only (no raw snapshot history),
