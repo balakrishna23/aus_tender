@@ -157,6 +157,9 @@ class SecurityTests(unittest.TestCase):
             response=self.client.get('/research-readyz')
             self.assertEqual(response.status_code,503)
             self.assertEqual(response.json(),{'status':'attention'})
+            api.HEALTH.write_text(json.dumps({'status':'ok','checked_at_utc':datetime.now(timezone.utc).isoformat(),
+                                            'research_monitor':[]}))
+            self.assertEqual(self.client.get('/research-readyz').status_code,503)
         finally:api.HEALTH=old
 
     def test_snapshot_metadata_stays_pinned_during_publication(self):
