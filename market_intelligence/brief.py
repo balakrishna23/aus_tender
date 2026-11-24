@@ -22,8 +22,10 @@ def link(label,url):
     return [dict(label=label,url=url)]
 
 
-def build_brief(engine,as_of):
-    buyers=build_report(engine,as_of);panels=build_panel_access(engine,as_of);rap=build_rap(engine,as_of)
+def build_brief(engine,as_of,*,federal=None):
+    buyers=build_report(engine,as_of) if federal is None else federal
+    if buyers['as_of']!=as_of:raise ValueError('Buyer report date differs from brief date')
+    panels=build_panel_access(engine,as_of);rap=build_rap(engine,as_of)
     demand=build_demand(engine,as_of);aps=build_aps_report(engine,as_of);categories=category_summary(engine)
     with engine.connect() as conn:
         unresolved=conn.execute(text("SELECT count(*) FROM market.buyer_resolution WHERE match_status IN ('ambiguous','conflict','unmatched')")).scalar()
@@ -45,7 +47,7 @@ def build_brief(engine,as_of):
     selected=[r for r in panels['calendar'] if r['date']<=as_of+timedelta(days=90)][:3]
     if selected:
         sections.append(dict(title='Panel dates to verify',items=[dict(heading=r['panel_name'],paragraphs=[
-            str(r['date'])+' · '+r['event'].replace('_',' ')+'. '+('Published notice date; application windows and extensions are unverified.' if r['basis'].startswith('published_notice') else 'Recorded human-verified evidence; recheck the current portal before acting.')],
+            str(r['date'])+' Â· '+r['event'].replace('_',' ')+'. '+('Published notice date; application windows and extensions are unverified.' if r['basis'].startswith('published_notice') else 'Recorded human-verified evidence; recheck the current portal before acting.')],
             links=link('Panel evidence',r['source_url'])) for r in selected]))
     selected=[r for r in rap['targets'] if r['period_status']=='within_published_period' and r['reviewed_commitments']][:3]
     if selected:
@@ -57,7 +59,7 @@ def build_brief(engine,as_of):
     selected=[r for r in demand['vacancy_trends'] if r['region']!='AUST' and r['ads_3m_average'] is not None
               and re.search(r'ICT|registered nurses|software|database|aged and disabled carers',r['occupation_title'],re.I)][:3]
     if selected:
-        sections.append(dict(title='Published workforce demand indicators',items=[dict(heading=r['occupation_title']+' · '+r['region'],paragraphs=[
+        sections.append(dict(title='Published workforce demand indicators',items=[dict(heading=r['occupation_title']+' Â· '+r['region'],paragraphs=[
             str(r['period'])+f": {r['ads_3m_average']:,.1f} online advertisements (three-month average). "
             +(f"Year-on-year change {r['year_on_year']:+.1%}." if r['year_on_year'] is not None else 'Year-on-year comparison unavailable.'),
             'Advertisements are not a vacancy count. Illoura role mapping, available bench and clearance fit remain unverified.'],
@@ -72,7 +74,7 @@ def build_brief(engine,as_of):
     return dict(schema='illoura.market_brief.v1',as_of=as_of,generated_at=datetime.now(timezone.utc),status='internal research supplement',
         sections=sections,summary=dict(buyers=len(rows),rap_entries=len(rap['targets']),aps_agencies=aps['summary']['agencies'],
                                       unresolved_identities=unresolved,category_catch_all_value_share=catch_all),
-        limitations=['Market research is separate from the brief’s live-rechecked RFQs. No invitation, qualification or available-budget claim is made.',
+        limitations=['Market research is separate from the briefâ€™s live-rechecked RFQs. No invitation, qualification or available-budget claim is made.',
                      'Each dataset has its own date; cross-source simultaneity is not asserted.',
                      'Creating this package neither sends email nor changes any schedule.'])
 
