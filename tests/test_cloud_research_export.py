@@ -93,9 +93,10 @@ class WriteAndValidate(unittest.TestCase):
         build(path, empty=("panel_calendar", "register_identity_conflicts"))
         self.assertEqual(export.validate(path)["panel_calendar"], 0)
 
-    def test_individuals_are_excluded_from_both_register_tables(self):
+    def test_individuals_are_included_and_flagged(self):
         for table in ("register_entities", "register_names"):
-            self.assertIn("WHERE NOT " + export.INDIVIDUAL, export.TABLES[table])
+            self.assertNotIn("WHERE NOT", export.TABLES[table])
+        self.assertIn(export.INDIVIDUAL + " AS is_individual", export.TABLES["register_entities"])
         self.assertIn("is_individual", export.INDIVIDUAL)
         self.assertIn("sole", export.INDIVIDUAL)
 

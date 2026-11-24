@@ -168,7 +168,8 @@ dataset; there is no per-key scope.
 `deploy/illoura_research_export.py` writes it. Before each publication the coordinator
 runs `install`. That runs `export` as `ubuntu` with the research interpreter: one
 `REPEATABLE READ, READ ONLY` transaction, current state only (no raw snapshot history),
-individuals and sole traders in the business registers left out. `install` then checks
+individuals and sole traders in the business registers included (since 25 November, flagged in
+`register_entities.is_individual`). `install` then checks
 the file (integrity, every table present, core tables not empty) and atomically replaces
 `/opt/aus_tender/databases/research.db`. It is bounded (300 seconds), skips itself when
 the morning budget is short, and never stops publication. On any failure the previous
