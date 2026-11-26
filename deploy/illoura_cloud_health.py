@@ -89,7 +89,13 @@ def research_monitor(work=Path('/opt/illoura-routine'), now=None,
                      state=Path('/var/lib/illoura-market-refresh/status.json'),
                      config=Path('/etc/illoura-market/refresh.json')):
     """Independent research readiness; never changes procurement checks or sends mail."""
-    if not config.is_file():
+    try:
+        configured = config.is_file()
+    except OSError:
+        # The root-only /etc/illoura-market cannot be read by a non-root caller (for example the
+        # staged server tests). Report research as unavailable instead of failing all of health.
+        return dict(status='unavailable', configured=None)
+    if not configured:
         return dict(status='ok', configured=False)
     now = now or datetime.now(timezone.utc)
     checks = {}
