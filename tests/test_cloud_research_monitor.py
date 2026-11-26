@@ -40,6 +40,26 @@ class ResearchMonitor(unittest.TestCase):
                 self.assertEqual(result['status'],'attention')
                 self.assertEqual(result['checks']['publishers']['source_gaps'],['jsa_ivi'])
 
+    def test_known_blocked_and_manual_sources_do_not_hold_the_alarm(self):
+        now=datetime.now(timezone.utc)
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp);config=root/'config';config.touch();state=root/'state.json'
+            state.write_text(json.dumps({'status':'complete','checked_at':now.isoformat()}))
+            (root/'market_research.json').write_text(json.dumps({'generated_at':now.isoformat()}))
+            sources={'jsa_ivi':'latest_available','wa_contracts':'blocked','abn':'manual_refresh_needed',
+                     'aps_employment':'new_edition_pending'}
+            with patch.object(health,'research_freshness',return_value={'availability':'available','sources':sources}):
+                result=health.research_monitor(root,now,state,config)
+            self.assertEqual(result['status'],'ok')
+            self.assertEqual(result['checks']['publishers']['failing'],[])
+            self.assertEqual(result['checks']['publishers']['source_gaps'],['abn','aps_employment','wa_contracts'])
+            for broken in ('failed','check_overdue'):
+                with patch.object(health,'research_freshness',
+                                  return_value={'availability':'available','sources':dict(sources,jsa_ivi=broken)}):
+                    result=health.research_monitor(root,now,state,config)
+                self.assertEqual(result['status'],'attention',broken)
+                self.assertEqual(result['checks']['publishers']['failing'],['jsa_ivi'])
+
     def test_malformed_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);config=root/'config';config.touch();state=root/'state.json';state.write_text('[]')

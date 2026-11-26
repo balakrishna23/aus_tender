@@ -117,9 +117,14 @@ def research_monitor(work=Path('/opt/illoura-routine'), now=None,
         checks['package'] = dict(status='unavailable')
     publisher = research_freshness()
     sources = publisher.get('sources', {})
+    # Only a failed or overdue check means the refresher is broken. A publisher blocked behind a
+    # bot challenge (WA), a monthly manual download that is due, or a pending edition are known
+    # states that a person acts on; they stay listed in source_gaps but must not hold the alarm
+    # in ALARM permanently, or it could never signal a new failure.
+    failing = sorted(k for k, v in sources.items() if v in ('failed', 'check_overdue'))
     checks['publishers'] = dict(status='ok' if publisher.get('availability') == 'available'
-                               and sources and all(v == 'latest_available' for v in sources.values())
-                               else 'attention',
+                               and sources and not failing else 'attention',
+                               failing=failing,
                                source_gaps=sorted(k for k, v in sources.items() if v != 'latest_available'))
     return dict(status='ok' if all(v['status'] == 'ok' for v in checks.values()) else 'attention',
                 configured=True, checks=checks)
