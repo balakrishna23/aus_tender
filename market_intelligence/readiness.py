@@ -11,13 +11,26 @@ def readiness(engine,as_of):
         evidence=conn.execute(text('SELECT count(*) FROM market.panel_evidence')).scalar()
         inputs={r.source:r.rows for r in conn.execute(text('''SELECT s.source,s.row_count AS rows FROM market.current_research_snapshots c
             JOIN market.research_snapshots s ON s.id=c.snapshot_id'''))}
-        coverage=conn.execute(text('''SELECT sum(c.original_value) AS value,
+        # Resolve identity once per buyer, rather than joining the resolution view to
+        # every contract. Exact sums and approval predicates are unchanged.
+        coverage=conn.execute(text('''WITH totals AS MATERIALIZED (
+            SELECT buyer_key,sum(original_value) AS original_value
+            FROM market.current_analytical_contracts
+            WHERE first_published>:past AND first_published<=:asof GROUP BY buyer_key)
+            SELECT sum(c.original_value) AS value,
             sum(c.original_value) FILTER(WHERE r.confirmed_organisation_id IS NOT NULL AND r.review_status='approved' AND NOT r.register_context_stale) AS reviewed_value,
             sum(c.original_value) FILTER(WHERE r.organisation_id IS NOT NULL AND r.review_status NOT IN ('rejected','needs_recheck') AND NOT r.register_context_stale) AS proposed_value
-            FROM market.current_analytical_contracts c LEFT JOIN market.buyer_resolution r USING(buyer_key)
-            WHERE c.first_published>:past AND c.first_published<=:asof'''),{'asof':as_of,'past':as_of-timedelta(days=365)}).mappings().one()
-        views={name:conn.execute(text('SELECT count(*) FROM market.'+name)).scalar() for name in
-               ['v_agency_spend','v_supplier_profile','v_healthcare_accounts','v_demand_signals','v_panel_calendar']}
+            FROM totals c LEFT JOIN market.buyer_resolution r USING(buyer_key)'''),{'asof':as_of,'past':as_of-timedelta(days=365)}).mappings().one()
+        # Count the grouping keys instead of computing unused top-supplier JSON and
+        # correlated panel/register evidence for every analytical row.
+        count_queries={
+            'v_agency_spend':'''SELECT count(*) FROM (SELECT buyer_key,buyer,payload->>'category_tag',
+                extract(year FROM first_published) FROM market.current_analytical_contracts GROUP BY 1,2,3,4) g''',
+            'v_supplier_profile':'''SELECT count(DISTINCT supplier_abn) FROM market.current_analytical_contracts
+                WHERE supplier_abn IS NOT NULL'''}
+        for name in ['v_healthcare_accounts','v_demand_signals','v_panel_calendar']:
+            count_queries[name]='SELECT count(*) FROM market.'+name
+        views={name:conn.execute(text(query)).scalar() for name,query in count_queries.items()}
     total=coverage['value']
     return dict(as_of=as_of,status='full specification not yet accepted',buyer_identities=matches,profile_fields_missing=profile,
         panels=dict(panels,verified_evidence=evidence),input_rows=inputs,analytical_view_rows=views,

@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import uuid
+import time
 
 from sqlalchemy import text
 
@@ -31,12 +32,20 @@ def refresh(db,procurement_export,forward_export,directory,as_of):
         (directory/'refresh_report.json').write_text(json.dumps(report,default=json_value,indent=2),encoding='utf-8')
 
     def step(name,action):
-        try:result=action()
-        except Exception:
-            report['failed_step']=name
-            raise
-        report['steps'].append({'name':name,'status':'complete','result':result})
+        item={'name':name,'status':'running','started_at':datetime.now(timezone.utc)}
+        report['steps'].append(item)
         save()
+        started=time.monotonic()
+        try:
+            result=action()
+            item.update(status='complete',result=result)
+        except Exception as exc:
+            report['failed_step']=name
+            item.update(status='failed',error_code=type(exc).__name__)
+            raise
+        finally:
+            item['seconds']=round(time.monotonic()-started,3)
+            save()
         return result
 
     try:
@@ -44,13 +53,17 @@ def refresh(db,procurement_export,forward_export,directory,as_of):
         step('procurement',lambda:import_procurement(db,procurement_export))
         step('buyer_proposals',lambda:bridge_buyers(db,procurement_export))
         step('forward',lambda:import_forward(db,forward_export))
-        step('buyer_report',lambda:write_report(build_report(db,as_of),directory/'buyers'))
+        federal={}
+        def buyer_report():
+            federal.update(build_report(db,as_of))
+            return write_report(federal,directory/'buyers')
+        step('buyer_report',buyer_report)
         step('forward_report',lambda:write_forward(build_forward(db,as_of),directory/'forward'))
-        step('crm_export',lambda:export_crm(build_crm(db,as_of),directory/'crm'))
-        ready=readiness(db,as_of)
+        step('crm_export',lambda:export_crm(build_crm(db,as_of,federal=federal),directory/'crm'))
+        ready=step('readiness',lambda:readiness(db,as_of))
         (directory/'readiness.json').write_text(json.dumps(ready,default=json_value,indent=2),encoding='utf-8')
         # This is the last output: failed imports/reports never produce a publishable result.
-        step('market_package',lambda:write_brief(build_brief(db,as_of),directory/'digest'))
+        step('market_package',lambda:write_brief(build_brief(db,as_of,federal=federal),directory/'digest'))
         report.update(status='complete',package=str(directory/'digest/market_brief.json'))
     except Exception as exc:
         report.update(status='failed',error_code=type(exc).__name__)
@@ -61,7 +74,7 @@ def refresh(db,procurement_export,forward_export,directory,as_of):
             conn.execute(text('''UPDATE market.pipeline_runs SET status=:status,finished_at=now(),error_code=:error,
                 metrics=CAST(:metrics AS jsonb) WHERE id=:id'''),
                 {'id':run_id,'status':report['status'],'error':report.get('error_code'),
-                 'metrics':json.dumps({'steps_completed':len(report['steps']),'report_directory':str(directory)})})
+                 'metrics':json.dumps({'steps_completed':sum(s['status']=='complete' for s in report['steps']),'report_directory':str(directory)})})
     return report
 
 
