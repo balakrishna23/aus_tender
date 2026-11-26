@@ -65,3 +65,11 @@ class ResearchMonitor(unittest.TestCase):
             root=Path(tmp);config=root/'config';config.touch();state=root/'state.json';state.write_text('[]')
             with patch.object(health,'research_freshness',return_value={}):
                 self.assertEqual(health.research_monitor(root,state=state,config=config)['status'],'attention')
+
+    def test_unreadable_root_only_config_does_not_break_health(self):
+        # Staged server tests run as a non-root user; /etc/illoura-market is root-only (0700).
+        with tempfile.TemporaryDirectory() as tmp:
+            config=Path(tmp)/'refresh.json'
+            with patch.object(Path,'is_file',side_effect=PermissionError(13,'Permission denied')):
+                result=health.research_monitor(Path(tmp),config=config)
+            self.assertEqual(result,{'status':'unavailable','configured':None})
