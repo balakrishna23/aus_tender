@@ -10,7 +10,7 @@ import uuid
 from sqlalchemy import text
 
 from .ingest import file_hash
-from .parsers import EMAIL_PATTERN,SourceError,name_key,valid_abn
+from .parsers import EMAIL_PATTERN,SourceError,legal_key,name_key,valid_abn
 from .reporting import write_report_files
 from .resources import https_url
 
@@ -113,9 +113,18 @@ def build_rap(engine,as_of):
     with engine.connect().execution_options(isolation_level='REPEATABLE READ') as conn,conn.begin():
         records=[dict(r) for r in conn.execute(text("SELECT * FROM market.current_research WHERE source='rap_directory' AND provenance->'rap_privacy_review'->>'contains_personal_data'='false'")).mappings()]
         # A matching legal name only proposes a candidate ABN. It never establishes the scope of a group RAP.
-        names={}
-        for r in conn.execute(text('SELECT DISTINCT abn,name_key FROM market.current_register_entities WHERE NOT is_individual AND abn IS NOT NULL AND name_key IS NOT NULL')):
-            names.setdefault(r.name_key,set()).add(r.abn)
+        # Look up only the plans' own names (registered, trading or legal-form-stripped): the national
+        # registers hold millions of rows and must never be read whole.
+        wanted=dict(keys=sorted({name_key(r['payload']['organisation']) for r in records}-{''}),
+                    legal=sorted({legal_key(r['payload']['organisation']) for r in records}-{''}))
+        names={};legal_names={}
+        for r in conn.execute(text('''SELECT DISTINCT e.abn,e.name_key,e.legal_key FROM market.current_register_entities e
+                WHERE NOT e.is_individual AND e.abn IS NOT NULL AND (e.name_key=ANY(:keys) OR e.legal_key=ANY(:legal))
+            UNION SELECT DISTINCT e.abn,n.name_key,n.legal_key FROM market.register_names n
+                JOIN market.current_register_entities e ON e.snapshot_id=n.snapshot_id AND e.record_id=n.record_id
+                WHERE NOT e.is_individual AND e.abn IS NOT NULL AND (n.name_key=ANY(:keys) OR n.legal_key=ANY(:legal))'''),wanted):
+            if r.name_key:names.setdefault(r.name_key,set()).add(r.abn)
+            if r.legal_key:legal_names.setdefault(r.legal_key,set()).add(r.abn)
         contracts={r['supplier_abn']:dict(r) for r in conn.execute(text('''SELECT supplier_abn,count(*) AS contracts,sum(original_value) AS original_award_value
             FROM market.current_analytical_contracts WHERE supplier_abn IS NOT NULL GROUP BY supplier_abn''')).mappings()}
         approved={r['document_sha256']:dict(r) for r in conn.execute(text('SELECT * FROM market.current_approved_rap_extractions')).mappings()}
@@ -128,6 +137,10 @@ def build_rap(engine,as_of):
         # Keep them out of reports; only the reviewed extraction view supplies findings.
         same=[]
         abns=set(names.get(key,set()))
+        match_basis='register_exact_name' if abns else None
+        if not abns and legal_key(p['organisation']):
+            abns=set(legal_names.get(legal_key(p['organisation']),set()))
+            match_basis='register_name_without_legal_form' if abns else None
         active=bool(start and start<=as_of<=end)
         renewing=bool(active and (end-as_of).days<=365)
         proposed=[dict(abn=a,**contracts[a]) for a in sorted(abns) if a in contracts]
@@ -140,6 +153,7 @@ def build_rap(engine,as_of):
         points['approved_procurement_target']=10 if active and extracted_fields.get('has_procurement_target',{}).get('value') is True else 0
         out.append(dict(p,lane='private',period_start=start,period_end=end,period_status='within_published_period' if active else 'expired' if end and end<as_of else 'future' if start and start>as_of else 'unknown',
             score=sum(points.values()),score_components=points,candidate_abns=sorted(abns),entity_match_status='candidate_only' if abns else 'unmatched',
+            entity_match_basis=match_basis,
             reviewed_commitments=same,candidate_supplier_context=proposed,commitment_count=len(same),
             why_now='Published RAP ends within 12 months' if renewing else 'Page-cited procurement commitment requires follow-up research' if active and same else 'Verify current plan and procurement relevance',
             target_roles='unknown; commitment category review required',delivery_shortfall='unknown',eligibility='unknown; profile and specific requirements need review',

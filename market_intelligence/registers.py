@@ -23,7 +23,7 @@ from defusedxml.ElementTree import iterparse
 from sqlalchemy import text
 
 from .ingest import file_hash
-from .parsers import SourceError, name_key, valid_abn, website
+from .parsers import SourceError, legal_key, name_key, valid_abn, website
 
 PARSER_REVISION = '1'
 SOURCES = ('abn', 'asic_companies', 'asic_business_names', 'acnc', 'oric')
@@ -165,7 +165,8 @@ def _parse_abn_stream(stream, scope, found, metrics, extract_times):
             root.clear()
 
 
-def _abn_record(elem, scope, metrics):
+def _abn_record(elem, scope, metrics, keep=None):
+    """One ABR record, or None. `keep(abn, status)` replaces the procurement-scope test (national mode)."""
     abn_el = elem.find('ABN')
     if abn_el is None or not (abn_el.text or '').strip():
         raise SourceError('ABN record without ABN')
@@ -174,7 +175,7 @@ def _abn_record(elem, scope, metrics):
     if abn is None:
         metrics['invalid_abn'] += 1
         return None
-    if abn not in scope:
+    if not (keep(abn, abn_el.get('status')) if keep else abn in scope):
         metrics['out_of_scope'] += 1
         return None
     entity_type = elem.findtext('EntityType/EntityTypeInd')
@@ -543,21 +544,22 @@ def _write_snapshot(conn, snapshot_id, metadata, metrics, records, scope):
             conn.execute(text('INSERT INTO market.register_scope(snapshot_id,abn) VALUES(:s,:abn)'),
                          [dict(s=snapshot_id, abn=a) for a in ordered[i:i + BATCH]])
     rows = [dict(snapshot_id=snapshot_id, record_id=r.record_id, abn=r.abn, acn=r.acn, icn=r.icn, name=r.name,
-                 name_key=name_key(r.name) if r.name else None, is_individual=r.is_individual, status=r.status,
+                 name_key=name_key(r.name) if r.name else None, legal_key=legal_key(r.name) if r.name else None,
+                 is_individual=r.is_individual, status=r.status,
                  status_from=r.status_from, registered_on=r.registered_on, deregistered_on=r.deregistered_on,
                  entity_type=r.entity_type, state=r.state, postcode=r.postcode,
                  attributes=json.dumps(r.attributes, default=str), issues=json.dumps(r.issues)) for r in records]
     for i in range(0, len(rows), BATCH):
-        conn.execute(text('''INSERT INTO market.register_entities(snapshot_id,record_id,abn,acn,icn,name,name_key,
+        conn.execute(text('''INSERT INTO market.register_entities(snapshot_id,record_id,abn,acn,icn,name,name_key,legal_key,
             is_individual,status,status_from,registered_on,deregistered_on,entity_type,state,postcode,attributes,issues)
-            VALUES(:snapshot_id,:record_id,:abn,:acn,:icn,:name,:name_key,:is_individual,:status,:status_from,
+            VALUES(:snapshot_id,:record_id,:abn,:acn,:icn,:name,:name_key,:legal_key,:is_individual,:status,:status_from,
             :registered_on,:deregistered_on,:entity_type,:state,:postcode,CAST(:attributes AS jsonb),CAST(:issues AS jsonb))'''),
             rows[i:i + BATCH])
-    names = [dict(snapshot_id=snapshot_id, record_id=r.record_id, name_type=t, name=n, name_key=name_key(n))
+    names = [dict(snapshot_id=snapshot_id, record_id=r.record_id, name_type=t, name=n, name_key=name_key(n), legal_key=legal_key(n))
              for r in records if not r.is_individual for t, n in sorted(r.other_names)]
     for i in range(0, len(names), BATCH):
-        conn.execute(text('''INSERT INTO market.register_names(snapshot_id,record_id,name_type,name,name_key)
-            VALUES(:snapshot_id,:record_id,:name_type,:name,:name_key)'''), names[i:i + BATCH])
+        conn.execute(text('''INSERT INTO market.register_names(snapshot_id,record_id,name_type,name,name_key,legal_key)
+            VALUES(:snapshot_id,:record_id,:name_type,:name,:name_key,:legal_key)'''), names[i:i + BATCH])
     # Never roll the current pointer backwards when an older file is imported later.
     conn.execute(text('''INSERT INTO market.current_register_snapshots(source,snapshot_id) VALUES(:source,:id)
         ON CONFLICT(source) DO UPDATE SET snapshot_id=EXCLUDED.snapshot_id
