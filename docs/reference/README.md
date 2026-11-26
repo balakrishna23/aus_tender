@@ -324,4 +324,14 @@ These pages describe checked-in code as read on 13 November 2026. They do not es
 | `today_list.py` | [intelligence.md](intelligence.md) |
 | `docs/reference/README.md` | [README.md](README.md) |
 
+Spec-view additions (27 November 2026):
+
+| File | Reference |
+| --- | --- |
+| `market_intelligence/views.py` | [intelligence.md](intelligence.md#spec-analytical-generation-files) |
+| `market_intelligence/account_score.py` | [intelligence.md](intelligence.md#spec-analytical-generation-files) |
+| `market_intelligence/rules/account_score.json` | [intelligence.md](intelligence.md#spec-analytical-generation-files) |
+| `market_intelligence/migrations/versions/025_spec_views.py` | [intelligence.md](intelligence.md#spec-analytical-generation-files) |
+| `tests/test_market_spec_views.py` | [tests.md](tests.md#spec-analytical-views) |
+
 Unverified items: live portal coverage; deployed database presence, extra tables and row counts; writer/full schema of optional `data_quality.db`; current reviewed-input availability and data quality; generated dashboard/PDF layouts and existing guide content; current scheduled-task/timer/server state and delivery; private `ACCESS_GUIDE` location and installed Claude configuration; actual test/Linux/browser/OAuth/Sheets results and installed runtime/dependency availability. Each relevant page states its own limit. The source paths and module ownership were checked statically.
