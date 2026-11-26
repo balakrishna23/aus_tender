@@ -95,6 +95,21 @@ TABLES = {
     "aged_care_quality": "SELECT * FROM market.v_aged_care_quality",
     "aged_care_provider_matches": "SELECT * FROM market.v_aged_care_provider_proposals",
     "research_freshness": "SELECT * FROM market.v_research_freshness",
+    "account_score": "SELECT * FROM market.v_account_score ORDER BY rank LIMIT 10000",
+    "buyict_buyers": "SELECT * FROM market.v_buyict_buyers ORDER BY rank LIMIT 10000",
+    "buyict_gaps": "SELECT * FROM market.v_buyict_gaps ORDER BY rank LIMIT 10000",
+    "ipp_gap": "SELECT * FROM market.v_ipp_gap ORDER BY rank LIMIT 10000",
+    "ipp_levers": "SELECT * FROM market.v_ipp_levers ORDER BY rank LIMIT 10000",
+    "prime_targets": "SELECT * FROM market.v_prime_targets ORDER BY rank LIMIT 10000",
+    "partner_candidates": "SELECT * FROM market.v_partner_candidates ORDER BY rank LIMIT 10000",
+    "indigenous_partners": "SELECT * FROM market.v_indigenous_partners ORDER BY rank LIMIT 10000",
+    "rap_targets": "SELECT * FROM market.v_rap_targets ORDER BY rank LIMIT 10000",
+    "panel_access": "SELECT * FROM market.v_panel_access ORDER BY rank LIMIT 10000",
+    "forward_pipeline": "SELECT * FROM market.v_forward_pipeline ORDER BY rank LIMIT 10000",
+    "demand_vs_bench": "SELECT * FROM market.v_demand_vs_bench ORDER BY rank LIMIT 10000",
+    "lookalikes": "SELECT * FROM market.v_lookalikes ORDER BY rank LIMIT 10000",
+    "whats_changed": "SELECT * FROM market.v_whats_changed ORDER BY rank LIMIT 10000",
+    "rate_benchmarks": "SELECT * FROM market.v_rate_benchmarks ORDER BY buyer_key,role_category,state NULLS LAST LIMIT 10000",
     "sources": """
         SELECT 'register' AS kind, s.source, s.id AS snapshot_id, s.source_url, s.licence,
                s.retrieved_at, s.effective_date::text AS effective_date, s.imported_at, s.row_count
@@ -132,6 +147,10 @@ TABLES = {
            FROM market.remoteness_snapshots s ORDER BY s.retrieved_at DESC, s.imported_at DESC LIMIT 1)""",
 }
 INDEXES = {
+    "account_score": ["lane", "account_key", "rank_in_lane"],
+    "lookalikes": ["lane", "account_key"],
+    "buyict_gaps": ["buyer_key"],
+    "rate_benchmarks": ["buyer_key", "role_category"],
     "contracts": ["buyer_key", "supplier_abn", "cn_id"],
     "register_entities": ["abn", "name_key", "record_id"],
     "register_names": ["record_id", "name_key"],

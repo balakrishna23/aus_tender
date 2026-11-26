@@ -36,6 +36,8 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Isolated federal intelligence staging; no outreach or collector writes')
     commands=parser.add_subparsers(dest='command',required=True)
     commands.add_parser('migrate')
+    views=commands.add_parser('refresh-views',help='Atomically refresh internal analytical account views')
+    views.add_argument('--as-of',required=True,type=date.fromisoformat)
     commands.add_parser('status')
     commands.add_parser('freshness-report', help='Informational publisher checks and imported editions')
     research_refresh=commands.add_parser('research-refresh', help='Refresh publishers and private inboxes; never sends')
@@ -201,7 +203,10 @@ def main(argv=None):
             result=verify(db,args.collection,args.json)
         elif args.command=='migrate':
             migrate(db)
-            result={'schema':'024_national_registers','status':'ready'}
+            result={'schema':'025_spec_views','status':'ready'}
+        elif args.command=='refresh-views':
+            from .views import refresh_views
+            result=refresh_views(db,args.as_of)
         elif args.command=='import-aged-care':
             from .aged_care import import_aged_care
             result=import_aged_care(db,args.manifest)
