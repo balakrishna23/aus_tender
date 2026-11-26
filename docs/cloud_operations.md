@@ -184,6 +184,10 @@ morning's publication:
 sudo /opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_research_export.py install
 ```
 
+Since 25 November it also carries aged-care quality ratings, aged-care provider register
+matches and research freshness (migrations 022 and 023), so the production research database must
+be at 023 before an exporter that lists them is deployed.
+
 `research.db` must exist before `policy.json` lists `research`. The publish step requires
 every listed file, so create it by hand once before the first `deploy-ops` that ships this
 policy.

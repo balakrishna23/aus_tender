@@ -83,6 +83,10 @@ TABLES = {
     "panels": "SELECT * FROM market.procurement_panels WHERE snapshot_id = " + PROCUREMENT,
     "panel_links": "SELECT * FROM market.procurement_panel_links WHERE snapshot_id = " + PROCUREMENT,
     "illoura_profile": "SELECT key, value, evidence_url, updated_at, note FROM market.illoura_profile",
+    # Migrations 022 and 023 (deploy them before this export runs).
+    "aged_care_quality": "SELECT * FROM market.v_aged_care_quality",
+    "aged_care_provider_matches": "SELECT * FROM market.v_aged_care_provider_proposals",
+    "research_freshness": "SELECT * FROM market.v_research_freshness",
     "sources": """
         SELECT 'register' AS kind, s.source, s.id AS snapshot_id, s.source_url, s.licence,
                s.retrieved_at, s.effective_date::text AS effective_date, s.imported_at, s.row_count
