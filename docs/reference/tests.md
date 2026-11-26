@@ -206,3 +206,13 @@ python deploy\aws\illoura_aws.py verify-routine
 ```
 
 Windows success cannot verify Linux flock, ownership, symlink publication or systemd behavior. Actual suite results, Linux deployment behavior, browser layouts and live OAuth/Sheets integrations are unverified here. Model benchmarks and held-out evaluation definitions are covered in [local-assistant.md](local-assistant.md), not silently run by unit discovery.
+
+## Spec analytical views
+
+`tests/test_market_spec_views.py` covers lane policy validation and score math,
+missing coverage, unknown/applied penalties, engagement, conservative invitation
+matches, similarity, private-field omission, builder reuse through one snapshot,
+and export/allowlist parity. Opt-in isolated PostgreSQL tests exercise pointer
+publication/rollback, 30-generation derived-row retention with retained metadata,
+and estimated rate groups on date/headcount fixtures. See
+[usage and limits](../market_intelligence.md#spec-analytical-views-and-ranked-lanes-migration-025).

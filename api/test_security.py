@@ -192,6 +192,13 @@ class SecurityTests(unittest.TestCase):
             "private_notes", response.json()["datasets"]["contract_api"]["tables"]
         )
 
+    def test_spec_views_are_allowlisted_but_generation_storage_is_private(self):
+        names={'account_score','buyict_buyers','buyict_gaps','ipp_gap','ipp_levers','prime_targets',
+               'partner_candidates','indigenous_partners','rap_targets','panel_access','forward_pipeline',
+               'demand_vs_bench','lookalikes','whats_changed','rate_benchmarks'}
+        self.assertTrue(names.issubset(set(api.ALLOWED['research'])))
+        self.assertTrue({'view_rows','view_generations','current_view_generation'}.isdisjoint(api.ALLOWED['research']))
+
     def test_server_side_aggregation(self):
         r = self.query(
             "SELECT count(*) AS records,sum(current_value) AS total FROM contracts"
