@@ -10,7 +10,7 @@ from sqlalchemy import text
 
 from .acquire_common import AcquisitionError
 from .acquire_rap import DIRECTORY, TYPES, load_collection
-from .parsers import EMAIL_PATTERN, SourceError, name_key
+from .parsers import EMAIL_PATTERN, LEGAL_SUFFIXES, SourceError, legal_key, name_key
 from .rap_extract import PHONE, digest, privacy_check, reviewer_id
 from .research import SCHEMAS, period_range
 
@@ -45,20 +45,14 @@ WORDS = set('community health services service association '
             'distribution maintenance cleaning facilities security telecommunications publishing '
             'association associations cooperative cooperatives union unions councils schools '
             'universities hospitals banks libraries museums foundations'.split())
-LEGAL_SUFFIXES = frozenset('pty ltd limited inc incorporated co company corp corporation plc llc llp'.split())
 HONORIFIC = re.compile(r'\b(?:mr|mrs|ms|miss|dr|prof|professor|sir|dame)\.?\s', re.I)
 POLITICAL = re.compile(r'\b(?:MP|MHR|MLA|MLC|senator|honourable)\b', re.I)
 INITIALS = re.compile(r'\b[A-Za-z]\.|\b[A-Z](?:\s+[A-Z])?\s+[A-Z][a-z]')
 
 
 def legal_name_key(value):
-    """Normalise punctuation, an initial 'the', and terminal legal-form tokens only."""
-    tokens = name_key(value).split()
-    if tokens[:1] == ['the']:
-        tokens.pop(0)
-    while tokens and tokens[-1] in LEGAL_SUFFIXES:
-        tokens.pop()
-    return ' '.join(tokens)
+    """Normalise punctuation, an initial 'the', and terminal legal-form tokens only (shared with imports)."""
+    return legal_key(value)
 
 
 def phone_path(path):
@@ -102,22 +96,53 @@ def safe_plan_url(value):
         raise SourceError('invalid_plan_url') from None
 
 
-def load_context(engine):
-    """One consistent DB observation; no external lookups, no negative-match inference."""
+def collection_names(collection):
+    """Organisation names in a retained collection; [] when it cannot be read (evaluate then fails closed)."""
+    try:
+        return sorted({r.get('organisation') or '' for r in load_collection(collection).get('records', [])})
+    except Exception:  # noqa: BLE001 - evaluate() reports the collection error itself
+        return []
+
+
+def load_context(engine, names=None):
+    """One consistent DB observation; no external lookups, no negative-match inference.
+
+    With `names`, only register rows whose stored name key or legal key equals a key of those names are
+    loaded (plus every row sharing an ABN with them, so individual records still mark their ABN). Matching
+    only ever looks up those keys, so decisions are identical to loading the whole register, which is no
+    longer possible once the national registers (millions of rows) are loaded.
+    """
     with engine.connect().execution_options(isolation_level='REPEATABLE READ') as conn, conn.begin():
         snapshots = [dict(r) for r in conn.execute(text('''
             SELECT source,snapshot_id::text AS snapshot_id FROM market.current_register_snapshots
             UNION ALL SELECT source,snapshot_id::text FROM market.current_snapshots ORDER BY source''')).mappings()]
-        entities = [dict(r) for r in conn.execute(text('''
-            SELECT e.source,e.record_id,e.abn,e.name,e.is_individual,e.entity_type
-            FROM market.current_register_entities e
-            UNION ALL
-            SELECT e.source,e.record_id,e.abn,n.name,e.is_individual,e.entity_type
-            FROM market.current_register_entities e JOIN market.register_names n
-              ON n.snapshot_id=e.snapshot_id AND n.record_id=e.record_id
-            UNION ALL
-            SELECT source,publisher_id,abn,name,false,kind FROM market.organisation_observations
-            WHERE kind IN ('body','unit')''')).mappings()]
+        if names is None:
+            register = [dict(r) for r in conn.execute(text('''
+                SELECT e.source,e.record_id,e.abn,e.name,e.is_individual,e.entity_type
+                FROM market.current_register_entities e
+                UNION ALL
+                SELECT e.source,e.record_id,e.abn,n.name,e.is_individual,e.entity_type
+                FROM market.current_register_entities e JOIN market.register_names n
+                  ON n.snapshot_id=e.snapshot_id AND n.record_id=e.record_id''')).mappings()]
+        else:
+            keys = dict(keys=sorted({name_key(n) for n in names} - {''}), legal=sorted({legal_key(n) for n in names} - {''}))
+            register = [dict(r) for r in conn.execute(text('''
+                SELECT e.source,e.record_id,e.abn,e.name,e.is_individual,e.entity_type
+                FROM market.current_register_entities e
+                WHERE e.name_key = ANY(:keys) OR e.legal_key = ANY(:legal)
+                UNION ALL
+                SELECT e.source,e.record_id,e.abn,n.name,e.is_individual,e.entity_type
+                FROM market.register_names n JOIN market.current_register_entities e
+                  ON n.snapshot_id=e.snapshot_id AND n.record_id=e.record_id
+                WHERE n.name_key = ANY(:keys) OR n.legal_key = ANY(:legal)'''), keys).mappings()]
+            abns = sorted({r['abn'] for r in register if r['abn']})
+            register += [dict(r) for r in conn.execute(text('''
+                SELECT e.source,e.record_id,e.abn,e.name,e.is_individual,e.entity_type
+                FROM market.current_register_entities e WHERE e.abn = ANY(:abns)'''), dict(abns=abns)).mappings()]
+            register = list({json.dumps(r, sort_keys=True, default=str): r for r in register}.values())
+        entities = register + [dict(r) for r in conn.execute(text('''
+            SELECT source,publisher_id AS record_id,abn,name,false AS is_individual,kind AS entity_type
+            FROM market.organisation_observations WHERE kind IN ('body','unit')''')).mappings()]
         baseline = [dict(r) for r in conn.execute(text("SELECT snapshot_id::text,payload,provenance FROM market.current_research WHERE source='rap_directory'")).mappings()]
     entities.sort(key=lambda row: json.dumps(row,sort_keys=True))
     return dict(snapshots=snapshots, entities=entities, baseline=baseline)
@@ -284,12 +309,13 @@ def review(engine, collection, destination, account):
         raise SourceError('Review destination already exists')
     stage = 'review'
     try:
-        bundle, audit = evaluate(collection, load_context(engine))
+        names = collection_names(collection)
+        bundle, audit = evaluate(collection, load_context(engine, names))
         audit['reviewer_id'] = account
         audit['review_pass'] = 'passed'
         # Reload retained evidence AND current DB independently. Changes fail closed.
         stage = 'verifier'
-        checked, second = evaluate(collection, load_context(engine))
+        checked, second = evaluate(collection, load_context(engine, collection_names(collection)))
         second.update(reviewer_id=account, review_pass='passed')
         if audit != second or bundle != checked:
             raise SourceError('Independent RAP verification differs')
@@ -322,7 +348,7 @@ def verify(engine, collection, bundle_path):
     supplied = json.loads(Path(bundle_path).read_text(encoding='utf-8'))
     audit = json.loads(audit_path(bundle_path).read_text(encoding='utf-8'))
     account = reviewer_id(supplied['privacy_review']['reviewer_id'], 'rap_directory')
-    context = load_context(engine)
+    context = load_context(engine, collection_names(collection))
     current = context['baseline']
     # Re-verifying an already imported identical bundle uses its original baseline.
     # Any other current snapshot/context change still invalidates the audit.

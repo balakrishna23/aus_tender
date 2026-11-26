@@ -37,6 +37,19 @@ def name_key(value):
     return ' '.join(re.findall(r'\w+', value, flags=re.UNICODE))
 
 
+LEGAL_SUFFIXES = frozenset('pty ltd limited inc incorporated co company corp corporation plc llc llp'.split())
+
+
+def legal_key(value):
+    """name_key without an initial 'the' or terminal legal-form tokens ('The Acme Pty Ltd' -> 'acme')."""
+    tokens = name_key(value).split()
+    if tokens[:1] == ['the']:
+        tokens.pop(0)
+    while tokens and tokens[-1] in LEGAL_SUFFIXES:
+        tokens.pop()
+    return ' '.join(tokens)
+
+
 def valid_abn(value):
     if value is None:
         return None
