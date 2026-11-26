@@ -666,7 +666,7 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
         raise OperationError("deploy-api restarts the live API; rerun with --yes")
     files = {
         n: lf_bytes(repo / "api" / n)
-        for n in ("app.py", "test_security.py", "requirements.txt")
+        for n in ("app.py", "review_support.py", "review_page.py", "test_security.py", "requirements.txt")
     }
     code, out, _ = remote.run(["sudo", "cat", API_DIR + "/requirements.txt"])
     server_lines = {line.strip() for line in out.splitlines() if line.strip()}
@@ -683,6 +683,7 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
     stage = new_stage()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup = f"{BACKUP_ROOT}/api-app-{stamp}.py"
+    support_backups = {}
     try:
         stage_files(remote, stage, files)
         tests = run_tests(
@@ -706,6 +707,13 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
         )
         if test_only:
             return {"tested": True, "installed": [], "tests": tests}
+        for name in ('review_support.py', 'review_page.py'):
+            exists, _, _ = remote.run(['sudo', 'test', '-f', API_DIR + '/' + name])
+            if exists == 0:
+                target = backup + '.' + name
+                must(remote, ['sudo', 'install', '-o', 'root', '-g', 'root', '-m', '0600',
+                              API_DIR + '/' + name, target], 'back up API support')
+                support_backups[name] = target
         must(
             remote,
             [
@@ -738,6 +746,9 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
             ],
             "install API",
         )
+        for name in ('review_support.py', 'review_page.py'):
+            must(remote, ['sudo', 'install', '-o', 'root', '-g', 'illoura-api', '-m', '0640',
+                          stage + '/' + name, API_DIR + '/' + name], 'install API support')
     finally:
         remove_stage(remote, stage)
     restart_code, _, _ = remote.run(["sudo", "systemctl", "restart", "illoura-api"])
@@ -754,6 +765,11 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
                 "previous_backup": backup,
             }
         if restart_code != 0 or time.monotonic() >= deadline:
+            support_failed = False
+            for name, saved in support_backups.items():
+                restored, _, _ = remote.run(['sudo', 'install', '-o', 'root', '-g', 'illoura-api', '-m', '0640',
+                                            saved, API_DIR + '/' + name])
+                support_failed = support_failed or restored != 0
             put_back, _, _ = remote.run(
                 [
                     "sudo",
@@ -771,7 +787,7 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
             started, _, _ = remote.run(["sudo", "systemctl", "restart", "illoura-api"])
             reason = ("The restart command failed" if restart_code != 0
                       else "New API did not become healthy")
-            if put_back != 0 or started != 0:
+            if put_back != 0 or started != 0 or support_failed:
                 # Never claim a recovery that did not happen.
                 raise OperationError(
                     reason + "; restoring the previous version ALSO FAILED. The API may be "
@@ -783,10 +799,12 @@ def deploy_api(remote, *, yes=False, repo=REPO, wait_seconds=30, test_only=False
         time.sleep(2)
 
 
-def api_key(remote, settings, action, name, *, host=None):
+def api_key(remote, settings, action, name, *, host=None, scope=None):
     """Create or revoke a named key. The key itself is written only to the private directory."""
     if not KEY_NAME.fullmatch(name):
         raise ValueError("Use a simple name: letters, digits, _ or -")
+    if scope not in (None, 'review') or (scope and action != 'create'):
+        raise ValueError('Only new keys can request the review scope')
     keys = json.loads(must(remote, ["sudo", "cat", KEYS_FILE], "read key hashes"))
     existing = next((k for k in keys if k["name"] == name), None)
     result = {}
@@ -795,6 +813,8 @@ def api_key(remote, settings, action, name, *, host=None):
             raise OperationError("Name already exists; use a new name to rotate")
         token = "illoura_" + secrets.token_urlsafe(36)
         keys.append({"name": name, "sha256": sha256(token.encode()), "enabled": True})
+        if scope:
+            keys[-1]['scopes'] = [scope]
         host = (
             host
             or aws(
@@ -1053,6 +1073,54 @@ def research_refresh(remote, action, *, yes=False, repo=REPO):
     finally:
         remove_stage(remote, stage)
     return dict(installed=True, timer_changed=False)
+
+
+def review_import(remote, action, *, yes=False, repo=REPO):
+    units = ('illoura-review-import.path', 'illoura-review-import.service')
+    if action == 'status':
+        _, out, _ = remote.run(['systemctl', 'show', *units, '-p', 'ActiveState', '-p', 'SubState', '-p', 'Result'])
+        return {'units': out.strip()}
+    if action != 'install':
+        raise ValueError('Unknown review import action')
+    if not yes:
+        raise OperationError('Review import install requires --yes; does not enable the path unit')
+    names = ('illoura_review_import.py', 'illoura-review-api.conf', *units)
+    files = {'deploy/' + n: lf_bytes(repo / 'deploy' / n) for n in names}
+    files['tests/test_cloud_review_import.py'] = lf_bytes(repo / 'tests/test_cloud_review_import.py')
+    stage = new_stage()
+    try:
+        stage_files(remote, stage, files)
+        tests = run_tests(remote, [OPS_PYTHON, '-m', 'unittest', 'discover', '-s', stage + '/tests',
+                                   '-p', 'test_cloud_review_import.py'], 'staged review wrapper tests')
+        # Existing API deployments use illoura-api; research imports run as ubuntu.
+        # Groups grant read/traverse only; neither service can write the other's directory.
+        must(remote, ['sudo', 'groupadd', '-f', 'illoura-review'], 'create review read group')
+        for user in ('illoura-api', 'ubuntu'):
+            must(remote, ['sudo', 'usermod', '-a', '-G', 'illoura-review', user], 'grant review read access')
+        for folder, owner in (('/var/lib/illoura-review', 'root'),
+                              ('/var/lib/illoura-review/inbox', 'illoura-api'),
+                              ('/var/lib/illoura-review/ledger', 'ubuntu')):
+            must(remote, ['sudo', 'install', '-d', '-o', owner, '-g', 'illoura-review', '-m', '2750', folder],
+                 'create protected review directory')
+        installed = {}
+        must(remote, ['sudo', 'install', '-d', '-o', 'root', '-g', 'root', '-m', '0755',
+                      '/etc/systemd/system/illoura-api.service.d'], 'create API sandbox settings directory')
+        for name in names:
+            target = (OPS_DIR + '/' + name if name.endswith('.py') else
+                      '/etc/systemd/system/illoura-api.service.d/review.conf' if name.endswith('.conf') else
+                      '/etc/systemd/system/' + name)
+            must(remote, ['sudo', 'install', '-o', 'root', '-g', 'root', '-m', '0644',
+                          stage + '/deploy/' + name, target], 'install review worker')
+            installed[target] = sha256(files['deploy/' + name])
+        out = must(remote, ['sudo', 'sha256sum', *installed], 'verify installed review files')
+        hashes = {line.split()[1]: line.split()[0] for line in out.splitlines() if line.strip()}
+        if any(hashes.get(p) != h for p, h in installed.items()):
+            raise OperationError('Installed review files do not match staged hashes')
+        must(remote, ['sudo', 'systemctl', 'daemon-reload'], 'reload review units')
+        return {'installed': list(installed), 'tests': tests, 'path_enabled': False,
+                'api_restart_required': True, 'application_build_required': True}
+    finally:
+        remove_stage(remote, stage)
 
 
 # --------------------------------------------------------------------------- OS upkeep
@@ -1334,6 +1402,7 @@ def build_parser():
     key = sub.add_parser("api-key")
     key.add_argument("key_action", choices=["create", "revoke"])
     key.add_argument("--name", required=True)
+    key.add_argument('--scope', choices=['review'])
     sender = sub.add_parser("set-health-sender", help="Write /etc/illoura-ops/health.env (private)")
     sender.add_argument("--email", required=True)
     sender.add_argument("--yes", action="store_true")
@@ -1353,6 +1422,9 @@ def build_parser():
     research_timer = sub.add_parser('research-refresh', help='Install or manage the independent research timer')
     research_timer.add_argument('research_action', choices=['install', 'enable', 'disable', 'status'])
     research_timer.add_argument('--yes', action='store_true')
+    reviews = sub.add_parser('review-import', help='Install or inspect the internal review worker')
+    reviews.add_argument('review_action', choices=['install', 'status'])
+    reviews.add_argument('--yes', action='store_true')
     sub.add_parser(
         "harden-os",
         help="Keep Ubuntu updates and service restarts out of the 06:15-08:15 Sydney brief window",
@@ -1426,6 +1498,8 @@ def main(argv=None, remote_factory=SshRemote):
             result = schedule(remote, args.timer_action, yes=args.yes)
         elif args.action == 'research-refresh':
             result = research_refresh(remote, args.research_action, yes=args.yes)
+        elif args.action == 'review-import':
+            result = review_import(remote, args.review_action, yes=args.yes)
         elif args.action == "harden-os":
             result = harden_os(remote, yes=args.yes)
         elif args.action == "os-update":
@@ -1440,7 +1514,7 @@ def main(argv=None, remote_factory=SshRemote):
         elif args.action == "verify-routine":
             result = deploy_routine(remote, test_only=True)
         else:
-            result = api_key(remote, settings, args.key_action, args.name)
+            result = api_key(remote, settings, args.key_action, args.name, scope=args.scope)
     finally:
         remote.close()
     print(json.dumps(result, indent=2))

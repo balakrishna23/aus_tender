@@ -11,6 +11,118 @@ from datetime import datetime, timezone, timedelta
 from unittest.mock import patch
 
 
+class ReviewSecurityTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        keys = self.root / 'keys.json'
+        keys.write_text(json.dumps([{'name': name, 'sha256': hashlib.sha256(token.encode()).hexdigest(),
+            'enabled': True, **({'scopes': ['review']} if scoped else {})}
+            for name, token, scoped in [('reader', 'read-key', False), ('reviewer', 'review-key', True),
+                                        ('other', 'other-key', True)]]))
+        patches = patch.multiple(api, KEYS=keys, DATA=self.root, REVIEW_INBOX=self.root / 'inbox',
+                                 REVIEW_LEDGER=self.root / 'ledger')
+        patches.start()
+        self.addCleanup(patches.stop)
+        api.rates.clear()
+        api.review_rates.clear()
+        api.failures.clear()
+        # These routes do not need the MCP lifespan (its manager is single-use).
+        self.client = TestClient(api.app)
+        self.addCleanup(self.client.close)
+        self.headers = {'Authorization': 'Bearer review-key'}
+        self.body = dict(kind='profile', target='insurance', expected='a' * 64,
+                         evidence_url='https://example.gov.au/proof', notes='', value='current')
+
+    def post(self, body=None, headers=None):
+        return self.client.post('/v1/review/decisions', headers=headers or self.headers,
+                                json=self.body if body is None else body)
+
+    def test_scope_and_revocation_enforced(self):
+        self.assertEqual(self.post(headers={'Authorization': 'Bearer read-key'}).status_code, 403)
+        self.assertEqual(self.client.get('/v1/review/status', headers={'Authorization': 'Bearer read-key'}).status_code, 403)
+        self.assertEqual(self.post(headers={'Authorization': 'Bearer wrong-key'}).status_code, 401)
+        self.assertFalse(api.REVIEW_INBOX.exists())
+
+    def test_strict_schema_https_controls_and_bounded_body(self):
+        for change in ({'extra': 'no'}, {'reviewer': 'spoof'}, {'evidence_url': 'http://example.gov.au'},
+                       {'evidence_url': 'https://user:pass@example.gov.au'}, {'notes': 'bad\x00'},
+                       {'kind': 'other'}, {'kind': []}, {'value': 123}):
+            self.assertEqual(self.post(self.body | change).status_code, 422, change)
+        self.assertEqual(self.post(self.body | {'notes': 'x' * 9000}).status_code, 413)
+        self.assertFalse(api.REVIEW_INBOX.exists())
+
+    def test_inbox_identity_paths_and_reviewer_status_isolation(self):
+        self.assertEqual(self.post(self.body | {'inbox': '../escape'}).status_code, 422)
+        result = self.post().json()
+        files = list(api.REVIEW_INBOX.glob('*.jsonl'))
+        self.assertEqual(len(files), 1)
+        entry = json.loads(files[0].read_text())
+        self.assertEqual(entry['reviewer'], 'reviewer')
+        self.assertEqual(entry['id'], result['id'])
+        self.assertTrue(entry['submitted_at'].endswith('+00:00'))
+        self.assertEqual(self.client.get('/v1/review/status', headers=self.headers).json()['decisions'][0]['status'], 'queued')
+        self.assertEqual(self.client.get('/v1/review/status', headers={'Authorization': 'Bearer other-key'}).json(), {'decisions': []})
+        api.REVIEW_LEDGER.mkdir()
+        (api.REVIEW_LEDGER / (result['id'] + '.json')).write_text(json.dumps({'status': 'applied', 'processed_at': 'now'}))
+        self.assertEqual(self.client.get('/v1/review/status', headers=self.headers).json()['decisions'][0]['status'], 'applied')
+
+    def test_per_key_rate_limit_and_total_inbox_cap(self):
+        for _ in range(20):
+            self.assertEqual(self.post().status_code, 202)
+        self.assertEqual(self.post().status_code, 429)
+        api.review_rates.clear()
+        with patch.object(api.review_wire, 'INBOX_LIMIT', 1):
+            self.assertEqual(self.post().status_code, 507)
+
+    def test_page_no_external_resources_and_session_only_key(self):
+        response = self.client.get('/review')
+        self.assertEqual(response.status_code, 200)
+        self.assertNotRegex(response.text, r'(?:src|href)=[\"\x27]https?://')
+        self.assertNotIn('localStorage', response.text)
+        self.assertIn('sessionStorage', response.text)
+        self.assertIn("connect-src 'self'", response.headers['content-security-policy'])
+        self.assertIn("frame-ancestors 'none'", response.headers['content-security-policy'])
+        self.assertIn('textContent', response.text)
+
+    def test_queue_fixed_columns_conflicts_first_and_official_links(self):
+        wire = api.review_wire
+        with sqlite3.connect(self.root / 'research.db') as db:
+            for kind, columns in wire.COLUMNS.items():
+                db.execute('CREATE TABLE ' + wire.TABLES[kind] + '(' + ','.join(columns) + ')')
+            buyer = dict.fromkeys(wire.BUYER_COLUMNS)
+            buyer.update(buyer_key='exact', buyer_name='A exact', buyer_abn='51824753556',
+                         match_status='exact_abn', organisation_id='gov:one', review_status='unreviewed',
+                         register_context_stale=0, candidate_ids='["gov:one"]', snapshots='["snapshot"]',
+                         candidate_evidence=json.dumps([dict(organisation_id='gov:one', name='Government body',
+                         abn='51824753556', source='agor', source_url='https://example.gov.au/body', snapshot_id='snapshot')]),
+                         evidence='valid_abn_unique_in_current_register')
+            db.execute('INSERT INTO buyer_resolution VALUES (' + ','.join('?' for _ in buyer) + ')', tuple(buyer.values()))
+            buyer.update(buyer_key='conflict', buyer_name='Z conflict', match_status='conflict')
+            db.execute('INSERT INTO buyer_resolution VALUES (' + ','.join('?' for _ in buyer) + ')', tuple(buyer.values()))
+            db.execute('CREATE TABLE register_people(name, email)')
+            db.execute("INSERT INTO register_people VALUES ('PRIVATE PERSON', 'PRIVATE CONTACT')")
+        db.close()
+        response = self.client.get('/v1/review/queue', headers=self.headers)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['buyer'][0]['buyer_key'], 'conflict')
+        self.assertNotIn('PRIVATE', response.text)
+        self.assertEqual(response.json()['buyer'][0]['candidate_evidence'][0]['source_url'], 'https://example.gov.au/body')
+        self.assertRegex(response.json()['buyer'][0]['expected'], '^[a-f0-9]{64}$')
+
+    def test_buyer_panel_enums_and_no_boolean_coercion(self):
+        common = {k: self.body[k] for k in api.review_wire.COMMON}
+        panel = common | dict(kind='panel', relevant=True, illoura_status='member')
+        self.assertEqual(self.post(panel).status_code, 202)
+        for change in ({'relevant': 'yes'}, {'relevant': 1}, {'illoura_status': 'eligible'}):
+            self.assertEqual(self.post(panel | change).status_code, 422)
+        buyer = common | dict(kind='buyer', decision='approved', organisation_id='gov:one')
+        self.assertEqual(self.post(buyer).status_code, 202)
+        self.assertEqual(self.post(buyer | dict(decision='rejected')).status_code, 422)
+        self.assertEqual(self.post(buyer | dict(decision='rejected', organisation_id=None)).status_code, 202)
+
+
 class SecurityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

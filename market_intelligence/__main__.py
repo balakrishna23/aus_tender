@@ -47,6 +47,9 @@ def main(argv=None):
     quality.add_argument('--as-of',required=True,type=date.fromisoformat)
     queue=commands.add_parser('review-queue')
     queue.add_argument('--output',help='Save a read-only HTML/JSON review packet')
+    inbox=commands.add_parser('review-inbox',help='Apply queued human decisions offline against current evidence')
+    inbox.add_argument('--inbox',required=True)
+    inbox.add_argument('--ledger',required=True)
     procurement=commands.add_parser('import-procurement')
     procurement.add_argument('--database',required=True)
     report=commands.add_parser('buyer-report')
@@ -183,7 +186,10 @@ def main(argv=None):
             print(json.dumps(templates(args.output),indent=2))
             return 0
         db=engine()
-        if args.command=='freshness-report':
+        if args.command=='review-inbox':
+            from .review_inbox import import_inbox
+            result=import_inbox(db,args.inbox,args.ledger)
+        elif args.command=='freshness-report':
             from .freshness import report
             result=report(db)
         elif args.command=='research-refresh':
