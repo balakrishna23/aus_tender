@@ -96,6 +96,7 @@ ALLOWED = {
         "aged_care_quality",
         "aged_care_provider_matches",
         "research_freshness",
+        "agency_org_map",
         "sources",
         "export_info",
     ],

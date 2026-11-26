@@ -176,7 +176,17 @@ def promote(db, source, manifest):
     if source in freshness.MANUAL:
         if source in ('agor', 'government_directory'):
             from .ingest import import_snapshot
-            return import_snapshot(db, manifest, source)
+            result = import_snapshot(db, manifest, source)
+            if source == 'government_directory':
+                # Senior role holders (ICT, digital, workforce, procurement, agency heads) of the same file.
+                from .directory_roles import import_directory_roles
+                result['directory_roles'] = import_directory_roles(db, manifest)
+            return result
+        from .national_registers import NATIONAL_SOURCES, import_national
+        if source in NATIONAL_SOURCES:
+            # Whole national register (active records plus procurement ABNs), never the old procurement-only scope,
+            # which would otherwise replace a national snapshot as soon as a newer file arrived.
+            return import_national(db, manifest, source)
         from .registers import import_register
         return import_register(db, manifest, source)
     if source.startswith('jsa_'):
