@@ -40,3 +40,18 @@ The source databases remain separate from derived `intelligence.db` and `release
 | `seed_contacts.yaml`, `opt_outs.yaml` | Source-backed contact seeds and explicit suppression. Values are private and intentionally omitted. |
 
 Downstream readers must avoid adding overlapping source and derived counts. Estimated day rates use contract value and calculated business days; they are not quoted candidate rates. Unreviewed identity matches and historical panels retain their qualification labels. Current data quality and availability of reviewed input files are unverified in this worktree.
+
+## Spec analytical generation files
+
+- `market_intelligence/views.py`: shared-snapshot builder pass, row shaping,
+  conservative invitation/client matches and atomic generation publication.
+- `market_intelligence/account_score.py`: strict lane-policy validation,
+  percentile points, coverage, penalties and deterministic ranks.
+- `market_intelligence/rules/account_score.json`: component definitions, data bases,
+  per-lane weights and source/unknown notes.
+- `market_intelligence/migrations/versions/025_spec_views.py`: retained generation
+  schema, typed analytical views and pure SQL estimated rate groups.
+- `tests/test_market_spec_views.py`: offline behaviour plus opt-in PostgreSQL
+  rollback, retention and rate fixtures.
+
+See [the analytical-view usage and limitations](../market_intelligence.md#spec-analytical-views-and-ranked-lanes-migration-025).

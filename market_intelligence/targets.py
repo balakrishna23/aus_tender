@@ -16,8 +16,12 @@ def build_targets(engine,as_of):
             FROM market.current_analytical_contracts WHERE supplier_abn IS NOT NULL AND first_published>:past AND first_published<=:asof
               AND payload->>'category_tag'=ANY(:tags) GROUP BY supplier_abn ORDER BY sum(original_value) DESC NULLS LAST,supplier_abn'''),
             {'past':as_of-timedelta(days=1095),'asof':as_of,'tags':TAGS}).mappings()]
+        # Only the profiled suppliers' records plus the complete ACNC/ORIC registers are used below; the
+        # national ABN/ASIC registers hold millions of rows and must never be read whole.
         entities=[dict(r) for r in conn.execute(text('''SELECT e.*,s.source_url,s.licence,s.retrieved_at FROM market.current_register_entities e
-            JOIN market.register_snapshots s ON s.id=e.snapshot_id WHERE NOT e.is_individual''')).mappings()]
+            JOIN market.register_snapshots s ON s.id=e.snapshot_id
+            WHERE NOT e.is_individual AND (e.source IN ('acnc','oric') OR e.abn=ANY(:abns))'''),
+            {'abns':[s['supplier_abn'] for s in suppliers]}).mappings()]
     by_abn={};health=[];indigenous=[]
     for entity in entities:
         if entity['abn']:by_abn.setdefault(entity['abn'],[]).append(entity)

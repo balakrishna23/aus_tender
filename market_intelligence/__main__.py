@@ -36,6 +36,8 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Isolated federal intelligence staging; no outreach or collector writes')
     commands=parser.add_subparsers(dest='command',required=True)
     commands.add_parser('migrate')
+    views=commands.add_parser('refresh-views',help='Atomically refresh internal analytical account views')
+    views.add_argument('--as-of',required=True,type=date.fromisoformat)
     commands.add_parser('status')
     commands.add_parser('freshness-report', help='Informational publisher checks and imported editions')
     research_refresh=commands.add_parser('research-refresh', help='Refresh publishers and private inboxes; never sends')
@@ -68,9 +70,13 @@ def main(argv=None):
     ingest.add_argument('--source',choices=['agor','government_directory'],required=True)
     bridge=commands.add_parser('bridge-buyers')
     bridge.add_argument('--contracts-db',required=True)
-    register=commands.add_parser('import-register',help='ABN/ASIC (scoped to procurement ABNs), ACNC or ORIC')
+    register=commands.add_parser('import-register',help='ABN/ASIC (procurement ABNs, or --national), ACNC or ORIC')
     register.add_argument('--manifest',required=True)
     register.add_argument('--source',choices=REGISTER_SOURCES,required=True)
+    register.add_argument('--national',action='store_true',
+                          help='ABN/ASIC/business names: every active record plus every procurement ABN (streamed)')
+    roles=commands.add_parser('import-directory-roles',help='Senior role holders of an imported Government Directory file')
+    roles.add_argument('--manifest',required=True)
     checks=commands.add_parser('supplier-checks',help='Contract supplier ABNs against the national registers')
     checks.add_argument('--as-of',required=True,type=date.fromisoformat)
     checks.add_argument('--output',required=True)
@@ -200,7 +206,10 @@ def main(argv=None):
             result=verify(db,args.collection,args.json)
         elif args.command=='migrate':
             migrate(db)
-            result={'schema':'023_research_freshness','status':'ready'}
+            result={'schema':'025_spec_views','status':'ready'}
+        elif args.command=='refresh-views':
+            from .views import refresh_views
+            result=refresh_views(db,args.as_of)
         elif args.command=='import-aged-care':
             from .aged_care import import_aged_care
             result=import_aged_care(db,args.manifest)
@@ -210,7 +219,14 @@ def main(argv=None):
         elif args.command=='import':
             result=import_snapshot(db,args.manifest,args.source)
         elif args.command=='import-register':
-            result=import_register(db,args.manifest,args.source)
+            if args.national:
+                from .national_registers import import_national
+                result=import_national(db,args.manifest,args.source)
+            else:
+                result=import_register(db,args.manifest,args.source)
+        elif args.command=='import-directory-roles':
+            from .directory_roles import import_directory_roles
+            result=import_directory_roles(db,args.manifest)
         elif args.command=='supplier-checks':
             result=write_checks(build_checks(db,args.as_of),args.output)
         elif args.command=='buyict-report':
