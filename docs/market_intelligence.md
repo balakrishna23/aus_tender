@@ -334,3 +334,122 @@ manifests, code revision, scoring configuration and PostgreSQL dump together for
 reproducibility. Local dumps do not protect against losing the entire disk; the
 existing whole-instance snapshot policy is separate. Off-instance application dumps
 and automatic refresh/backup scheduling still require implementation and validation.
+
+## Spec analytical views and ranked lanes (migration 025)
+
+Run `python -m market_intelligence migrate`, then
+`python -m market_intelligence refresh-views --as-of 2026-11-27`.
+Migration head is `025_spec_views`, following `024_national_registers`. The local
+024 placeholder must be replaced by the coordinating branch before deployment.
+No network access, contact enrichment, outreach, or email is part of this command.
+
+Metabase can browse `market.v_account_score` and filter `lane` to obtain one
+ranked list for federal, state, private, or healthcare. `rank_in_lane` gives lane
+order; `overall_rank` orders all lanes by research points, with different evidence
+bases rather than a calibrated cross-lane win probability. `components`,
+`penalties`, `score_coverage_pct`, `blockers`, `why_now`, `target_roles`, evidence,
+and identifiers explain every row. Use `new_target=true` for new-account research:
+active/researching/past-client relationships and won outcomes are marked already
+engaged, and do-not-pursue records are never new targets. Private CRM activity and
+reviewer names are not copied into generated rows.
+
+New generation-backed views: `v_buyict_buyers`, `v_buyict_gaps`, `v_ipp_gap`,
+`v_ipp_levers`, `v_prime_targets`, `v_partner_candidates`, `v_indigenous_partners`,
+`v_rap_targets`, `v_panel_access`, `v_forward_pipeline`, `v_demand_vs_bench`,
+`v_lookalikes`, `v_account_score`, and `v_whats_changed`. They expose typed identity,
+measure and evidence columns plus full shaped `details` JSON. Existing 018/022/023
+views continue to supply spend, supplier, healthcare, quality and freshness facts.
+The read-only reader receives SELECT access. `v_agency_org_map` belongs to the
+coordinating branch. **`v_grant_triggers` is skipped: no grant data exists.**
+
+`views.refresh_views` calls the existing builders once through one repeatable-read
+connection. A session lock serialises publishers before opening that snapshot.
+Rows, generation metadata and the current pointer commit together: failures roll
+back, retaining the previous current generation. `view_generations` keeps all run
+metadata; only derived `view_rows` older than the newest 30 generations are
+removed. Every view has a 10,000-row cap (account score reserves up to 2,500 rows per lane), recorded alongside its total in generation
+metrics; account rankings are computed before truncation. Source limitations,
+weekly baseline gaps, config and config SHA-256 are retained. A source manifest
+code-bundle hash is recorded when available. The daily research refresher executes
+a final isolated `views` step, records started/finished attempts, and returns its
+result separately from source outcomes. It is deliberately absent from the
+morning helper. A failed view build cannot roll back successful source promotions.
+
+`rules/account_score.json` is a strictly validated analyst policy. Positive weights
+sum to one in each lane. Inputs use within-lane midrank percentiles, known zero
+receives zero points, and unknown inputs remain null with a reason and retain
+their weight: they are never rescaled. All-unknown accounts have null scores.
+Coverage is the sum of known positive weights; penalty coverage is separately
+visible. Blocker penalty is up to 20 points, insourcing up to 10. Insourcing has no
+source and stays null; eligibility uses known panel requirements and Illoura profile
+values or an approved RAP certification requirement. Missing requirements/profile
+values produce an unknown penalty, never an assumed pass or failure.
+
+| Lane | Positive components (percent weights) |
+| --- | --- |
+| Federal | spend 20; frequency 10; expiry in 6-12 calendar months 10; BuyICT gap 8; IPP gap 7; levers 7; forward plans 7; open notices 5; RAP 4; lookalike 5; panel access 5; grants 3; budget 3; demand vs bench 6 |
+| Private | RAP type 20; plan ends within 12 months 15; approved procurement target 10; approved employment target 10; supplier value 20; MMR-prime signal 15; lookalike 10 |
+| State | historical WA value 50; historical WA observation frequency 30; lookalike 20 |
+| Healthcare | inverse staffing stars 40; inverse overall stars 30; published size 20; RAP 10 |
+
+Federal spend uses the existing buyer report's category families and 365-day
+original award values; awards are not payments. BuyICT measures reuse the builder's
+relevant arrangement coverage over 36 months. The RFQ-invite list matches Illoura's
+invitation input on exact buyer keys or unique normalised full buyer labels only.
+Each row explains the basis: **no recorded invitation is not proof of never being
+invited**. A matched invitation suppresses that gap. IPP gaps require a reviewed,
+current agency identity to attach historical portfolio results. Panel access is
+linked panel value where recorded membership is not `member`; any unknown
+membership keeps the component null. Plans with unknown dates do not score as a
+next-year plan. Empty forward-source coverage remains unknown.
+
+Private candidates comprise current RAP holders plus registry-named suppliers in
+our categories with at least AUD 1 million of original awards over 36 months
+(the configurable large-supplier proxy, not turnover), plus all safe-name MMR primes. Contract supplier labels are never
+used as a fallback, since they can identify individuals. Omitted primes without a
+safe organisation name are counted in metrics. RAP candidate ABNs remain proposals
+and are not silently merged with supplier accounts. State coverage is retained WA
+FY2021-22 through FY2023-24 observations only; counts may include repeated source
+records and are not current addressable spending. Healthcare includes retained
+low staffing/overall aged-care services and ACNC health-purpose/ORIC health
+corporations. Ratings are research signals, not buying intent. No account-level
+bench attribution exists, so federal demand-vs-bench stays unknown; the regional
+aggregate comparison remains browsable. No grants, budget-measure or insourcing
+feed exists, so those components remain unknown too.
+
+Lookalikes use only recorded past-client relationships and won outcomes whose
+stable keys resolve into the current account universe. Type, published size,
+reviewed portfolio and tagged category-spend vector each have 25% similarity
+weight. Unknown dimensions retain their weight; no past-client evidence produces
+a null similarity. Exact unique current-RAP name matches are research proposals,
+not confirmed legal-entity joins. Group RAPs, service sites and register records
+can remain separate where identity is unresolved.
+
+`v_rate_benchmarks` is a pure SQL view over current analytical labour/ICT-labour
+contracts. The native privacy-safe export contains no headcount or description;
+the single-resource proxy uses labour tags and plausible rate/duration bounds. It
+rejects multiple-resource/team wording if future payloads supply it, requires recorded
+dates from 1990 through 2099,
+positive value, 21-1,827 inclusive calendar days and an implied calendar-day rate
+between 100 and 2,500. This is a **single-resource heuristic**, not verified
+headcount. The bounds truncate the sample and multiple people may still be included.
+Estimates use current full contract value divided by inclusive calendar
+duration, with annual estimates multiplied by 365.25. They are not working-day
+rates, and amendments, leave, GST and scope can distort them. Groups expose buyer,
+role category, supplier state (null when absent; delivery/agency state unavailable), sample size, average/median calendar-day
+estimate and annual estimate. Never use them as verified bid prices.
+
+The Monday digest compares retained research/contract/panel evidence, forward
+plans against a pre-week view generation where available, and recorded contract
+ends within the coming week. Missing comparison history is a baseline gap, not a
+batch of new opportunities. Grants cannot appear without a grant input source.
+All new views are bounded read-API export tables (10,000 rows each); `account_score`
+is indexed by lane, account key and lane rank. Generation row counts are available
+in PostgreSQL for cap review; the API export is a bounded convenience copy.
+
+Verification: `tests/test_market_spec_views.py` covers config/math/nulls/coverage,
+penalties, engagement, shaping/privacy, invitation matching, lookalikes, shared
+snapshot use, builder reuse, export parity, and opt-in PostgreSQL publication,
+rollback/retention and SQL rate fixtures. PostgreSQL tests require
+`ILLOURA_MARKET_TEST_DATABASE_URL` targeting the isolated `illoura_market_test`
+database. They create derived generation fixtures and never alter source history.
