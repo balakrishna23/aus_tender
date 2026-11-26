@@ -116,6 +116,10 @@ TABLES = {
                NULL, s.imported_at, NULL
           FROM market.procurement_snapshots s WHERE s.id = """ + PROCUREMENT + """
         UNION ALL
+        SELECT 'forward', 'tender_feed', s.id, NULL, 'Derived public procurement evidence',
+               s.exported_at, NULL, s.imported_at, s.row_count
+          FROM market.forward_snapshots s JOIN market.current_forward_snapshot c ON c.snapshot_id=s.id
+        UNION ALL
         (SELECT 'remoteness', s.edition_chain, s.id, NULL, NULL, s.retrieved_at, NULL, s.imported_at, NULL
            FROM market.remoteness_snapshots s ORDER BY s.retrieved_at DESC, s.imported_at DESC LIMIT 1)""",
 }
