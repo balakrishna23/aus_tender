@@ -64,6 +64,42 @@ class Rules(unittest.TestCase):
             self.assertEqual(R.targets('Allocate '+money+' procurement spend.')[0],('money',Decimal(expected),'AUD'))
         self.assertEqual(R.targets('Recruit 20 First Nations employees.')[0],('count',Decimal(20),'employees'))
 
+    def test_numbered_items_role_before_abbreviated_timeline(self):
+        rows=self.analyse('1. Establish and\nmaintain relationships.\n1.1. Develop and implement an engagement guide for external partners.\n'
+                          'Manager, Office of the\nExecutive Director\nOct 2026\n'
+                          '1.2. Aboriginal partners to guide one formal partnership each year.\nExecutive Director Apr 2027,\n2028, 2029')['commitments']
+        self.assertEqual([(r['timeline'],r['responsibility']) for r in rows],
+                         [('Oct 2026','Manager, Office of the Executive Director'),('Apr 2027, 2028, 2029','Executive Director')])
+        self.assertTrue(rows[0]['deliverable'].startswith('Develop and implement'))
+        self.assertIsNone(R.TIMELINE.search('Market 2026 and Decision 2027'))
+
+    def test_numbered_deliverable_cadence_and_stacked_dates(self):
+        rows=self.analyse('1. Our community team to grow Indigenous supplier spend 10% year-on-year\nMonitor quarterly\nDecember 2025\n'
+                          'March, June, September, December 2026\nMarch, June 2027\nGeneral Manager, Procurement')['commitments']
+        r=rows[0]
+        self.assertEqual(r['deliverable'],'Our community team to grow Indigenous supplier spend 10% year-on-year')
+        self.assertEqual(r['timeline'],'Monitor quarterly December 2025 March, June, September, December 2026 March, June 2027')
+        self.assertEqual((r['responsibility'],r['category'],r['target_value']),('General Manager, Procurement','procurement',Decimal('10')))
+
+    def test_column_separated_table_keeps_undated_deliverables(self):
+        rows=R.commitments(['Action 1: Establish relationships with communities\nMay\n2023, 2024, 2025\nJuly\n2023, 2024, 2025\n'
+                            'Engage with First Nations organisations to co-design programs.\nShare the engagement plan with all staff each year.'])
+        self.assertEqual([(r['deliverable'][:6],r['timeline']) for r in rows],[('Engage',None),('Share ',None)])
+
+    def test_organisation_abbreviations_and_employment_wording(self):
+        self.assertTrue(R.organisation_found('Brisbane South Primary Health Network (BSPHN)','Brisbane South PHN Reconciliation Action Plan'))
+        self.assertTrue(R.organisation_found('Australian Federal Police (AFP)','AFP Stretch Reconciliation Action Plan'))
+        self.assertFalse(R.organisation_found('Example Holdings','Another Company Stretch Reconciliation Action Plan'))
+        self.assertEqual(R.category('Circulate NRW resources and reconciliation materials to all staff.'),'other')
+        self.assertEqual(R.category('Provide internal communications on reconciliation.'),'other')
+        self.assertEqual(R.category('Increase First Nations staff to 3% of our workforce.'),'employment')
+
+    def test_unlabelled_contact_block_and_bracketed_phone(self):
+        rows=self.analyse('Contact details\nRobin Example\nDirector for First Nations\nPartnerships\n(07) 0000 0000\nrap@example.invalid')['people']
+        contact=[r for r in rows if r['context']=='contact'][0]
+        self.assertEqual((contact['name'],contact['title'],contact['phone'],contact['email']),
+                         ('Robin Example','Director for First Nations Partnerships','(07) 0000 0000','rap@example.invalid'))
+
     def test_contact_blocks_both_layouts_are_personal(self):
         for name,title in [('Robin Example','First Nations Engagement Lead'),('Chris Example','RAP Chair and Deloitte Partner')]:
             # Contact details are synthetic; no real mailboxes are committed.
@@ -96,6 +132,9 @@ class Rules(unittest.TestCase):
     def test_normalisation(self):
         self.assertEqual(R.normalise('Lead:\tFirst\tNations\ncertifi ed O\ufb03  cer workfl ow staff base'),
                          'Lead: First Nations\ncertified Officer workflow staff base')
+        # A whole word ending in a ligature keeps its space; "off" joins only real continuations.
+        self.assertEqual(R.normalise('staﬀ awareness and staﬀ  meetings, time off work, off ered'),
+                         'staff awareness and staff meetings, time off work, offered')
 
     def test_type_period_and_match_status(self):
         result=self.analyse(AECOM_SPEND)
