@@ -204,6 +204,30 @@ class NationalDatabaseTests(unittest.TestCase):
         bn = "FROM market.current_register_entities WHERE source='asic_business_names'"
         self.assertEqual(self.scalar('SELECT string_agg(name, \',\') ' + bn), 'EXAMPLE IT')
 
+    def test_name_steps_do_not_depend_on_stale_planner_statistics(self):
+        # 27 Nov: the national ASIC import spent 4 hours in the other-names insert because the stage was analysed
+        # before the former names were added. The import must re-analyse and join indexed, analysed sets.
+        from sqlalchemy import event
+        statements = []
+
+        def record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(' '.join(statement.split()))
+
+        self.import_abn()
+        event.listen(self.engine, 'before_cursor_execute', record)
+        self.addCleanup(event.remove, self.engine, 'before_cursor_execute', record)
+        rows = [asic_row('ONLY ACTIVE PTY LTD', '900000002', ACTIVE_ONLY_ABN),
+                asic_row('OLD NAME PTY LTD', '900000002', ACTIVE_ONLY_ABN, current='')]
+        data = zipped(self.root, 'company_202611.zip', {'COMPANY_202611.csv': table(ASIC_HEADER, rows, delimiter='\t')})
+        N.import_national(self.engine, manifest(self.root, 'asic_companies', [data]), 'asic_companies', min_rows=1)
+        former = next(i for i, s in enumerate(statements) if "'asic_former'" in s and s.startswith('INSERT INTO register_stage'))
+        names = next(i for i, s in enumerate(statements) if s.startswith('INSERT INTO market.register_names'))
+        self.assertIn('ANALYZE register_stage', statements[former + 1:names])
+        self.assertIn('ANALYZE register_kept', statements[former + 1:names])
+        self.assertIn('JOIN register_kept', statements[names])
+        self.assertNotIn('EXISTS', statements[names])
+        self.assertEqual(self.scalar("SELECT count(*) FROM market.register_names WHERE name_type='asic_former'"), 1)
+
     def test_business_names_need_the_national_abn_register(self):
         names = [dict(BN_NAME='EXAMPLE IT', BN_STATUS='Registered', BN_REG_DT='01/01/2020', BN_ABN=ORG_ABN)]
         data = zipped(self.root, 'business_names_202611.zip', {'BN.csv': table(BN_HEADER, names, delimiter='\t')})
