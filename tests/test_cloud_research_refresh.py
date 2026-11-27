@@ -137,7 +137,11 @@ class WrapperTests(unittest.TestCase):
         # On the server (systemd 255) NoNewPrivileges + ProtectKernelTunables/Modules or RestrictAddressFamilies
         # drops CAP_SETUID, so a root service that runs runuser fails with "cannot set user id"
         # (27 Nov: the refresher never started). Verified on the server with systemd-run.
-        for unit in ('illoura-research-refresh.service', 'illoura-review-import.service'):
+        # The refresher install stages only its own unit; the review unit is checked wherever the repo is complete.
+        units = ['illoura-research-refresh.service']
+        if (DEPLOY / 'illoura-review-import.service').exists() or (DEPLOY / 'illoura_review_import.py').exists():
+            units.append('illoura-review-import.service')
+        for unit in units:
             text = (DEPLOY / unit).read_text()
             settings = [line.strip() for line in text.splitlines() if not line.lstrip().startswith('#')]
             self.assertIn('NoNewPrivileges=true', settings, unit)
