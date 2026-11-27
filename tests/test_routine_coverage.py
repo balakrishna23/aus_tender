@@ -1,5 +1,5 @@
 from contextlib import redirect_stdout
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import importlib.util
 import io
 import json
@@ -52,9 +52,11 @@ class CoverageTests(unittest.TestCase):
             ('official_sources', 'buyict_news', 'curated_source_checks', 'wa_contracts')])
         self.assertEqual(self.composer.supplemental_failures(self.out), [])
 
-    def compose(self, success=True, results=None, run_state=None, feed='rebuilt'):
-        self.write('editorial_notes.json', {'edition_date': str(datetime.now(ZoneInfo('Asia/Kolkata')).date()),
-            'opportunities': {}, 'subject': 'Example brief', 'preheader': 'Example', 'introduction': 'Example'})
+    def compose(self, success=True, results=None, run_state=None, feed='rebuilt', config=None):
+        notes = {'edition_date': str(datetime.now(ZoneInfo('Asia/Kolkata')).date()),
+            'opportunities': {}, 'subject': 'Example brief', 'preheader': 'Example', 'introduction': 'Example'}
+        notes.update(config or {})
+        self.write('editorial_notes.json', notes)
         if run_state is not None:
             self.write('cloud_run.json', run_state)
         self.write('source_refresh.json', {'success': success, 'feed': feed,
@@ -67,36 +69,111 @@ class CoverageTests(unittest.TestCase):
         self.write('newsletter_review.json', {})
         (self.out/'newsletter_preview.txt').write_text('Example')
         (self.out/'newsletter_preview.html').write_text('<p>Example</p>')
-        database = Mock()
-        database.__enter__ = Mock(return_value=database)
-        database.__exit__ = Mock(return_value=False)
-        database.execute.return_value.fetchone.return_value = (0,)
         with patch.object(sys, 'argv', ['compose', '--out', str(self.out)]), \
-             patch.object(self.composer.sqlite3, 'connect', return_value=database), \
-             patch.object(self.composer, 'render'), \
              patch.object(self.composer, 'load_mail_config', return_value=('sender@example.com', 'reader@example.org')), \
              patch.object(self.composer, 'load_link_id', return_value='example-link'):
             self.composer.main()
         return json.loads((self.out/'newsletter_editorial.json').read_text())
 
-    def test_coverage_text_distinguishes_supplemental_failures(self):
-        package = self.compose()
-        paragraphs = package['sections'][-1]['items'][0]['paragraphs']
-        self.assertIn('All eight procurement source stages completed successfully.', paragraphs[0])
-        self.assertIn('Additional research pages unavailable: Example organisation.', paragraphs[1])
-        self.assertIn('Supplemental research failures (separate from the eight procurement collectors): wa_contracts.', paragraphs[1])
+    def listing_fixture(self, count=10):
+        spec = importlib.util.spec_from_file_location('fixture_daily_brief', ROOT/'deploy/illoura_daily_brief.py')
+        brief = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(brief)
+        now = datetime.now(timezone.utc)
+        end = (now + timedelta(days=7)).astimezone(ZoneInfo('Australia/Canberra')).replace(hour=17, minute=0)
+        (self.out/'shortlist').mkdir(exist_ok=True)
+        verified = {}
+        for n in range(count, 0, -1):
+            key = f'LH-{8600+n:05d}'
+            record = {'checked_at_utc': now.isoformat(), 'source_url': 'https://example.com/'+key,
+                'content': {'title': 'Data engineer', 'rfqOpen': True,
+                    'description': 'Selected sellers only.' if n == count else 'Deliver services.',
+                    'mainDetails': [{'label': 'Buyer', 'value': 'Example Agency'},
+                        {'label': 'RFQ closing date', 'value': end.strftime('%d %B %Y %I:%M %p')},
+                        {'label': 'Deadline for asking questions', 'value': end.strftime('%d %B %Y %I:%M %p')}],
+                    'requirements': [{'label': field, 'value': value} for field, value in [
+                        ('Location of work', 'ACT'), ('Working arrangements', 'Hybrid'),
+                        ('Security clearance', 'NV1'), ('Maximum number of candidates per seller', '2'),
+                        ('Initial contract duration', '12 months')]]}}
+            verified[key] = record
+            self.write('shortlist/'+key+'.json', record)
+        baseline = list(verified)[1:]
+        self.write('baseline_buyict_ids.json', baseline)
+        return brief.editorial_notes(now.astimezone(ZoneInfo('Asia/Kolkata')).date(), verified, baseline, {'results': []})
+
+    def test_ten_item_email_under_650_words_with_details_and_access_warning(self):
+        config = self.listing_fixture()
+        package = self.compose(config=config)
+        self.assertEqual([s['title'] for s in package['sections']], ['Newest openings'])
+        items = package['sections'][0]['items']
+        self.assertEqual(len(items), 10)
+        self.assertEqual([i['heading'].split(' | ')[-1] for i in items], list(config['opportunities']))
+        text = (self.out/'newsletter_preview.txt').read_text()
+        self.assertLess(len(text.split()), 650)
+        self.assertNotIn('Questions', text)
+        self.assertIn('Location: ACT; Work: Hybrid; Clearance: NV1; Candidate cap per seller: 2; Initial term: 12 months.', text)
+        self.assertIn('check existing access', items[0]['paragraphs'][-1])
+        self.assertEqual(text.count('check existing access'), 1)
+        self.assertEqual(text.count('New since yesterday.'), 1)
+        self.assertTrue(items[0]['paragraphs'][0].startswith('New since yesterday. Closes '))
+        self.assertTrue(all(item['paragraphs'][0].startswith('Closes ') for item in items[1:]))
+        self.assertEqual(package['preheader'], '10 newest BuyICT openings, rechecked this morning.')
+
+    def test_missing_details_do_not_create_a_period_paragraph_and_source_text_is_clean(self):
+        config = self.listing_fixture(1)
+        path = self.out/'shortlist/LH-08601.json'
+        record = json.loads(path.read_text())
+        record['content']['title'] = 'Data \ufffd engineer'
+        record['content']['requirements'] = []
+        self.write('shortlist/LH-08601.json', record)
+        package = self.compose(config=config)
+        item = package['sections'][0]['items'][0]
+        self.assertEqual(item['heading'], 'Example Agency | Data - engineer | LH-08601')
+        self.assertNotIn('.', item['paragraphs'])
+        self.assertNotIn('\ufffd', (self.out/'newsletter_preview.html').read_text())
+
+    def test_public_check_and_open_guards_remain(self):
+        for label, mutate in (
+            ('Stale public check', lambda r: r.update(checked_at_utc='2020-01-01T00:00:00+00:00')),
+            ('no longer open', lambda r: r['content'].update(rfqOpen=False)),
+            ('no longer open', lambda r: r['content'].update(is_cancelled=True)),
+            ('no longer open', lambda r: r['content']['mainDetails'][1].update(value='01 January 2020'))):
+            with self.subTest(label=label):
+                config = self.listing_fixture(1)
+                record = json.loads((self.out/'shortlist/LH-08601.json').read_text())
+                mutate(record)
+                self.write('shortlist/LH-08601.json', record)
+                with self.assertRaisesRegex(ValueError, label):
+                    self.compose(config=config)
+
+    def test_receipt_and_edition_guards_remain(self):
+        with self.assertRaisesRegex(ValueError, 'Editorial date'):
+            self.compose(config={'edition_date': '2020-01-01'})
+        self.write('send_receipt.json', {'sent': True})
+        with self.assertRaisesRegex(ValueError, 'send receipt'):
+            self.compose()
+
+    def test_only_newest_section_even_with_research_sections(self):
+        package = self.compose(config={'additional_sections': [{'title': 'Research', 'items': []}],
+                                       'coverage_note': 'Internal run details'})
+        self.assertEqual([s['title'] for s in package['sections']], ['Newest openings'])
+        # With nothing selected the email says so instead of showing an empty section.
+        self.assertEqual([i['heading'] for i in package['sections'][0]['items']], ['No openings to list today'])
+        text = (self.out/'newsletter_preview.txt').read_text()
+        for hidden in ('Research', 'Coverage and access', 'wa_contracts', 'Example organisation', 'Internal run details'):
+            self.assertNotIn(hidden, text)
         self.assertEqual(package['from'], 'sender@example.com')
 
     def named(self, **problems):
         names = ('contract_api', 'aus_contract', 'aus_tender', 'planned_procurement', 'standing_offer', 'buy_ict', 'act_tender', 'nsw_tender')
         return [dict({'spider': name, 'status': 'OK'}, **problems.get(name, {})) for name in names]
 
-    def test_problem_in_another_source_is_named_in_the_brief(self):
-        package = self.compose(success=False, results=self.named(planned_procurement={'status': 'PARTIAL', 'crawl_failed': True}),
-                               run_state={'source_exit_code': 1, 'source_gaps': ['planned_procurement']})
-        text = package['sections'][-1]['items'][0]['paragraphs'][0]
-        self.assertIn('Source stages with a problem today: planned_procurement.', text)
-        self.assertIn('BuyICT, which this brief is built from, completed normally.', text)
+    def test_source_gaps_recorded_but_absent_from_email(self):
+        self.compose(success=False, results=self.named(planned_procurement={'status': 'PARTIAL', 'crawl_failed': True}),
+                     run_state={'source_exit_code': 1, 'source_gaps': ['planned_procurement']})
+        review = json.loads((self.out/'newsletter_review.json').read_text())
+        self.assertEqual(review['source_gaps'], ['planned_procurement'])
+        self.assertNotIn('planned_procurement', (self.out/'newsletter_preview.txt').read_text())
 
     def test_gap_without_approval_or_with_another_failure_stops_the_brief(self):
         gap = self.named(planned_procurement={'status': 'PARTIAL'})

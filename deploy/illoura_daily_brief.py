@@ -11,8 +11,8 @@ Subcommands (installed in /opt/illoura-ops; the timer runs `run` as root):
   reconcile --out RUN [--mark-undelivered]   check an uncertain send in Gmail Sent; never send
   dry-run             compose a copy of the latest run under /var/tmp; never sends
 
-Selection is automatic and the email says so: open, relevant BuyICT ICT labour-hire
-requests closing soonest (at least 18 hours away), each rechecked on the public listing
+Selection uses the newest open, relevant BuyICT requests (at least 18 hours away),
+with requests absent from the pre-run baseline first, each rechecked on the public listing
 this morning; requests that fail the live check are dropped, not guessed.
 """
 import argparse
@@ -53,7 +53,7 @@ SEND_MARGIN_SECONDS = 900  # Leave 15 minutes before noon for the single send at
 RESEARCH_CAP_SECONDS = 900
 # The research step must also end early enough that the full compose bound plus this reserve fits before 08:15.
 SEND_ON_TIME_RESERVE_SECONDS = 300
-MAX_SELECTED = 8
+MAX_SELECTED = 10
 MIN_HOURS_AHEAD = 18
 AUTHORIZATION = 'User requested the Illoura routine and email on AWS'
 SCHEDULE_NOTE = 'Daily 08:15 Australia/Sydney, requested by Sirish on 12 November 2026'
@@ -76,9 +76,6 @@ def write_json(path, value):
 
 # --------------------------------------------------------------------------- selection
 
-CANBERRA = ZoneInfo('Australia/Canberra')
-
-
 def _open_buyict(intelligence_db):
     """(closing datetime, id, title, buyer, url) for open relevant BuyICT requests with a valid close time.
 
@@ -98,22 +95,16 @@ def _open_buyict(intelligence_db):
     return sorted(parsed, key=lambda row: (row[0], row[1]))
 
 
-def select_ids(intelligence_db, now, limit=MAX_SELECTED, min_hours=MIN_HOURS_AHEAD):
-    """Open, relevant BuyICT requests closing soonest; labour hire first, then others to fill."""
-    earliest, latest = now + timedelta(hours=min_hours), now + timedelta(days=21)
-    window = [row[1] for row in _open_buyict(intelligence_db) if earliest < row[0] <= latest]
-    chosen = [key for key in window if key.startswith('LH-')][:limit]
-    if len(chosen) < 3:
-        chosen += [key for key in window if key.startswith('PCS-')][:limit - len(chosen)]
-    return chosen
-
-
-def new_since_baseline(intelligence_db, baseline_ids, limit=10):
-    """Open relevant requests absent from the pre-run baseline, closing soonest first."""
+def select_ids(intelligence_db, now, limit=MAX_SELECTED, min_hours=MIN_HOURS_AHEAD, baseline_ids=()):
+    """Newest open relevant requests, with baseline-absent requests first."""
+    earliest = now + timedelta(hours=min_hours)
     known = set(baseline_ids)
-    rows = [row for row in _open_buyict(intelligence_db) if row[1] not in known][:limit]
-    return [(key, title, buyer, end.astimezone(CANBERRA).strftime('%d %B, %I:%M %p Canberra'), url)
-            for end, key, title, buyer, url in rows]
+    # published is unparsed source text (often date-only); the numeric ID orders new requests.
+    rows = [row for row in _open_buyict(intelligence_db)
+            if row[0] > earliest and row[1].startswith(('LH-', 'PCS-'))]
+    rows.sort(key=lambda row: (row[1] not in known, int(re.search(r'\d+$', row[1]).group())
+                              if re.search(r'\d+$', row[1]) else -1, row[1]), reverse=True)
+    return [row[1] for row in rows[:limit]]
 
 
 def clean(text):
@@ -142,35 +133,26 @@ def still_open(record, now, closing_time):
     return bool(end and end > now + timedelta(hours=2) and data.get('rfqOpen') and not data.get('is_cancelled'))
 
 
-def editorial_notes(edition_day, verified, new_rows, report):
-    """Templated, factual notes; compose adds closing time, location, clearance and Q&A details."""
+def editorial_notes(edition_day, verified, baseline_ids, report):
+    """Templated notes; compose adds closing times and key listing details."""
     date_text = edition_day.strftime('%d %B %Y')
     count = len(verified)
     opportunities = {}
     for key, record in verified.items():
-        notes = []  # the introduction already says selection is automatic
+        notes = []
         if restricted_hint(record):
             notes.append('The listing text suggests responses are limited to invited or selected sellers; '
                          'check existing access before preparing a response.')
         opportunities[key] = notes
-    sections = []
-    if new_rows:
-        sections.append({'title': 'New on BuyICT since the last run', 'items': [
-            {'heading': ' | '.join(part for part in (clean(buyer), clean(title), clean(key)) if part),
-             'paragraphs': [f'Closes {closes}.'],
-             'links': [{'label': key + ' official listing', 'url': url}]}
-            for key, title, buyer, closes, url in new_rows]})
     gaps = [x['spider'] for x in report.get('results', []) if x.get('status') != 'OK']
     return {
         'edition_date': edition_day.isoformat(),
-        'subject': f'Illoura daily brief | {date_text} | {count} open request{"s" if count != 1 else ""} to check',
-        'preheader': (f'Automated 8:15 brief: {count} open BuyICT request{"s" if count != 1 else ""} '
-                      'closing soonest, rechecked this morning.'),
-        'introduction': ('This is the automated daily brief. It lists the open ICT labour-hire requests '
-                         'closing soonest, each rechecked on its public BuyICT listing this morning. Check existing '
-                         'seller access and candidate availability before committing response effort.'),
+        'subject': f'Illoura daily brief | {date_text} | {count} newest opening{"s" if count != 1 else ""}',
+        'preheader': f'{count} newest BuyICT opening{"s" if count != 1 else ""}, rechecked this morning.',
+        'introduction': ('The newest open BuyICT requests, each rechecked on its public listing this morning.'),
         'opportunities': opportunities,
-        'additional_sections': sections,
+        'new_since_baseline': [key for key in verified if key not in set(baseline_ids)],
+        'additional_sections': [],
         'coverage_note': ('Selection was automatic (no human editorial review); listings that failed the live '
                           'check were left out.' + (' Source gaps: ' + ', '.join(gaps) + '.' if gaps else '')),
     }
@@ -249,7 +231,9 @@ def compose(out, now=None):
     shortlist = out / 'shortlist'
     shortlist.mkdir(exist_ok=True)
     verified, dropped = {}, []
-    for key in select_ids(intelligence, now):
+    baseline_file = out / 'baseline_buyict_ids.json'
+    baseline = json.loads(baseline_file.read_text()) if baseline_file.exists() else []
+    for key in select_ids(intelligence, now, baseline_ids=baseline):
         result = subprocess.run([str(PYTHON), str(SCRIPTS / 'refresh_daily_shortlist.py'), '--out', str(shortlist),
                                  '--ids', key], cwd=str(WORK), capture_output=True, text=True)
         path = shortlist / (key + '.json')
@@ -265,18 +249,15 @@ def compose(out, now=None):
     failed = sum(item['reason'] == 'live check failed' for item in dropped)
     if checked and failed * 2 > checked:
         raise SystemExit('More than half of shortlisted live checks failed; not approving the send')
-    baseline_file = out / 'baseline_buyict_ids.json'
-    baseline = json.loads(baseline_file.read_text()) if baseline_file.exists() else []
     report = json.loads((out / 'source_refresh.json').read_text(encoding='utf-8'))
-    notes = editorial_notes(edition_day, verified, new_since_baseline(intelligence, baseline), report)
-    new_request_count = len(notes['additional_sections'][0]['items']) if notes['additional_sections'] else 0
+    notes = editorial_notes(edition_day, verified, baseline, report)
+    new_request_count = len(notes['new_since_baseline'])
     try:
         from market_research_context import read_market_context
     except ImportError:
         market_sections,market_status = [],{'status':'unavailable','reason':'market reader not installed'}
     else:
         market_sections,market_status = read_market_context(WORK / 'market_research.json',edition_day,now)
-    notes['additional_sections'].extend(market_sections)
     write_json(out / 'market_research_status.json',market_status)
     write_json(out / 'editorial_notes.json', notes)
     if not (out / 'newsletter_review.json').exists():
