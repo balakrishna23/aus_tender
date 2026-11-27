@@ -256,6 +256,19 @@ class Fetch(unittest.TestCase):
         self.assertEqual([(r['status'],r['detail']) for r in result['attempts']],
                          [('error','cross_site_redirect'),('robots_disallowed','robots_rule')])
 
+    def test_migration_sql_has_no_accidental_bind_parameters(self):
+        # op.execute() goes through text(): ':name' (e.g. a regex '(?:19') becomes a bind parameter.
+        import importlib.util
+        from sqlalchemy import text
+        path=Path(R.__file__).parent/'migrations'/'versions'/'026_rap_documents.py'
+        spec=importlib.util.spec_from_file_location('m026',path);module=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module);captured=[]
+        with patch.object(module.op,'execute',side_effect=captured.append):
+            module.upgrade()
+        self.assertTrue(captured)
+        for sql in captured:
+            self.assertEqual(text(sql).compile().params,{})
+
     @unittest.skipIf(os.name=='nt','POSIX permissions')
     def test_shared_raw_folder_keeps_its_permissions(self):
         with tempfile.TemporaryDirectory() as root:
