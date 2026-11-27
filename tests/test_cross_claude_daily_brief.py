@@ -115,13 +115,13 @@ class EmailWording(unittest.TestCase):
 
     def test_one_request_is_singular_everywhere(self):
         notes = self.notes(1)
-        self.assertIn('1 open request to check', notes['subject'])
+        self.assertIn('1 newest opening', notes['subject'])
         self.assertNotIn('1 open BuyICT requests', notes['preheader'])
 
-    def test_missing_buyer_or_title_never_prints_none(self):
-        notes = self.notes(1, [('LH-9', None, None, '20 November, 10:00 AM Canberra', 'https://example.com/9')])
-        heading = notes['additional_sections'][0]['items'][0]['heading']
-        self.assertNotIn('None', heading)
+    def test_new_rows_do_not_add_another_section(self):
+        notes = self.notes(1, ['LH-9'])
+        self.assertEqual(notes['additional_sections'], [])
+        self.assertEqual(notes['new_since_baseline'], ['LH-0'])
 
     def test_source_gap_names_are_listed_once_each(self):
         report = {'results': [{'spider': 'act_tender', 'status': 'PARTIAL'}, {'spider': 'buy_ict', 'status': 'OK'}]}
@@ -255,7 +255,7 @@ class RetryBudget(unittest.TestCase):
 
 
 class SelectionBoundaries(unittest.TestCase):
-    """Who gets into the brief is decided at the edges of the 18-hour and 21-day window."""
+    """Who gets into the brief is decided at the edges of the 18-hour minimum."""
 
     NOW = datetime(2026, 11, 13, 20, 0, tzinfo=timezone.utc)
 
@@ -267,19 +267,19 @@ class SelectionBoundaries(unittest.TestCase):
         with patch.object(brief, '_open_buyict', return_value=self.rows(*items)):
             return brief.select_ids('unused.db', self.NOW)
 
-    def test_exactly_eighteen_hours_is_too_soon_and_exactly_twenty_one_days_is_in(self):
+    def test_exactly_eighteen_hours_is_too_soon_with_no_upper_bound(self):
         self.assertEqual(self.select(('LH-1', 18), ('LH-2', 18.01), ('LH-3', 21 * 24), ('LH-4', 21 * 24 + 0.01)),
-                         ['LH-2', 'LH-3'])
+                         ['LH-4', 'LH-3', 'LH-2'])
 
-    def test_never_more_than_eight_and_soonest_first(self):
+    def test_never_more_than_ten_and_newest_first(self):
         chosen = self.select(*[(f'LH-{n:02d}', 100 - n) for n in range(20)])
         self.assertEqual(len(chosen), brief.MAX_SELECTED)
         self.assertEqual(chosen[0], 'LH-19')
 
-    def test_professional_services_only_fill_when_fewer_than_three_labour_hire(self):
-        self.assertEqual(self.select(('LH-1', 30), ('LH-2', 31), ('LH-3', 32), ('PCS-1', 20)), ['LH-1', 'LH-2', 'LH-3'])
+    def test_professional_services_have_no_lower_priority(self):
+        self.assertEqual(self.select(('LH-1', 30), ('LH-2', 31), ('LH-3', 32), ('PCS-1', 20)), ['LH-3', 'LH-2', 'PCS-1', 'LH-1'])
         filled = self.select(('LH-1', 30), ('PCS-1', 20), ('PCS-2', 21))
-        self.assertEqual(filled, ['LH-1', 'PCS-1', 'PCS-2'])
+        self.assertEqual(filled, ['PCS-2', 'PCS-1', 'LH-1'])
 
     def test_unknown_prefixes_are_never_selected(self):
         self.assertEqual(self.select(('XYZ-1', 30), ('lh-2', 30)), [])
