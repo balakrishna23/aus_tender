@@ -16,9 +16,10 @@ Each live database is read before and after its dump; if it changed while being 
 the run stops instead of certifying an inconsistent copy.
 
 verification.json is rewritten at every stage, so a failed, interrupted (SIGTERM, SIGHUP,
-Ctrl-C) or killed run still shows how far it got. Nothing is ever deleted: earlier
-recovery sets, dumps and restore databases are retained. No scheduler, service or
-container changes. The directory contains recovery secrets: keep it owner-only and out
+Ctrl-C) or killed run still shows how far it got. Dumps, earlier recovery sets and live
+databases are never deleted. A restore database this run created is dropped once it has
+matched its live database exactly (each one is ~10 GB); it is kept when the check fails
+(for diagnosis) or with --keep-restore-databases. No scheduler, service or container changes. The directory contains recovery secrets: keep it owner-only and out
 of public reports. Output and evidence never contain passwords, keys or addresses.
 """
 
@@ -89,8 +90,10 @@ METABASE_COLUMNS_SQL = (
 )
 
 RETENTION_NOTE = (
-    "Nothing deleted: dumps, restore databases, earlier recovery sets and live databases are retained"
+    "Dumps, earlier recovery sets and live databases are retained; a restore database is dropped once it "
+    "matched its live database (kept if the check failed or with --keep-restore-databases)"
 )
+KEPT_NOTE = "Dumps, restore databases, earlier recovery sets and live databases are retained"
 
 
 class VerificationError(RuntimeError):
@@ -335,7 +338,7 @@ def _copy_recovery_files(source_dir, destination, evidence):
     return parsed
 
 
-def _back_up_database(target, destination, restore, stamp, runner, base_env, evidence):
+def _back_up_database(target, destination, restore, stamp, runner, base_env, evidence, keep_restore=False):
     label, database, user, env, signature = (
         target["label"], target["database"], target["user"], target["env"], target["signature"]
     )
@@ -399,11 +402,29 @@ def _back_up_database(target, destination, restore, stamp, runner, base_env, evi
         else "Saved questions, dashboards, dashboard cards, collections, connections and users match"
     )
     evidence.save()
+    if keep_restore:
+        item["restored_database_kept"] = True
+        evidence.save()
+        return item
+    # Only the database this run created and just verified; never a live database.
+    if restored == database or not restored.startswith(f"{database}_restore_"):
+        raise VerificationError("Refusing to drop a database that is not this run's restore copy")
+    evidence.stage(f"{label}:drop-verified-restore")
+    try:
+        runner(["sudo", "-u", "postgres", "psql", "-X", "-v", "ON_ERROR_STOP=1", "-c",
+                f"DROP DATABASE {restored}"], base_env)
+        item["restored_database_dropped"] = True
+    except CommandError as exc:
+        # The recovery set is already verified; a leftover copy only costs disk.
+        item["restored_database_dropped"] = False
+        evidence.data.setdefault("warnings", []).append(
+            f"Verified restore database {restored} could not be dropped ({exc.returncode}); drop it manually")
+    evidence.save()
     return item
 
 
 def backup(environment, metabase_private, destination, restore=False, runner=None,
-           clock=None, command_timeout=3600, base_env=None):
+           clock=None, command_timeout=3600, base_env=None, keep_restore=False):
     clock = clock or (lambda: datetime.now(UTC))
     runner = runner or partial(run_command, timeout=command_timeout)
     base_env = dict(os.environ if base_env is None else base_env)
@@ -416,7 +437,7 @@ def backup(environment, metabase_private, destination, restore=False, runner=Non
     evidence.data.update(
         status="running", stage="start", started_at=started.isoformat(), destination=str(destination),
         restore_drill=bool(restore), databases=[], contains_recovery_secrets=True,
-        public_distribution_allowed=False, retention=RETENTION_NOTE,
+        public_distribution_allowed=False, retention=KEPT_NOTE if (keep_restore or not restore) else RETENTION_NOTE,
     )
     evidence.save()
     secrets = []
@@ -440,7 +461,7 @@ def backup(environment, metabase_private, destination, restore=False, runner=Non
             _check_identifier(target["user"], "role")
             target["env"] = dict(common, PGUSER=target["user"], PGPASSWORD=target["password"])
         for target in targets:
-            _back_up_database(target, destination, restore, stamp, runner, base_env, evidence)
+            _back_up_database(target, destination, restore, stamp, runner, base_env, evidence, keep_restore)
         evidence.stage("checksums")
         lines = [f"{item['sha256']}  {item['dump_file']}" for item in evidence.data["databases"]]
         lines += [f"{sha256_file(destination / r['name'])}  {r['name']}" for r in evidence.data["recovery_files"]]
@@ -476,6 +497,8 @@ def main(argv=None):
     p.add_argument("--metabase-private", required=True, help="private Metabase directory")
     p.add_argument("--output", required=True, help="NEW directory for this recovery set")
     p.add_argument("--restore-drill", action="store_true", help="restore into new isolated databases and compare")
+    p.add_argument("--keep-restore-databases", action="store_true",
+                   help="keep verified restore databases (default: drop each once it matched)")
     p.add_argument("--command-timeout", type=int, default=3600, help="seconds per pg_dump/pg_restore/psql call")
     args = p.parse_args(argv)
     for name in ("SIGTERM", "SIGHUP"):
@@ -484,7 +507,7 @@ def main(argv=None):
     evidence_path = str(Path(args.output) / "verification.json")
     try:
         result = backup(args.environment, args.metabase_private, args.output, args.restore_drill,
-                        command_timeout=args.command_timeout)
+                        command_timeout=args.command_timeout, keep_restore=args.keep_restore_databases)
     except FileExistsError:
         print(json.dumps({"status": "refused", "reason": "output directory already exists; choose a new one"}))
         return 2
