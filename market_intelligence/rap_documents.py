@@ -24,26 +24,45 @@ def text(sql):
     return sql_text(sql)
 
 
-PARSER_REVISION = 'rap-rules-1'
+PARSER_REVISION = 'rap-rules-2'
 USER_AGENT = 'IllouraResearchBot/1.0 (internal research; respects robots.txt)'
-MAX_BYTES = 40 * 1024 * 1024
+MAX_BYTES = 150 * 1024 * 1024   # artwork-heavy plans exceed 40 MB (City of Fremantle)
 BLOCKED_HOST = 'reconciliation.my.salesforce.com'
-MONTH = r'(?:January|February|March|April|May|June|July|August|September|October|November|December)'
+MONTH = (r'(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sep(?:t(?:ember)?)?'
+         r'|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\.?(?![a-z])')
 YEAR = r'(?:19|20)\d{2}'
 TIMELINE = re.compile(r'\b(?:\d{1,2}\s+)?' + MONTH + r'(?:\s*(?:,|and|[-\u2013\u2014])\s*(?:\d{1,2}\s+)?' + MONTH + r')*\s*,?\s*' + YEAR + r'(?:\s*[,/-]\s*(?:' + MONTH + r'\s*)?' + YEAR + r')*', re.I)
+# Several date lines in a row (e.g. "December 2025 March, June 2026 ...") form one timeline.
+MORE_TIMELINE = re.compile(r'[\s,;]*(?:' + TIMELINE.pattern + r')', re.I)
+CADENCE = re.compile(r'^\w+\s+(?:quarterly|annually|monthly|bi-?annually|biannually|ongoing)$', re.I)
 QUARTER = re.compile(r'\b[1-4](?:st|nd|rd|th)\s+quarter\s+' + YEAR + r'(?:\s*[-\u2013\u2014]\s*(?:[1-4](?:st|nd|rd|th)\s+quarter\s+)?(?:' + YEAR + r'|ongoing))?', re.I)
-VERB = re.compile(r'^(?:Allocate|Maintain|Work|Increase|Develop|Implement|Investigate|Continue|Support|Ensure|Engage|Review|Establish|Promote|Provide|Report|Train|Build|Communicate|Create|Participate|Organise|Organize|Conduct|Identify|Register|Meet|Embed|Source|Commit|Encourage|Celebrate|Raise|Explore|Consult|Include|Measure|Appoint|Define|Demonstrate|Improve|Share|Recognise|Recognize|Partner|Collaborate|Monitor|Update|Submit|Complete|Deliver|Achieve|Publish)\b', re.I)
-PHONE = re.compile(r'(?<!\w)(?:\+61[ ()\d-]{8,18}\d|0[2-478](?:[ ()-]*\d){8})(?!\d)')
+# Case-sensitive: deliverables start with a capital; wrapped lines ("support improved ...") continue.
+VERB = re.compile(r'^(?:Allocate|Maintain|Work|Increase|Develop|Implement|Investigate|Continue|Support|Ensure|Engage|Review|Establish|Promote|Provide|Report|Train|Build|Communicate|Create|Participate|Organise|Organize|Conduct|Identify|Register|Meet|Embed|Source|Commit|Encourage|Celebrate|Raise|Explore|Consult|Include|Measure|Appoint|Define|Demonstrate|Improve|Share|Recognise|Recognize|Partner|Collaborate|Monitor|Update|Submit|Complete|Deliver|Achieve|Publish|Hold|Host|Distribute|Circulate|Scope|Undertake|Facilitate|Invest|Grow|Offer|Attend|Display|Acknowledge|Seek|Strengthen|Expand|Introduce|Launch|Design|Co-design|Set|Track|Assess|Audit|Run|Sponsor|Fund|Advocate|Leverage|Plan|Prioritise|Prioritize|Procure|Purchase|Spend|Recruit|Retain|Mentor|Educate|Contact|Reach|Form|Convene|Nominate|Revise|Refresh|Renew)\b')
+NUMBERED = re.compile(r'^\d{1,2}(?:\.\d{1,2})*\.?\s+(?=\S)')
+ACTION_TITLE = re.compile(r'^Action\s+\d+\s*:')   # an action heading, never a deliverable
+SUB_NUMBERED = re.compile(r'^\d{1,2}\.\d{1,2}\.?\s+\S')
+TABLE_HEADER = re.compile(r'Action\s+Deliverable|Deliverables?\s+(?:Timelines?|Timeframes?)|(?:Timelines?|Timeframes?)\s+Responsib'
+                          r'|Responsib\w*(?:\s+persons?)?\s+(?:Timelines?|Timeframes?)|Success is demonstrated|^Action\s+\d+:', re.I | re.M)
+PHONE = re.compile(r'(?<![\w(])(?:\+61[ ()\d-]{8,18}\d|\(?0[2-478]\)?(?:[ -]*\d){8})(?!\d)')
 PERSON = r"[A-Z][a-zA-Z'\u2019-]+(?: [A-Z][a-zA-Z'\u2019-]+){1,3}"
+# Complete words that end in a ligature: never glue them to the next word ("staff awareness").
+LIGATURE_WORDS = {'staff', 'off', 'stuff', 'tariff', 'cliff', 'sheriff', 'bluff', 'plaintiff', 'cuff', 'puff', 'scoff', 'handoff',
+                  'kickoff', 'cutoff', 'layoff', 'payoff', 'signoff', 'takeoff', 'tradeoff', 'playoff', 'wifi', 'hifi'}
+
+
+def _ligature_join(m):
+    word = unicodedata.normalize('NFKC', m[1]).lower()
+    return m[0] if word.rsplit('-', 1)[-1] in LIGATURE_WORDS else m[1]
 
 
 def normalise(value):
     value = value.replace('\t', ' ')
     # PDF fonts split after ligature glyphs, and sometimes emit expanded fi/fl/ff.
-    value = re.sub(r'([\ufb00-\ufb06]) +(?=[a-z])', r'\1', value)
-    value = re.sub(r'(?<=[A-Za-z])(ffi|ffl|fi|fl) +(?=[a-z])', r'\1', value)
+    value = re.sub(r'([\w-]*[\ufb00-\ufb06]) +(?=[a-z])', _ligature_join, value)
+    value = re.sub(r'([A-Za-z-]*[A-Za-z](?:ffi|ffl|fi|fl)) +(?=[a-z])', _ligature_join, value)
     value = re.sub(r'\b(ffi|ffl|fi|fl) +(?=[a-z])', r'\1', value)
-    value = re.sub(r'\b(eff|diff|off|aff|suff) +(?=[a-z])', r'\1', value)
+    value = re.sub(r'\b(eff|diff|aff|suff) +(?=[a-z])', r'\1', value)
+    value = re.sub(r'\b(off) +(?=(?:er|ers|ered|ering|ice|ices|icer|icers|icial|icially|ence|ences|ensive)\b)', r'\1', value)
     value = unicodedata.normalize('NFKC', value)
     return '\n'.join(re.sub(r'[^\S\n]+', ' ', line).strip() for line in value.splitlines())
 
@@ -457,9 +476,13 @@ def category(deliverable):
         return 'procurement'
     if re.search(r'(?:commercial|supplier|business) relationships|relationships with.*(?:business|supplier)|supplier diversity', s):
         return 'supplier_relationships'
-    if re.search(r'cultural (?:learning|training)|cross.cultural|cultural awareness', s) and not re.search(r'employ|recruit|retention', s):
+    if (re.search(r'cultural (?:learning|training|education|capability|competency|induction)|cross.cultural|cultural awareness', s)
+            and not re.search(r'employ|recruit|retention', s)):
         return 'other'
-    if re.search(r'employ|recruit|\bstaff\b|\bfte\b|trainee|intern|positions|talent|retention', s):
+    # "staff" alone (e.g. "circulate resources to all staff") is not an employment commitment; "intern" != "internal".
+    if re.search(r'employ|recruit|retention|\bretain|\bfte\b|trainee|\binterns?\b|internship|apprentic|\bpositions?\b|workforce'
+                 r'|talent|career|\bhir(?:e|es|ing)\b|staff base|(?:first nations|aboriginal|indigenous|islander)\s+'
+                 r'(?:staff|employees|people employed|workforce|talent)', s):
         return 'employment'
     if 'supply nation' in s and re.search(r'member|membership|certif', s):
         return 'supply_nation'
@@ -490,44 +513,83 @@ def targets(deliverable):
     return result or [('none',None,None)]
 
 
+BULLET = re.compile(r'^[\u2022\u2023\u25cf\u25aa]\s*')
+ROLE = re.compile(r'\b(?:Manager|Director|Officer|Lead|Chair|Board|Team|Executive|Head|Coordinator|Advis[eo]r|Committee|Group'
+                  r'|CEO|Partner|Specialist|Counsel|Secretary|Commissioner|Owner|President|Leadership)\b')
+CADENCE_TAIL = re.compile(r'\b(?:Monitor(?:ed)?|Review(?:ed)?|Report(?:ed)?|Measured|Updated)\s+'
+                          r'(?:quarterly|annually|monthly|bi-?annually|biannually|ongoing)$')
+
+
+def split_deliverable(joined):
+    """deliverable / timeline / responsibility from one segment, or None without a timeline."""
+    match = TIMELINE.search(joined) or QUARTER.search(joined)
+    if not match:
+        return None
+    end = match.end()
+    while (more := MORE_TIMELINE.match(joined, end)):
+        end = more.end()
+    deliverable = joined[:match.start()].strip()
+    timeline = joined[match.start():end].strip()
+    responsibility = joined[end:].strip() or None
+    cadence = CADENCE_TAIL.search(deliverable)
+    if cadence and cadence.start() >= 15:
+        timeline = cadence[0] + ' ' + timeline; deliverable = deliverable[:cadence.start()].strip()
+    if responsibility:
+        # Page footers are not responsibility text.
+        responsibility = re.split(r'\b(?:Relationships|Respect|Opportunities|Governance)\s+(?:Success|Measure)', responsibility)[0].strip()
+        responsibility = re.split(r'\bDeloitte Australia\s*\||\bAECOM\s*\|', responsibility)[0].strip() or None
+    else:
+        # Responsibility printed before the timeline ("... organisation. Executive Director Jun 2028").
+        tail = re.search(r'[.)]\s+([A-Z][^.]{2,100})$', deliverable)
+        if tail and ROLE.search(tail[1]) and not VERB.match(tail[1]):
+            responsibility = tail[1].strip(); deliverable = deliverable[:tail.start() + 1].strip()
+    return dict(deliverable=deliverable, timeline=timeline, responsibility=responsibility)
+
+
 def commitments(pages):
     output = []
     for page_number, page in enumerate(pages,1):
         lines = [l for l in page.splitlines() if l]
         # Action tables and bullet lists carry commitments; introductory prose does not.
-        in_table = bool(re.search(r'Action\s+Deliverable|Deliverable\s+Timeline|Timeline\s+Responsibility|Success is demonstrated',page,re.I))
+        in_table = bool(TABLE_HEADER.search(page))
+        dated, undated = [], []
         i = 0
         while i < len(lines):
-            line = lines[i]; bullet = bool(re.match(r'^[\u2022\u2023\u25cf]',line))
-            start = re.sub(r'^[\u2022\u2023\u25cf]\s*','',line)
-            if re.match(r'^(?:Lead|Support):|^(?:Partner|Director|Manager|Lead)$', start) or not (bullet or in_table and (VERB.match(start) or re.match(r'^\d+(?:\.\d+)?%',start))):
+            line = lines[i]; bullet = bool(BULLET.match(line)); numbered = bool(NUMBERED.match(line))
+            start = NUMBERED.sub('', BULLET.sub('', line))
+            if ACTION_TITLE.match(line) or re.match(r'^(?:Lead|Support):|^(?:Partner|Director|Manager|Lead)$', start) or not (
+                    bullet or in_table and (VERB.match(start) or numbered and len(start) >= 15 or re.match(r'^\d+(?:\.\d+)?%',start))):
                 i += 1; continue
             segment = [start]; j = i + 1
             while j < len(lines):
                 following = lines[j]
-                if re.match(r'^[\u2022\u2023\u25cf]|^\d{1,2}[.)]?\s*$',following) or (VERB.match(following) and not re.match(r'^(?:Support:|Partner$|Director$|Manager$|Lead$)',following)) or re.match(r'^\d+(?:\.\d+)?%',following):
-                    break
-                if re.match(r'^\d+\.\s+[A-Z]|^Contact details|^Action Deliverable', following):
+                if CADENCE.match(following):   # "Monitor quarterly" belongs to the timeline
+                    segment.append(following); j += 1; continue
+                if (BULLET.match(following) or re.match(r'^\d{1,2}[.)]?\s*$',following) or SUB_NUMBERED.match(following)
+                        or (VERB.match(following) and not re.match(r'^(?:Support:|Partner$|Director$|Manager$|Lead$)',following))
+                        or re.match(r'^\d+(?:\.\d+)?%',following)
+                        or re.match(r'^\d+\.\s+[A-Z]|^Action\s+\d+:|^Contact details|^Action Deliverable', following)):
                     break
                 if len(' '.join(segment)) > 2000:
                     break
                 segment.append(following); j += 1
             joined = ' '.join(segment)
-            match = TIMELINE.search(joined) or QUARTER.search(joined)
-            if match:
-                deliverable = joined[:match.start()].strip()
-                timeline = match[0]
-                responsibility = joined[match.end():].strip() or None
-                # Page footers are not responsibility text.
-                if responsibility:
-                    responsibility = re.split(r'\b(?:Relationships|Respect|Opportunities|Governance)\s+(?:Success|Measure)',responsibility)[0].strip()
-                    responsibility = re.split(r'\bDeloitte Australia\s*\||\bAECOM\s*\|',responsibility)[0].strip()
-                if len(deliverable) >= 15:
-                    for kind, value, unit in targets(deliverable):
-                        output.append(dict(category=category(deliverable),deliverable=deliverable,
-                                           target_kind=kind,target_value=value,target_unit=unit,timeline=timeline,
-                                           responsibility=responsibility,page=page_number,quote=deliverable))
+            row = split_deliverable(joined)
+            if row:
+                dated.append(row)
+            elif in_table:
+                undated.append(joined.strip())
             i = max(i+1,j)
+        rows = dated
+        if in_table and not dated:
+            # Column-by-column extraction separated dates from their rows: keep the deliverables, undated.
+            rows = [dict(deliverable=d, timeline=None, responsibility=None) for d in undated if len(d) >= 25 and VERB.match(d)]
+        for r in rows:
+            if len(r['deliverable']) >= 15:
+                for kind, value, unit in targets(r['deliverable']):
+                    output.append(dict(category=category(r['deliverable']),deliverable=r['deliverable'],
+                                       target_kind=kind,target_value=value,target_unit=unit,timeline=r['timeline'],
+                                       responsibility=r['responsibility'],page=page_number,quote=r['deliverable']))
     return output
 
 
@@ -556,6 +618,22 @@ def people(pages):
                     email[0] if email else None,phone[0] if phone else None)
                 if email:
                     captured_emails.add(email[0])
+            else:
+                # Unlabelled block: name line, title lines, then phone / email / address.
+                after = [l.strip() for l in block[1].splitlines() if l.strip()][:8]
+                name = next((l for l in after[:2] if re.fullmatch(PERSON, l)), None)
+                if name:
+                    title = []
+                    for l in after[after.index(name) + 1:]:
+                        if EMAIL_PATTERN.search(l) or PHONE.search(l) or re.search(r'\d', l):
+                            break
+                        title.append(l)
+                    flat_block = ' '.join(after)
+                    email = EMAIL_PATTERN.search(flat_block); phone = PHONE.search(flat_block)
+                    add('contact',number,'Contact details '+flat_block,name,' '.join(title[:3]) or None,
+                        email[0] if email else None,phone[0] if phone else None)
+                    if email:
+                        captured_emails.add(email[0])
         # A name followed by a CEO title, excluding Reconciliation Australia's own statement.
         for i, line in enumerate(lines[:-1]):
             if re.fullmatch(PERSON,line) and re.search(r'Chief Executive|\bCEO\b',lines[i+1],re.I):
@@ -601,8 +679,22 @@ def people(pages):
     return output
 
 
-def analyse(pages, directory_row):
+def organisation_found(name, text):
+    """The directory organisation appears on the first pages (abbreviations and 'PHN' accepted)."""
     from .parsers import legal_key, name_key
+    document = set(name_key(text).split())
+    if 'phn' in document:
+        document |= {'primary', 'health', 'network'}
+    abbreviations = [name_key(a).replace(' ', '') for a in re.findall(r'\(([A-Za-z&]{2,12})\)', name or '')]
+    tokens = [t for t in legal_key(re.sub(r'\([^)]*\)', ' ', name or '')).split() if t not in ('the', 'of', 'and', 'for')]
+    if not tokens:
+        return False
+    if set(tokens) <= document or any(a and a in document for a in abbreviations):
+        return True
+    return len(tokens) >= 3 and sum(t in document for t in tokens) / len(tokens) >= 0.75
+
+
+def analyse(pages, directory_row):
     pages = [normalise(p) for p in pages]
     first = ' '.join(pages[:6]); cover = ' '.join(pages[:2])
     detected = re.search(r'\b(Reflect|Innovate|Stretch|Elevate)\b(?=\s+(?:Reconciliation|RAP|Action))',cover,re.I)
@@ -610,19 +702,17 @@ def analyse(pages, directory_row):
         detected = re.search(r'\b(Reflect|Innovate|Stretch|Elevate)\b',pages[0] if pages else '',re.I)
     rap_type = detected[1].title() if detected else None
     period = detect_period(pages)
-    tokens = legal_key(directory_row.get('organisation','')).split()
-    document_tokens = set(name_key(first).split())
-    organisation_found = bool(tokens) and set(tokens).issubset(document_tokens)
+    found = organisation_found(directory_row.get('organisation',''), first)
     status = 'matched'
     if not first.strip() or not rap_type or not period:
         status = 'unreadable'
-    elif not organisation_found:
+    elif not found:
         status = 'organisation_not_found'
     elif rap_type.casefold() != (directory_row.get('rap_type') or '').casefold():
         status = 'type_mismatch'
     elif not (years(period) & years(directory_row.get('period_as_published'))):
         status = 'period_mismatch'
-    return dict(rap_type_detected=rap_type,period_detected=period,organisation_found=organisation_found,
+    return dict(rap_type_detected=rap_type,period_detected=period,organisation_found=found,
                 match_status=status,pages=len(pages),characters=sum(map(len,pages)),
                 commitments=commitments(pages),people=people(pages))
 
