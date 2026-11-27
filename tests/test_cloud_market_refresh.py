@@ -71,5 +71,12 @@ class ResearchRefreshIsolationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 worker.main(['--timeout','901'])
 
+    def test_helper_reads_the_configured_path_not_the_server_file(self):
+        # On the server /etc/illoura-market/refresh.json exists and is root-only; main must use CONFIG.
+        absent=Path(tempfile.gettempdir())/'absent-illoura-refresh.json'
+        with patch.object(worker,'CONFIG',absent),patch.object(worker,'refresh',return_value={'status':'disabled'}) as refresh:
+            self.assertEqual(worker.main(['--timeout','900']),0)
+            self.assertEqual(refresh.call_args.args[0],absent)
+
 
 if __name__=='__main__':unittest.main()
