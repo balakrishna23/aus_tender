@@ -238,6 +238,11 @@ class ActTenderSpider(scrapy.Spider):
                 meta=PW_META, errback=self.errback,
             )
 
+    async def start(self):
+        # Scrapy 2.13+ consumes start(); preserve both browser listing requests.
+        for request in self.start_requests():
+            yield request
+
     async def parse(self, response):
         page = response.meta.get('playwright_page')
         try:
