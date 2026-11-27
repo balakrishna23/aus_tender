@@ -1,5 +1,8 @@
 # Reference: data API and Claude Desktop
 
+The scoped internal write inbox and manual page are documented in
+[review-workflow.md](review-workflow.md); normal dataset queries remain read-only.
+
 Expose bounded read-only procurement snapshots through HTTP and Claude MCP tools.
 
 Files covered:

@@ -1,5 +1,61 @@
 # Illoura AWS operations
 
+## Internal review page installation (27 November 2026)
+
+Prepared locally; these steps are for the coordinating deployer. No units are
+enabled and no keys are created by the source changes alone.
+
+1. Run the repository and API test suites. Deploy a reviewed research application
+   build containing `market_intelligence/review_inbox.py` and
+   `api/review_support.py`, its existing dependencies, and the existing schema.
+   Point the protected `/etc/illoura-market/research-refresh.json` at that build
+   using the established research build procedure (fallback: `refresh.json`).
+   This worker does not deploy or migrate the application itself.
+2. Run `python deploy/aws/illoura_aws.py review-import install --yes`. This stages
+   and runs wrapper tests, installs root-owned files, checks installed hashes,
+   creates the protected inbox/ledger and API sandbox override, and reloads systemd.
+   It does **not** start or enable units, restart the API or change existing timers.
+3. Run `python deploy/aws/illoura_aws.py verify-api`, then
+   `python deploy/aws/illoura_aws.py deploy-api --yes`. The deploy ships the page
+   and wire module alongside the app, runs the HTTP security suite as `illoura-api`
+   before installing, and restarts the API with rollback on failed health checks.
+   Restart also activates the new read-group membership and sandbox exception.
+4. With deployment authorization, enable the watcher with
+   `sudo systemctl enable --now illoura-review-import.path`. Start
+   `sudo systemctl start illoura-review-import.service` once to drain any decisions
+   queued before the watcher was enabled. The path unit also requests an initial
+   drain on activation/reboot. `review-import status` inspects the units.
+   The service retries after five minutes if busy or in blackout. The worker avoids
+   05:30–09:30 Sydney, starting its blackout at 05:28 to cover its two-minute bound.
+5. Create a distinct reviewer key with
+   `python deploy/aws/illoura_aws.py api-key create --name swetha-review --scope review`.
+   Use the existing private credential-file handoff; never paste key material into
+   logs, commands or this guide. Existing keys remain read-only. Supply the owner’s
+   HTTPS API base address plus `/review` and [Swetha’s guide](review_guide.md).
+6. Submit a controlled decision, check queued/applied status and database audit,
+   then verify its appearance after the next research snapshot. Do not resubmit
+   an applied decision while waiting for publication.
+
+Accounts and paths are discovered from `api/install-api.sh`, the API deploy CLI,
+and the existing research wrapper: API `illoura-api` (one uvicorn worker), research
+owner `ubuntu`, private root `/home/ubuntu/illoura-market-data`, DB env
+`database.env`, ops interpreter `/opt/aus_tender/.venv/bin/python`, wrapper directory
+`/opt/illoura-ops`, shared lock `/var/lib/illoura-market-refresh/refresh.lock`.
+The new read group is `illoura-review`. Root owns `/var/lib/illoura-review`; only
+`illoura-api` can write `inbox`, and only `ubuntu` can write `ledger` (directories
+2750, files 0640). Each service can read the other’s directory through the group.
+The API retains immutable SQLite access and has no private PostgreSQL environment.
+
+API paths can be configured with `ILLOURA_REVIEW_INBOX` and
+`ILLOURA_REVIEW_LEDGER`. The supplied units, wrapper and installer intentionally
+use the fixed defaults. A custom deployment must review and change the paths,
+ownership, path watcher and sandbox override together; do not override only one.
+At the 20 MiB inbox cap, submissions stop with 507. Archive processed inbox files
+and their matching ledger entries only through the owner’s authorized retention
+procedure. Never clear a ledger and replay the same inbox. Interrupted/uncertain
+application requires database audit reconciliation before resubmission. No collector
+changes, outreach, email sends, migrations or new publication schedule are involved.
+
 Status: 13 November 2026. Source/evidence collection runs in Sydney. The procurement
 API now serves the validated cloud source generation. Private human workflow state
 on the laptop has not yet been migrated into a shared cloud workbench.

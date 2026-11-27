@@ -9,17 +9,29 @@ import re
 import sqlite3
 import threading
 import time
+import uuid
 from collections import OrderedDict, defaultdict, deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
+try:
+    from . import review_support as review_wire
+    from .review_page import PAGE
+except ImportError:
+    import review_support as review_wire
+    from review_page import PAGE
+
+REVIEW_INBOX = Path(os.environ.get('ILLOURA_REVIEW_INBOX', '/var/lib/illoura-review/inbox'))
+REVIEW_LEDGER = Path(os.environ.get('ILLOURA_REVIEW_LEDGER', '/var/lib/illoura-review/ledger'))
+review_write_lock = threading.Lock()
+review_rates = defaultdict(deque)
 
 DATA = Path(os.environ.get("ILLOURA_DATA_DIR", "/srv/illoura-data/current"))
 KEYS = Path(os.environ.get("ILLOURA_KEYS_FILE", "/etc/illoura-api/keys.json"))
@@ -501,6 +513,10 @@ def forget_unknown_keys(enabled_digests):
 async def authenticate(request: Request, call_next):
     started = time.monotonic()
     keyname = "anonymous"
+    if request.url.path == '/review' and request.method == 'GET' and not request.url.query:
+        return HTMLResponse(PAGE, headers={'Cache-Control': 'no-store',
+            'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+            'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff'})
     if request.url.path == "/healthz":
         return JSONResponse({"status": "ok", "service": "illoura-read-api"})
     if request.url.path in ("/readyz", "/research-readyz"):
@@ -578,6 +594,29 @@ async def authenticate(request: Request, call_next):
         record_failure(address, attempt_at)
         return JSONResponse({"detail": "Invalid or revoked API key"}, status_code=401)
     keyname = key["name"]
+    if request.url.path.startswith('/v1/review/'):
+        request.state.reviewer = keyname
+        if 'review' not in (key.get('scopes') if isinstance(key.get('scopes'), list) else []):
+            return JSONResponse({'detail': 'Review scope required'}, status_code=403)
+        if request.method == 'POST':
+            with rate_lock:
+                for old in list(review_rates):
+                    if old not in {x['sha256'] for x in records if x.get('enabled')}:
+                        del review_rates[old]
+                pending = review_rates[digest]
+                _drop_older(pending, time.monotonic(), 60)
+                if len(pending) >= 20:
+                    return JSONResponse({'detail': 'Review rate limit reached'}, status_code=429,
+                                        headers={'Retry-After': '60'})
+                pending.append(time.monotonic())
+            if declared is None or int(declared) > review_wire.BODY_LIMIT:
+                return JSONResponse({'detail': 'Review body too large'}, status_code=413)
+            received = bytearray()
+            async for chunk in request.stream():
+                received.extend(chunk)
+                if len(received) > review_wire.BODY_LIMIT:
+                    return JSONResponse({'detail': 'Review body too large'}, status_code=413)
+            request._body = bytes(received)
     with rate_lock:
         queue = rates[digest]
         now = time.monotonic()
@@ -643,6 +682,98 @@ def post_query(body: Query):
 @app.post("/v1/search")
 def post_search(body: Search):
     return search_data(**body.model_dump())
+
+
+@app.get('/v1/review/queue')
+def review_queue():
+    db = connect('research')
+    try:
+        result = {}
+        for kind, columns in review_wire.COLUMNS.items():
+            suffix = " WHERE review_status IN ('unreviewed','needs_recheck')" if kind == 'buyer' else ''
+            rows = db.execute('SELECT ' + ','.join(columns) + ' FROM ' + review_wire.TABLES[kind] + suffix + ' LIMIT 5001').fetchall()
+            if len(rows) > 5000:
+                raise HTTPException(503, 'Review queue exceeds supported size')
+            result[kind] = [dict(review_wire.packet(kind, r), expected=review_wire.fingerprint(kind, r)) for r in rows]
+        result['buyer'].sort(key=lambda r: (r['review_status'] != 'needs_recheck',
+            not r['register_context_stale'], r['match_status'] != 'conflict', r['buyer_name'] or ''))
+        return result
+    except (sqlite3.Error, ValueError, KeyError):
+        raise HTTPException(503, 'Review snapshot unavailable') from None
+    finally:
+        db.close()
+
+
+def review_entries():
+    if not REVIEW_INBOX.is_dir():
+        return []
+    entries = []
+    for path in sorted(REVIEW_INBOX.glob('*.jsonl')):
+        if path.is_symlink() or path.stat().st_size > review_wire.BODY_LIMIT + 1024:
+            raise HTTPException(503, 'Review inbox requires operator attention')
+        entries.append(json.loads(path.read_text(encoding='utf-8')))
+    return entries
+
+
+@app.post('/v1/review/decisions', status_code=202)
+async def submit_review(request: Request):
+    try:
+        data = review_wire.validate(await request.json())
+    except (ValueError, TypeError):
+        raise HTTPException(422, 'Invalid review fields, enums, text or HTTPS evidence URL') from None
+    try:
+        with review_write_lock:
+            REVIEW_INBOX.mkdir(mode=0o750, parents=True, exist_ok=True)
+            if REVIEW_INBOX.is_symlink():
+                raise OSError('Unsafe inbox')
+            # Filename and identity are always server-generated. O_EXCL prevents replacement.
+            stamp = datetime.now(timezone.utc)
+            identifier = uuid.uuid4().hex
+            entry = dict(data, id=identifier, reviewer=request.state.reviewer, submitted_at=stamp.isoformat())
+            payload = (json.dumps(entry, ensure_ascii=False) + '\n').encode('utf-8')
+            if sum(p.stat().st_size for p in REVIEW_INBOX.iterdir()) + len(payload) > review_wire.INBOX_LIMIT:
+                raise HTTPException(507, 'Review inbox full; ask the operator to archive processed decisions')
+            path = REVIEW_INBOX / (stamp.strftime('%Y%m%dT%H%M%S%fZ') + '-' + identifier + '.jsonl')
+            temporary = path.with_suffix('.pending')
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+            with os.fdopen(descriptor, 'wb') as stream:
+                stream.write(payload)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # Only complete lines become visible to the watcher/importer.
+            os.rename(temporary, path)
+            if os.name == 'posix':
+                descriptor = os.open(REVIEW_INBOX, os.O_RDONLY | os.O_DIRECTORY)
+                try:
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+        return {'id': identifier, 'status': 'queued'}
+    except OSError:
+        raise HTTPException(503, 'Review inbox unavailable') from None
+
+
+@app.get('/v1/review/status')
+def review_status(request: Request):
+    try:
+        result = []
+        for entry in review_entries():
+            if entry['reviewer'] != request.state.reviewer:
+                continue
+            identifier = entry['id']
+            if not re.fullmatch('[a-f0-9]{32}', identifier):
+                raise ValueError('Invalid decision id')
+            status = {'status': 'queued'}
+            file = REVIEW_LEDGER / (identifier + '.json')
+            if file.is_file() and not file.is_symlink():
+                status = json.loads(file.read_text(encoding='utf-8'))
+                if status.get('status') == 'applying':
+                    status = {'status': 'queued', 'reason': 'Application in progress'}
+            result.append({k: entry[k] for k in ('id', 'kind', 'target', 'submitted_at')} |
+                          {k: status[k] for k in ('status', 'reason', 'processed_at') if k in status})
+        return {'decisions': result}
+    except (OSError, ValueError, KeyError):
+        raise HTTPException(503, 'Review status unavailable') from None
 
 
 app.mount("/", mcp_app)
