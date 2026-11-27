@@ -34,7 +34,7 @@ def upgrade():
  WITH latest AS (
  SELECT DISTINCT ON (record_key) * FROM market.rap_documents WHERE match_status='matched'
  -- A landing page can yield two matching plans (e.g. 2023-2026 and 2026-2029): prefer the later plan.
- ORDER BY record_key,(SELECT max(y[1]::int) FROM regexp_matches(coalesce(period_detected,''),'((?:19|20)[0-9]{2})','g') AS y) DESC NULLS LAST,
+ ORDER BY record_key,(SELECT max(y[1]::int) FROM regexp_matches(coalesce(period_detected,''),'((19|20)[0-9]{2})','g') AS y) DESC NULLS LAST,
  extracted_at DESC NULLS LAST,sha256 DESC
  ), findings AS (
  SELECT d.record_key,d.organisation,d.sha256 AS document_sha256,d.source_url,
