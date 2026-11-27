@@ -23,6 +23,8 @@ PLAYWRIGHT_BROWSERS_PATH=/opt/aus_tender/.browsers PYTHONPATH=BUILD \
 
 `extract` (research venv, migration 026) then imports the fetch audit files.
 
+**Rules revision 2 (28 Nov 2026, tuned on nine real plans).** Abbreviated months ("Oct 2026", "Apr 2027, 2028, 2029"); numbered and sub-numbered deliverables ("1.", "1.1."), where a new sub-item ends the previous one and "Action N:" headings are never deliverables; responsibility printed before the timeline; stacked date lines and "Monitor quarterly" kept as one timeline; table headings in capitals or plural ("DELIVERABLES TIMELINE RESPONSIBLE PERSONS"); tables extracted column by column keep their deliverables undated; organisation matching accepts the directory abbreviation and "PHN"; unlabelled contact blocks and "(07)" phones; ligature joins never glue a whole word ("staff awareness"); "staff" alone or "internal" no longer marks a commitment as employment. Verbs are matched case-sensitively so wrapped lines continue the deliverable. Size cap 150 MiB.
+
 Extraction matches against the current RAP directory snapshot. Only matched documents enter `current_rap_document_findings`. Legacy approved extraction fields take precedence in `build_rap`; otherwise the report uses rule-based document fields with the PDF hash and source URL. Supply Nation membership alone never establishes a certification requirement. The absence of an explicit certification rule remains `unknown`.
 
 Targets retain their complete normalised deliverable quote and page. A deliverable with both a percentage and a headcount has two target rows. For baseline-to-future numerical comparisons the final number is the target. These rules describe published commitments, not actual performance or available procurement budget.
