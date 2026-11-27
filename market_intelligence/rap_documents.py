@@ -24,7 +24,7 @@ def text(sql):
     return sql_text(sql)
 
 
-PARSER_REVISION = 'rap-rules-2'
+PARSER_REVISION = 'rap-rules-3'
 USER_AGENT = 'IllouraResearchBot/1.0 (internal research; respects robots.txt)'
 MAX_BYTES = 150 * 1024 * 1024   # artwork-heavy plans exceed 40 MB (City of Fremantle)
 BLOCKED_HOST = 'reconciliation.my.salesforce.com'
@@ -479,6 +479,10 @@ def category(deliverable):
     if (re.search(r'cultural (?:learning|training|education|capability|competency|induction)|cross.cultural|cultural awareness', s)
             and not re.search(r'employ|recruit|retention', s)):
         return 'other'
+    # Training / attendance items mention employees but are not employment commitments.
+    if (re.search(r'\b(?:training|workshops?|attendance|induction|e-?learning)\b', s)
+            and not re.search(r'recruit|retention|\bretain|employment|\bfte\b|traineeship|internship|apprentic|\bpositions?\b|career|\bhir(?:e|es|ing)\b', s)):
+        return 'other'
     # "staff" alone (e.g. "circulate resources to all staff") is not an employment commitment; "intern" != "internal".
     if re.search(r'employ|recruit|retention|\bretain|\bfte\b|trainee|\binterns?\b|internship|apprentic|\bpositions?\b|workforce'
                  r'|talent|career|\bhir(?:e|es|ing)\b|staff base|(?:first nations|aboriginal|indigenous|islander)\s+'
@@ -498,8 +502,17 @@ def targets(deliverable):
     result = []
     percents = list(re.finditer(r'(\d+(?:\.\d+)?)\s*%', deliverable))
     if percents:
-        result.append(('percent', Decimal(percents[-1][1]), '%'))
-    money = list(re.finditer(r'\$\s*(\d[\d,.]*)\s*(billion|million|bn|m|k)?\b', deliverable, re.I))
+        # "from X% ... to Y%" is baseline -> goal: keep Y. Otherwise every distinct percentage is a target
+        # ("maintain a 7% minimum spend ... with an increase of 0.5% each year" keeps 7 and 0.5).
+        if len(percents) == 1 or re.search(r'\bfrom\b[^%]{0,80}%.{0,160}?\bto\b', deliverable, re.I | re.S):
+            chosen = [percents[-1][1]]
+        else:
+            chosen = list(dict.fromkeys(p[1] for p in percents))
+        result.extend(('percent', Decimal(value), '%') for value in chosen)
+    # Contract-size thresholds ("contracts valued at $250,000 or more") are not spend targets.
+    money = [m for m in re.finditer(r'\$\s*(\d[\d,.]*)\s*(billion|million|bn|m|k)?\b', deliverable, re.I)
+             if not re.search(r'(?:valued at|over|above|exceeding|greater than|more than|in excess of)\s*$', deliverable[max(0, m.start() - 30):m.start()], re.I)
+             and not re.match(r'\s*(?:or more|or above|and above|\+)', deliverable[m.end():], re.I)]
     if money:
         m = money[-1]; scale = {None:1,'k':1000,'m':1000000,'million':1000000,'bn':1000000000,'billion':1000000000}
         result.append(('money',Decimal(m[1].replace(',','')) * scale[(m[2] or '').lower() or None],'AUD'))

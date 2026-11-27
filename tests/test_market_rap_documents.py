@@ -94,6 +94,18 @@ class Rules(unittest.TestCase):
         self.assertEqual(R.category('Provide internal communications on reconciliation.'),'other')
         self.assertEqual(R.category('Increase First Nations staff to 3% of our workforce.'),'employment')
 
+    def test_minimum_plus_increment_thresholds_and_training(self):
+        both=R.targets('Maintain a 7% minimum procurement spend with First Nations businesses, with an increase of 0.5% each year.')
+        self.assertEqual([v for k,v,u in both if k=='percent'],[Decimal('7'),Decimal('0.5')])
+        goal=R.targets('Increase First Nations staff in our workforce from 2.5% to 3.0% over the plan.')
+        self.assertEqual([v for k,v,u in goal if k=='percent'],[Decimal('3.0')])
+        for threshold in ('Include cultural requirements in contracts valued at $250,000 or more.',
+                          'Double the number of Indigenous suppliers with whom we spend over $100,000 per annum.'):
+            self.assertFalse([k for k,v,u in R.targets(threshold) if k=='money'])
+        self.assertEqual(R.targets('Commit to a minimum spend of $750,000 each year.')[0][1],Decimal('750000'))
+        self.assertEqual(R.category('Ensure 100% attendance by employees at the mandatory training workshop.'),'other')
+        self.assertEqual(R.category('Increase employment through a traineeship training program.'),'employment')
+
     def test_unlabelled_contact_block_and_bracketed_phone(self):
         rows=self.analyse('Contact details\nRobin Example\nDirector for First Nations\nPartnerships\n(07) 0000 0000\nrap@example.invalid')['people']
         contact=[r for r in rows if r['context']=='contact'][0]
