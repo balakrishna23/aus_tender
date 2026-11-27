@@ -138,6 +138,15 @@
       "commercial_reuse": "unclear",
       "refresh": "monthly"
     },
+    "rap_documents": {
+      "source_url": "Each organisation's own website (RAP PDF or its RAP landing page); never Reconciliation Australia's Salesforce document host (robots.txt Disallow: /)",
+      "status": "fetch_started_2026_11_28_extraction_after_migration_026",
+      "licence": "Source-specific rights retained; internal research only",
+      "commercial_reuse": "unclear",
+      "refresh": "manual_rerun",
+      "acquisition": "python -m market_intelligence.rap_documents --data-root ROOT --candidates CSV --stealth-fallback in the collectors' venv (no database), then python -m market_intelligence rap-documents extract. robots.txt checked for every URL; stealth Chromium retry only after a refusal, never on qld.gov.au, wa.gov.au or data.gov.au. First list: 119 Elevate and Stretch organisations, 117 with an own-site link (28 Nov 2026).",
+      "privacy_review": "Project owner decision 28 Nov 2026: personal data in RAP documents (names, titles, emails, phones of contacts, CEOs, sponsors, champions, working groups) is stored and flagged is_personal; other sources keep their rules"
+    },
     "wa_contracts": {
       "source_url": "https://catalogue.data.wa.gov.au/",
       "status": "loaded_retained_2021_22_to_2023_24",
@@ -174,7 +183,7 @@
     "PHNs, hospitals, named aged-care and NDIS providers, ratings",
     "GrantConnect, budget, annual report and insourcing evidence",
     "ABS remoteness production import (parser verified; awaiting server import)",
-    "Broad RAP extraction provider and quality sample (deferred by the project owner, 20 Nov 2026)"
+    "RAP documents for organisations without an own-site plan (DLA Piper, North Central CMA; AFP only 2022-24 found) and Reflect/Innovate plans"
   ],
   "business_inputs": [
     "Illoura profile evidence",
