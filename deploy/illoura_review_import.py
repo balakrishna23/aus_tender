@@ -55,11 +55,19 @@ def run_application(root, build, timeout=HARD_LIMIT):
     return {'status': 'complete' if process.returncode == 0 else 'failed'}
 
 
+def config_path():
+    # The service runs as root; an unprivileged caller (e.g. staged tests) cannot stat /etc/illoura-market.
+    try:
+        return CONFIG if CONFIG.exists() else FALLBACK_CONFIG
+    except PermissionError:
+        return CONFIG
+
+
 def run(config=None, now=None):
     import fcntl
     if blackout(now):
         return {'status': 'deferred', 'reason': 'sydney_brief_blackout'}
-    root, build = configuration(config or (CONFIG if CONFIG.exists() else FALLBACK_CONFIG))
+    root, build = configuration(config or config_path())
     LOCK.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     with LOCK.open('a') as lock:
         try:

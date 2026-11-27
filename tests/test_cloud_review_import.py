@@ -49,6 +49,13 @@ class ReviewWrapperTests(unittest.TestCase):
             self.assertFalse(any('postgresql:' in s for s in argv))
             process.wait.assert_called_once_with(timeout=115)
 
+    def test_config_path_when_unprivileged_cannot_stat(self):
+        denied = Mock(exists=Mock(side_effect=PermissionError))
+        with patch.object(worker, 'CONFIG', denied):
+            self.assertIs(worker.config_path(), denied)
+        with tempfile.TemporaryDirectory() as tmp, patch.object(worker, 'CONFIG', Path(tmp) / 'missing.json'):
+            self.assertEqual(worker.config_path(), worker.FALLBACK_CONFIG)
+
     def test_deferred_exit_retries_and_unit_is_bounded(self):
         with patch.object(worker, 'run', return_value={'status': 'deferred'}):
             self.assertEqual(worker.main([]), 75)
