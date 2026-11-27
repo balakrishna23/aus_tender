@@ -106,7 +106,8 @@ def main(argv=None):
             STATE.mkdir(mode=0o700,parents=True,exist_ok=True)
             lock=(STATE/'refresh.lock').open('a')
             fcntl.flock(lock.fileno(),fcntl.LOCK_EX|fcntl.LOCK_NB)
-        result=refresh(timeout=args.timeout)
+        # Pass CONFIG explicitly: refresh()'s default is bound at definition time.
+        result=refresh(CONFIG,timeout=args.timeout)
     except BlockingIOError:result={'status':'busy','reason':'another research refresh owns the lock'}
     except Exception as exc:result={'status':'failed','error_code':type(exc).__name__}
     finally:
