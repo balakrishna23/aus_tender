@@ -1,4 +1,5 @@
-"""Research + Metabase recovery set: full restore comparison, durable evidence, no secrets, no deletion."""
+"""Research + Metabase recovery set: full restore comparison, durable evidence, no secrets; only verified
+restore copies are ever dropped (never live databases or dumps)."""
 import importlib.util
 import json
 import re
@@ -49,6 +50,7 @@ class FakeServer:
     def __init__(self):
         self.dbs = {"illoura_market": market_state(), "illoura_metabase": metabase_state()}
         self.commands = []
+        self.dropped = []
         self.hook = None
 
     def __call__(self, args, env):
@@ -68,6 +70,12 @@ class FakeServer:
             self.dbs[target] = json.loads(Path(args[-1]).read_text())
             return ""
         if program == "sudo":
+            dropped = re.fullmatch(r"DROP DATABASE ([a-z0-9_]+)", args[-1])
+            if dropped:
+                assert dropped[1] in self.dbs and "_restore_" in dropped[1], "only restore copies may be dropped"
+                self.dropped.append(dropped[1])
+                del self.dbs[dropped[1]]
+                return ""
             match = re.fullmatch(r"CREATE DATABASE ([a-z0-9_]+) OWNER ([a-z0-9_]+)", args[-1])
             assert match and match[1] not in self.dbs
             self.dbs[match[1]] = None
@@ -139,12 +147,17 @@ class ResearchBackupTests(unittest.TestCase):
             self.assertNotIn(secret, text)
         return json.loads(text)
 
-    def assert_nothing_deleted(self):
+    def assert_nothing_deleted(self, verified_restores=()):
+        """Live databases and dumps are never deleted; only verified restore copies may be dropped."""
         for command in self.server.commands:
             joined = " ".join(command).upper()
-            self.assertNotIn("DROP", joined)
             self.assertNotIn("DROPDB", joined)
             self.assertNotIn("--CLEAN", joined)
+            if "DROP" in joined:
+                self.assertRegex(command[-1], r"^DROP DATABASE illoura_(market|metabase)_restore_[0-9a-z]+$")
+        self.assertEqual(sorted(self.server.dropped), sorted(verified_restores))
+        self.assertIn("illoura_market", self.server.dbs)
+        self.assertIn("illoura_metabase", self.server.dbs)
 
     def test_complete_restore_drill_verifies_both_databases_and_recovery_files(self):
         result = self.run_backup()
@@ -158,8 +171,11 @@ class ResearchBackupTests(unittest.TestCase):
         self.assertEqual(market["live"]["rows_counted"], 1246)
         self.assertEqual(market["live"]["source_hash_tables"], 2)
         self.assertEqual(metabase["live"]["content_rows"]["report_card"], 5)
-        self.assertEqual(self.server.dbs[market["restored_database"]], market_state())
         self.assertTrue(market["restored_database"].startswith("illoura_market_restore_20261120t"))
+        # Verified copies are dropped (each is ~10 GB in production); the dumps stay.
+        self.assertTrue(market["restored_database_dropped"] and metabase["restored_database_dropped"])
+        self.assertNotIn(market["restored_database"], self.server.dbs)
+        self.assertIn("dropped once it matched", evidence["retention"])
         backup_dir = self.root / "backups" / "set1"
         sums = (backup_dir / "SHA256SUMS").read_text().splitlines()
         self.assertEqual(len(sums), 5)
@@ -170,7 +186,27 @@ class ResearchBackupTests(unittest.TestCase):
                          {"credentials.json", "metabase.env", "provisioned.json"})
         self.assertEqual((backup_dir / "metabase.env").read_text(), (self.meta / "metabase.env").read_text())
         self.assertNotIn("warnings", evidence)
+        self.assert_nothing_deleted([market["restored_database"], metabase["restored_database"]])
+
+    def test_keep_flag_retains_verified_restore_databases(self):
+        result = rb.backup(self.env_file, self.meta, self.root / "backups" / "set1", restore=True,
+                           runner=self.server, clock=self.clock, base_env={}, keep_restore=True)
+        market, metabase = result["databases"]
+        self.assertTrue(market["restored_database_kept"] and metabase["restored_database_kept"])
+        self.assertEqual(self.server.dbs[market["restored_database"]], market_state())
+        self.assertIn("restore databases", self.evidence()["retention"])
         self.assert_nothing_deleted()
+
+    def test_failed_drop_is_a_warning_not_a_failed_backup(self):
+        def refuse_drop(server, args, env):
+            if args[0] == "sudo" and args[-1].startswith("DROP DATABASE"):
+                raise rb.CommandError("psql", 1, "database is being accessed by other users")
+
+        self.server.hook = refuse_drop
+        self.assertEqual(self.run_backup()["status"], "complete")
+        evidence = self.evidence()
+        self.assertFalse(evidence["databases"][0]["restored_database_dropped"])
+        self.assertIn("could not be dropped", evidence["warnings"][0])
 
     def test_without_restore_drill_creates_no_databases(self):
         result = self.run_backup(restore=False)
@@ -232,6 +268,9 @@ class ResearchBackupTests(unittest.TestCase):
         evidence = self.evidence()
         self.assertEqual(evidence["failure"]["stage"], "metabase:compare-restore")
         self.assertTrue(evidence["databases"][0]["restore_verified"])
+        # The verified research copy is dropped; the Metabase copy that failed is kept for diagnosis.
+        self.assertEqual([d for d in self.server.dropped], [evidence["databases"][0]["restored_database"]])
+        self.assertIn(evidence["databases"][1]["restored_database"], self.server.dbs)
 
     def test_live_change_during_dump_stops_before_certifying(self):
         def change_after_dump(server, args, env):
@@ -281,8 +320,9 @@ class ResearchBackupTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             self.run_backup("first")
         self.assertEqual((self.root / "backups" / "first" / "verification.json").read_text(), first_text)
-        self.assertEqual(self.run_backup("second")["status"], "complete")
-        self.assert_nothing_deleted()
+        second = self.run_backup("second")
+        self.assertEqual(second["status"], "complete")
+        self.assert_nothing_deleted([d["restored_database"] for d in second["databases"]])
 
     def test_missing_encryption_key_fails_before_any_dump(self):
         (self.meta / "metabase.env").write_text(f"MB_DB_PASS={APP_PASSWORD}\nMB_ENCRYPTION_SECRET_KEY=\n")
