@@ -36,6 +36,14 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Isolated federal intelligence staging; no outreach or collector writes')
     commands=parser.add_subparsers(dest='command',required=True)
     commands.add_parser('migrate')
+    documents=commands.add_parser('rap-documents',help='Own-site RAP PDF acquisition and rule-based findings')
+    document_commands=documents.add_subparsers(dest='document_command',required=True)
+    document_fetch=document_commands.add_parser('fetch')
+    document_fetch.add_argument('--data-root',required=True)
+    document_fetch.add_argument('--candidates',required=True)
+    document_fetch.add_argument('--stealth-fallback',action='store_true',help='needs playwright + undetected-playwright')
+    document_commands.add_parser('extract').add_argument('--data-root',required=True)
+    document_commands.add_parser('report').add_argument('--output',required=True)
     views=commands.add_parser('refresh-views',help='Atomically refresh internal analytical account views')
     views.add_argument('--as-of',required=True,type=date.fromisoformat)
     commands.add_parser('status')
@@ -195,7 +203,17 @@ def main(argv=None):
             print(json.dumps(templates(args.output),indent=2))
             return 0
         db=engine()
-        if args.command=='review-inbox':
+        if args.command=='rap-documents':
+            from . import rap_documents
+            if args.document_command=='fetch':
+                browser=rap_documents.BrowserClient() if args.stealth_fallback else None
+                result=rap_documents.fetch(args.candidates,args.data_root,engine=db,browser=browser)
+                result={'counts':result['counts'],'attempts':len(result['attempts']),'browser_retries':result['browser_retries']}
+            elif args.document_command=='extract':
+                result=rap_documents.extract(db,args.data_root)
+            else:
+                result=rap_documents.report(db,args.output)
+        elif args.command=='review-inbox':
             from .review_inbox import import_inbox
             result=import_inbox(db,args.inbox,args.ledger)
         elif args.command=='freshness-report':
@@ -212,7 +230,7 @@ def main(argv=None):
             result=verify(db,args.collection,args.json)
         elif args.command=='migrate':
             migrate(db)
-            result={'schema':'025_spec_views','status':'ready'}
+            result={'schema':'026_rap_documents','status':'ready'}
         elif args.command=='refresh-views':
             from .views import refresh_views
             result=refresh_views(db,args.as_of)
