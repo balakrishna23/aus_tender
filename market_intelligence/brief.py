@@ -22,8 +22,10 @@ def link(label,url):
     return [dict(label=label,url=url)]
 
 
-def build_brief(engine,as_of):
-    buyers=build_report(engine,as_of);panels=build_panel_access(engine,as_of);rap=build_rap(engine,as_of)
+def build_brief(engine,as_of,*,federal=None):
+    buyers=build_report(engine,as_of) if federal is None else federal
+    if buyers['as_of']!=as_of:raise ValueError('Buyer report date differs from brief date')
+    panels=build_panel_access(engine,as_of);rap=build_rap(engine,as_of)
     demand=build_demand(engine,as_of);aps=build_aps_report(engine,as_of);categories=category_summary(engine)
     with engine.connect() as conn:
         unresolved=conn.execute(text("SELECT count(*) FROM market.buyer_resolution WHERE match_status IN ('ambiguous','conflict','unmatched')")).scalar()

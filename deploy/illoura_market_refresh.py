@@ -97,7 +97,8 @@ def refresh(config=CONFIG,timeout=210):
 def main(argv=None):
     os.umask(0o077)
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--timeout',type=int,default=210);args=p.parse_args(argv)
-    if not 1<=args.timeout<=240:raise ValueError('Refresh timeout must be within the morning budget')
+    # The brief passes at most 900 s and also bounds it by the 08:15 send (illoura_daily_brief.py).
+    if not 1<=args.timeout<=900:raise ValueError('Refresh timeout must be within the morning budget')
     lock=None
     try:
         if CONFIG.exists():

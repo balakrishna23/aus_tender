@@ -120,14 +120,26 @@ Resources:
                   request = urllib.request.Request(
                       os.environ["READYZ_URL"], headers={"User-Agent": "illoura-watch"}
                   )
-                  with urllib.request.urlopen(request, timeout=15) as response:
-                      body = json.loads(response.read() or b"{}")
+                  with urllib.request.urlopen(request, timeout=10) as response:
+                      body = json.loads(response.read(4096) or b"{}")
                       ok = int(response.status == 200 and body.get("status") == "ok")
               except Exception as error:  # 503 arrives here as HTTPError
                   print(json.dumps({"readyz": "failed", "error": type(error).__name__}))
+              research_ok = 0
+              try:
+                  request = urllib.request.Request(
+                      os.environ["READYZ_URL"].removesuffix("/readyz") + "/research-readyz",
+                      headers={"User-Agent": "illoura-watch"},
+                  )
+                  with urllib.request.urlopen(request, timeout=10) as response:
+                      body = json.loads(response.read(4096) or b"{}")
+                      research_ok = int(response.status == 200 and body.get("status") == "ok")
+              except Exception as error:
+                  print(json.dumps({"research": "failed", "error": type(error).__name__}))
               cloudwatch.put_metric_data(
                   Namespace="Illoura/Watch",
-                  MetricData=[{"MetricName": "ReadyzOk", "Value": ok, "Unit": "Count"}],
+                  MetricData=[{"MetricName": "ReadyzOk", "Value": ok, "Unit": "Count"},
+                              {"MetricName": "ResearchReadyzOk", "Value": research_ok, "Unit": "Count"}],
               )
               return {"ok": ok}
 
@@ -169,6 +181,26 @@ Resources:
         illoura_aws.py status. A recovery email follows when it is healthy again.
       Namespace: Illoura/Watch
       MetricName: ReadyzOk
+      Statistic: Average
+      Period: 900
+      EvaluationPeriods: 2
+      DatapointsToAlarm: 2
+      Threshold: 0.5
+      ComparisonOperator: LessThanThreshold
+      TreatMissingData: breaching
+      AlarmActions: [!Ref AlertTopic]
+      OKActions: [!Ref AlertTopic]
+
+  ResearchNeedsAttentionAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-research-needs-attention"
+      AlarmDescription: >-
+        Research refresh, package age or publisher checks need attention.
+        This alarm is independent of the live procurement brief. Inspect /v1/operations
+        with an authorised key for bounded details; no email resend is needed.
+      Namespace: Illoura/Watch
+      MetricName: ResearchReadyzOk
       Statistic: Average
       Period: 900
       EvaluationPeriods: 2

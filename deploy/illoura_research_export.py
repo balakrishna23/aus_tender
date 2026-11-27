@@ -39,6 +39,12 @@ INDIVIDUAL = (
     "'^IND$|individual|sole[[:space:]]*(trader|proprietor)')"
 )
 PROCUREMENT = "(SELECT snapshot_id FROM market.current_procurement_snapshot)"
+# The national ABN/ASIC registers hold millions of rows (migration 024); the API copy keeps the rows research
+# uses: contract buyers/suppliers, aged-care provider matches and the complete ACNC and ORIC registers.
+REGISTER_SCOPE = """(e.source IN ('acnc','oric')
+        OR e.abn IN (SELECT supplier_abn FROM market.current_contracts WHERE supplier_abn IS NOT NULL
+                     UNION SELECT buyer_abn FROM market.current_contracts WHERE buyer_abn IS NOT NULL
+                     UNION SELECT abn FROM market.v_aged_care_provider_proposals WHERE abn IS NOT NULL))"""
 
 # Table in research.db -> query. api/app.py ALLOWED["research"] lists exactly these plus export_info.
 TABLES = {
@@ -49,10 +55,12 @@ TABLES = {
         e.abn, e.acn, e.icn, e.name, e.name_key, """ + INDIVIDUAL + """ AS is_individual, e.status,
         e.status_from, e.registered_on, e.deregistered_on, e.entity_type, e.state, e.postcode,
         e.attributes, e.issues
-        FROM market.current_register_entities e""",
+        FROM market.current_register_entities e WHERE """ + REGISTER_SCOPE,
     "register_names": """SELECT e.source, n.snapshot_id, n.record_id, n.name_type, n.name, n.name_key
         FROM market.register_names n JOIN market.current_register_entities e
-          ON e.snapshot_id = n.snapshot_id AND e.record_id = n.record_id""",
+          ON e.snapshot_id = n.snapshot_id AND e.record_id = n.record_id WHERE """ + REGISTER_SCOPE,
+    # Migration 024: publicly listed ICT / digital / workforce / procurement role holders and agency heads.
+    "agency_org_map": "SELECT * FROM market.v_agency_org_map",
     "organisations": "SELECT * FROM market.organisations",
     "organisation_observations": "SELECT * FROM market.organisation_observations",
     "directory_edges": "SELECT * FROM market.directory_edges",
@@ -83,6 +91,25 @@ TABLES = {
     "panels": "SELECT * FROM market.procurement_panels WHERE snapshot_id = " + PROCUREMENT,
     "panel_links": "SELECT * FROM market.procurement_panel_links WHERE snapshot_id = " + PROCUREMENT,
     "illoura_profile": "SELECT key, value, evidence_url, updated_at, note FROM market.illoura_profile",
+    # Migrations 022 and 023 (deploy them before this export runs).
+    "aged_care_quality": "SELECT * FROM market.v_aged_care_quality",
+    "aged_care_provider_matches": "SELECT * FROM market.v_aged_care_provider_proposals",
+    "research_freshness": "SELECT * FROM market.v_research_freshness",
+    "account_score": "SELECT * FROM market.v_account_score ORDER BY rank LIMIT 10000",
+    "buyict_buyers": "SELECT * FROM market.v_buyict_buyers ORDER BY rank LIMIT 10000",
+    "buyict_gaps": "SELECT * FROM market.v_buyict_gaps ORDER BY rank LIMIT 10000",
+    "ipp_gap": "SELECT * FROM market.v_ipp_gap ORDER BY rank LIMIT 10000",
+    "ipp_levers": "SELECT * FROM market.v_ipp_levers ORDER BY rank LIMIT 10000",
+    "prime_targets": "SELECT * FROM market.v_prime_targets ORDER BY rank LIMIT 10000",
+    "partner_candidates": "SELECT * FROM market.v_partner_candidates ORDER BY rank LIMIT 10000",
+    "indigenous_partners": "SELECT * FROM market.v_indigenous_partners ORDER BY rank LIMIT 10000",
+    "rap_targets": "SELECT * FROM market.v_rap_targets ORDER BY rank LIMIT 10000",
+    "panel_access": "SELECT * FROM market.v_panel_access ORDER BY rank LIMIT 10000",
+    "forward_pipeline": "SELECT * FROM market.v_forward_pipeline ORDER BY rank LIMIT 10000",
+    "demand_vs_bench": "SELECT * FROM market.v_demand_vs_bench ORDER BY rank LIMIT 10000",
+    "lookalikes": "SELECT * FROM market.v_lookalikes ORDER BY rank LIMIT 10000",
+    "whats_changed": "SELECT * FROM market.v_whats_changed ORDER BY rank LIMIT 10000",
+    "rate_benchmarks": "SELECT * FROM market.v_rate_benchmarks ORDER BY buyer_key,role_category,state NULLS LAST LIMIT 10000",
     "sources": """
         SELECT 'register' AS kind, s.source, s.id AS snapshot_id, s.source_url, s.licence,
                s.retrieved_at, s.effective_date::text AS effective_date, s.imported_at, s.row_count
@@ -112,10 +139,18 @@ TABLES = {
                NULL, s.imported_at, NULL
           FROM market.procurement_snapshots s WHERE s.id = """ + PROCUREMENT + """
         UNION ALL
+        SELECT 'forward', 'tender_feed', s.id, NULL, 'Derived public procurement evidence',
+               s.exported_at, NULL, s.imported_at, s.row_count
+          FROM market.forward_snapshots s JOIN market.current_forward_snapshot c ON c.snapshot_id=s.id
+        UNION ALL
         (SELECT 'remoteness', s.edition_chain, s.id, NULL, NULL, s.retrieved_at, NULL, s.imported_at, NULL
            FROM market.remoteness_snapshots s ORDER BY s.retrieved_at DESC, s.imported_at DESC LIMIT 1)""",
 }
 INDEXES = {
+    "account_score": ["lane", "account_key", "rank_in_lane"],
+    "lookalikes": ["lane", "account_key"],
+    "buyict_gaps": ["buyer_key"],
+    "rate_benchmarks": ["buyer_key", "role_category"],
     "contracts": ["buyer_key", "supplier_abn", "cn_id"],
     "register_entities": ["abn", "name_key", "record_id"],
     "register_names": ["record_id", "name_key"],
