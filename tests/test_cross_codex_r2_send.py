@@ -93,11 +93,11 @@ class SendStateMatrix(unittest.TestCase):
 
 
 class RecipientParsing(unittest.TestCase):
-    def test_editorial_wording_discloses_automation_and_access(self):
+    def test_editorial_wording_is_one_short_sentence(self):
         notes = b.editorial_notes(fixtures.NOW.date(), {}, [], {'results': []})
-        self.assertIn('automated', notes['introduction'])
-        self.assertIn('no human editorial review', notes['coverage_note'])
-        self.assertIn('seller access', notes['introduction'])
+        self.assertEqual(notes['introduction'],
+                         'The newest open BuyICT requests, each rechecked on its public listing this morning.')
+        self.assertEqual(notes['additional_sections'], [])
 
     def search(self, to, recipient='team@example.org'):
         attempt = dict(sender='sender@example.org', recipient=recipient, subject='Synthetic', message_id_header='<fixture>')

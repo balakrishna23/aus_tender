@@ -1,4 +1,4 @@
-"""Regression: long research-source URLs must fit the mobile newsletter."""
+"""Regression: long listing URLs must fit the mobile newsletter."""
 import contextlib
 import importlib.util
 import io
@@ -14,7 +14,7 @@ renderer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(renderer)
 
 
-class MobileCoverageLayout(unittest.TestCase):
+class MobileOpeningLayout(unittest.TestCase):
     def test_long_source_url_does_not_expand_mobile_viewport(self):
         try:
             from playwright.sync_api import sync_playwright
@@ -31,9 +31,9 @@ class MobileCoverageLayout(unittest.TestCase):
                     "subject": "Layout regression", "greeting": "Hello", "introduction": "Preview",
                     "footer": "Internal", "preheader": "Preview", "edition_label": "14 November 2026",
                     "from": "sender@example.invalid", "to": "recipient@example.invalid",
-                    "sections": [{"title": "Coverage and access", "items": [{
-                        "heading": "Checked today", "paragraphs": [
-                            "Supplemental research failures: https://example.invalid/" + "x" * 500
+                    "sections": [{"title": "Newest openings", "items": [{
+                        "heading": "Agency | Role | LH-1", "paragraphs": [
+                            "Location: https://example.invalid/" + "x" * 500
                         ], "links": []}]}],
                 }
                 with contextlib.redirect_stdout(io.StringIO()):

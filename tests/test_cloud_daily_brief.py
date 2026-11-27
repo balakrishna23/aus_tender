@@ -37,17 +37,17 @@ class SelectionTests(unittest.TestCase):
     def at(self, hours):
         return (NOW + timedelta(hours=hours)).isoformat()
 
-    def test_labour_hire_closing_soonest_within_window(self):
+    def test_newest_ids_without_a_maximum_closing_window(self):
         self.add('LH-1', self.at(10))            # too soon (< 18 h)
         self.add('LH-2', self.at(48))
         self.add('LH-3', self.at(24))
-        self.add('LH-4', self.at(24 * 30))       # beyond 21 days
+        self.add('LH-4', self.at(24 * 30))       # beyond 21 days, still eligible
         self.add('LH-5', self.at(30), status='Closed')
         self.add('LH-6', self.at(30), relevant=0)
         self.add('LH-7', self.at(30), source='AusTender')
         self.add('PCS-1', self.at(20))
         self.add('LH-8', self.at(36))
-        self.assertEqual(brief.select_ids(self.db, NOW), ['LH-3', 'LH-8', 'LH-2'])
+        self.assertEqual(brief.select_ids(self.db, NOW), ['LH-8', 'LH-4', 'LH-3', 'LH-2', 'PCS-1'])
 
     def test_offsets_are_compared_as_instants_not_text(self):
         # 06:00 +11:00 on the 14th is 19:00 UTC on the 13th: 23 h after NOW, so eligible...
@@ -56,13 +56,24 @@ class SelectionTests(unittest.TestCase):
         self.add('LH-B', '2026-11-13T01:00:00+00:00')
         self.add('LH-C', self.at(40))
         self.add('LH-D', self.at(41))
-        self.assertEqual(brief.select_ids(self.db, NOW), ['LH-A', 'LH-C', 'LH-D'])
+        self.assertEqual(brief.select_ids(self.db, NOW), ['LH-D', 'LH-C', 'LH-A'])
 
-    def test_professional_services_fill_when_labour_hire_is_scarce(self):
+    def test_professional_services_compete_equally(self):
         self.add('LH-1', self.at(30))
         self.add('PCS-1', self.at(20))
         self.add('PCS-2', self.at(25))
-        self.assertEqual(brief.select_ids(self.db, NOW), ['LH-1', 'PCS-1', 'PCS-2'])
+        self.assertEqual(brief.select_ids(self.db, NOW), ['PCS-2', 'PCS-1', 'LH-1'])
+
+    def test_baseline_group_then_numeric_id_cap_and_minimum(self):
+        for n in range(1, 16):
+            self.add(f'LH-{n:05d}', self.at(24 * 30))
+        self.add('PCS-99999', self.at(18))
+        self.add('PCS-99998', self.at(17))
+        self.add('PCS-00002', self.at(19))
+        baseline = [f'LH-{n:05d}' for n in range(3, 16)]
+        self.assertEqual(brief.select_ids(self.db, NOW, baseline_ids=baseline),
+                         ['PCS-00002', 'LH-00002', 'LH-00001']
+                         + [f'LH-{n:05d}' for n in range(15, 8, -1)])
 
     def test_malformed_close_times_are_ignored(self):
         self.add('LH-1', 'Friday, 27 November 2026')
@@ -70,12 +81,6 @@ class SelectionTests(unittest.TestCase):
         self.add('LH-3', '2026-11-20T10:00:00')  # no offset: ambiguous, ignored
         self.assertEqual(brief.select_ids(self.db, NOW), [])
 
-    def test_new_since_baseline(self):
-        self.add('LH-1', self.at(30), title='Data � engineer')
-        self.add('LH-2', self.at(40))
-        rows = brief.new_since_baseline(self.db, ['LH-2'])
-        self.assertEqual([r[0] for r in rows], ['LH-1'])
-        self.assertIn('Canberra', rows[0][3])
 
 
 class EditorialTests(unittest.TestCase):
@@ -85,16 +90,17 @@ class EditorialTests(unittest.TestCase):
     def test_notes_have_the_fields_the_composer_reads(self):
         report = {'results': [{'spider': 'buy_ict', 'status': 'OK'}]}
         notes = brief.editorial_notes(date(2026, 11, 13), {'LH-1': self.record()},
-                                      [('LH-9', 'Role', 'Agency', '20 November, 02:00 PM Canberra', 'https://x')],
+                                      ['LH-9'],
                                       report)
         for field in ('edition_date', 'subject', 'preheader', 'introduction', 'opportunities',
                       'additional_sections', 'coverage_note'):
             self.assertIn(field, notes)
         self.assertEqual(notes['edition_date'], '2026-11-13')
         self.assertIn('13 November 2026', notes['subject'])
-        self.assertIn('1 open request ', notes['subject'] + ' ')
+        self.assertEqual(notes['subject'], 'Illoura daily brief | 13 November 2026 | 1 newest opening')
         self.assertIn('automatic', notes['coverage_note'].lower())
-        self.assertEqual(notes['additional_sections'][0]['items'][0]['links'][0]['url'], 'https://x')
+        self.assertEqual(notes['additional_sections'], [])
+        self.assertEqual(notes['new_since_baseline'], ['LH-1'])
         self.assertIsInstance(notes['opportunities']['LH-1'], list)
 
     def test_restricted_listing_text_adds_an_access_warning(self):
@@ -109,7 +115,7 @@ class EditorialTests(unittest.TestCase):
     def test_source_gaps_are_named(self):
         notes = brief.editorial_notes(date(2026, 11, 13), {}, [], {'results': [{'spider': 'nsw_tender', 'status': 'FAILED'}]})
         self.assertIn('nsw_tender', notes['coverage_note'])
-        self.assertIn('0 open requests', notes['subject'])
+        self.assertIn('0 newest openings', notes['subject'])
 
     def test_clean_removes_replacement_characters(self):
         self.assertEqual(brief.clean('A � B'), 'A - B')
@@ -399,7 +405,7 @@ class ReconcileTests(unittest.TestCase):
 
 
 class ComposeSafetyTests(unittest.TestCase):
-    def compose(self, outcomes):
+    def compose(self, outcomes, market_sections=None):
         with tempfile.TemporaryDirectory() as folder:
             out = Path(folder)
             brief.write_json(out / 'source_refresh.json', {'results': []})
@@ -419,9 +425,10 @@ class ComposeSafetyTests(unittest.TestCase):
                 brief.write_json(out / 'email_layout_checks.json', [{'passed': True}, {'passed': True}])
                 return SimpleNamespace(returncode=0)
 
-            with (patch.dict('sys.modules', {'classify': SimpleNamespace(closing_time=Mock())}),
+            reader = Mock(return_value=(market_sections or [], {'status': 'included'}))
+            with (patch.dict('sys.modules', {'classify': SimpleNamespace(closing_time=Mock()),
+                                           'market_research_context': SimpleNamespace(read_market_context=reader)}),
                   patch.object(brief, 'select_ids', return_value=keys),
-                  patch.object(brief, 'new_since_baseline', return_value=[]),
                   patch.object(brief, 'still_open', side_effect=lambda record, *args: record['open']),
                   patch.object(brief.subprocess, 'run', side_effect=command), redirect_stdout(io.StringIO())):
                 try:
@@ -431,6 +438,12 @@ class ComposeSafetyTests(unittest.TestCase):
                     self.assertEqual(len(calls), len(keys))
                     raise
                 self.assertTrue(json.loads((out / 'cloud_send_review.json').read_text())['reviewed'])
+                reader.assert_called_once()
+                self.assertEqual(json.loads((out / 'market_research_status.json').read_text()), {'status': 'included'})
+                self.assertEqual(json.loads((out / 'editorial_notes.json').read_text())['additional_sections'], [])
+
+    def test_market_package_is_read_and_status_written_without_appending_sections(self):
+        self.compose(['open'], [{'title': 'Buyer awards', 'items': []}])
 
     def test_majority_failures_refuse_approval(self):
         for outcomes in (['failed'], ['failed', 'failed', 'open'], ['failed', 'failed', 'closed']):

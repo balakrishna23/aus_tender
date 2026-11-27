@@ -1,7 +1,6 @@
 """Render an internal brief from this run's public checks and reviewed editorial notes."""
 import argparse
 import json
-import sqlite3
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +10,11 @@ sys.path.insert(0, r'/opt/aus_tender')
 from classify import closing_time
 from render_newsletter_preview import render
 from mail_config import load_mail_config, load_link_id
+
+
+def clean(text):
+    """Keep damaged source characters out of the rendered brief."""
+    return str(text or '').replace('\ufffd', '-').strip()
 
 
 def supplemental_failures(out):
@@ -86,7 +90,7 @@ def main():
         return (moment.astimezone(ZoneInfo('Australia/Canberra')).strftime('%d %B, %I:%M %p Canberra')
                 + ' / ' + moment.astimezone(india).strftime('%d %B, %I:%M %p IST'))
 
-    due, upcoming = [], []
+    items = []
     for key, notes in config['opportunities'].items():
         record = json.loads((out/'shortlist'/(key+'.json')).read_text(encoding='utf-8'))
         if datetime.fromisoformat(record['checked_at_utc']).astimezone(india).date() != today:
@@ -97,42 +101,23 @@ def main():
         end = closing_time(details.get('RFQ closing date') or details.get('RFI closing date'))
         if not end or end <= now or not data.get('rfqOpen') or data.get('is_cancelled'):
             raise ValueError('Selected opportunity is no longer open: '+key)
-        paragraphs = ['Closes '+deadline(end)+'.']
+        prefix = 'New since yesterday. ' if key in config.get('new_since_baseline', []) else ''
+        paragraphs = [prefix+'Closes '+deadline(end)+'.']
         fields = [('Location of work', 'Location'), ('Working arrangements', 'Work'),
                   ('Security clearance', 'Clearance'), ('Maximum number of candidates per seller', 'Candidate cap per seller'),
                   ('Initial contract duration', 'Initial term')]
-        paragraphs.append('; '.join(label+': '+str(req[field]) for field, label in fields if req.get(field))+'.')
-        q = closing_time(details.get('Deadline for asking questions'))
-        if q:
-            paragraphs.append('Questions have closed; review published answers and the complete pack.' if q <= now
-                              else 'Questions close '+deadline(q)+'. Use the formal BuyICT Q&A channel.')
-        paragraphs.extend(notes)
-        entry = {'heading':details['Buyer']+' | '+data['title']+' | '+key,
+        summary = '; '.join(label+': '+clean(req[field]) for field, label in fields if req.get(field))
+        if summary:
+            paragraphs.append(summary+'.')
+        paragraphs.extend(clean(note) for note in notes)
+        entry = {'heading':clean(details['Buyer'])+' | '+clean(data['title'])+' | '+clean(key),
                  'paragraphs':paragraphs, 'links':[{'label':key+' official listing','url':record['source_url']}]}
-        (due if end.astimezone(india).date() == today else upcoming).append(entry)
-    sections = []
-    if due:
-        sections.append({'title':'Decisions due today', 'items':due})
-    if upcoming:
-        sections.append({'title':'Prepare the next responses', 'items':upcoming})
-    sections.extend(config.get('additional_sections', []))
+        items.append(entry)
+    if not items:
+        items = [{'heading':'No openings to list today',
+                  'paragraphs':['No open BuyICT request passed this morning\'s live check.'], 'links':[]}]
+    sections = [{'title':'Newest openings', 'items':items}]
     gaps = sorted(problems)
-    research = json.loads((out/'official_source_collection.json').read_text(encoding='utf-8'))
-    research_gaps = sorted({x['organisation'] for x in research if x['status'] != 'collected'})
-    supplemental_gaps = supplemental_failures(out)
-    baseline = json.loads((out/'baseline.json').read_text(encoding='utf-8'))
-    with sqlite3.connect(r'/opt/aus_tender/databases/contract_api.db') as db:
-        contracts = db.execute('SELECT count(*) FROM contracts').fetchone()[0]
-        versions = db.execute('SELECT count(*) FROM contract_versions').fetchone()[0]
-    health = 'All eight procurement source stages completed successfully.' if not gaps else 'Source stages with a problem today: '+', '.join(gaps)+'. Their data is from the last good run; BuyICT, which this brief is built from, completed normally.'
-    warnings = sum(x.get('warnings', 0) for x in report['results'])
-    if warnings:
-        health += f' {warnings} source warning(s) were recorded; see the source gaps below.'
-    sections.append({'title':'Coverage and access', 'items':[{'heading':'Checked '+today.strftime('%d %B %Y'), 'paragraphs':[
-        health+f" The routine added {contracts-baseline['contracts']:,} contract records and {versions-baseline['contract_versions']:,} notice versions to the AWS database; overlapping historical notices may be included. {len(config['opportunities'])} selected public listings were rechecked today.",
-        config.get('coverage_note', '') + (' Additional research pages unavailable: '+', '.join(research_gaps)+'. ' if research_gaps else '')
-        + (' Supplemental research failures (separate from the eight procurement collectors): '+', '.join(supplemental_gaps)+'. ' if supplemental_gaps else '')
-        +'Invitation access, secure attachments, complete response packs and candidate fit remain unverified. Use formal procurement channels for live opportunities.'], 'links':[]}]})
     sender, recipient = load_mail_config()
     package = {'subject':config['subject'], 'preheader':config['preheader'],
                'edition_label':today.strftime('%A %d %B %Y')+' | Private internal brief',
