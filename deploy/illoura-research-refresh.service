@@ -15,10 +15,11 @@ IOSchedulingPriority=7
 TimeoutStartSec=2700
 KillMode=control-group
 SendSIGKILL=yes
+# NoNewPrivileges stops the unprivileged application (runuser -> ubuntu) from regaining root through sudo.
+# Do not add ProtectKernelTunables/ProtectKernelModules/RestrictAddressFamilies: with NoNewPrivileges they drop
+# CAP_SETUID on this server (systemd 255), so runuser fails with "cannot set user id" and the refresh never starts.
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectKernelTunables=true
-ProtectKernelModules=true
 ProtectControlGroups=true
 
