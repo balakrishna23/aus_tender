@@ -102,6 +102,49 @@ class FakeRemote:
 
 
 class SafetyTests(unittest.TestCase):
+    def test_review_cli_parsers(self):
+        parser = cli.build_parser()
+        self.assertEqual(parser.parse_args(['review-import', 'status']).review_action, 'status')
+        self.assertTrue(parser.parse_args(['review-import', 'install', '--yes']).yes)
+        self.assertEqual(parser.parse_args(['api-key', 'create', '--name', 'staff', '--scope', 'review']).scope, 'review')
+        self.assertIsNone(parser.parse_args(['api-key', 'create', '--name', 'reader']).scope)
+    def test_review_install_is_tested_hash_checked_and_not_enabled(self):
+        remote = FakeRemote()
+        result = cli.review_import(remote, 'install', yes=True)
+        self.assertFalse(result['path_enabled'])
+        test_at = next(i for i, c in enumerate(remote.calls) if 'unittest' in c)
+        install_at = next(i for i, c in enumerate(remote.calls) if c[:2] == ['sudo', 'install'])
+        self.assertLess(test_at, install_at)
+        self.assertTrue(any(c[:2] == ['sudo', 'sha256sum'] for c in remote.calls))
+        self.assertFalse(any('enable' in c or 'restart' in c for c in remote.calls))
+        self.assertIn('/etc/systemd/system/illoura-api.service.d/review.conf', result['installed'])
+
+    def test_review_failed_tests_install_nothing(self):
+        remote = FakeRemote(tests_ok=False)
+        with self.assertRaises(cli.OperationError):
+            cli.review_import(remote, 'install', yes=True)
+        self.assertEqual(remote.installs(), [])
+
+    def test_review_install_requires_yes_status_is_read_only(self):
+        remote = FakeRemote()
+        with self.assertRaises(cli.OperationError):
+            cli.review_import(remote, 'install')
+        self.assertEqual(remote.calls, [])
+        cli.review_import(remote, 'status')
+        self.assertEqual(remote.installs(), [])
+
+    def test_review_key_scope_only_on_new_keys(self):
+        remote = FakeRemote()
+        with tempfile.TemporaryDirectory() as tmp:
+            from types import SimpleNamespace
+            settings = SimpleNamespace(private_dir=Path(tmp))
+            cli.api_key(remote, settings, 'create', 'review-test', host='example.invalid', scope='review')
+            records = json.loads(remote.files[cli.KEYS_FILE])
+            self.assertNotIn('scopes', records[0])
+            self.assertEqual(records[-1]['scopes'], ['review'])
+            with self.assertRaises(ValueError):
+                cli.api_key(remote, settings, 'revoke', 'review-test', scope='review')
+
     def test_research_install_is_staged_and_never_enables_timer(self):
         remote = FakeRemote()
         result = cli.research_refresh(remote, 'install', yes=True)
@@ -245,14 +288,17 @@ class DeployApiTests(unittest.TestCase):
         test_call = next(c for c in remote.calls if "unittest" in c)
         self.assertEqual(test_call[:3], ["sudo", "-u", "illoura-api"])
         installs = remote.installs()
-        self.assertEqual(installs[0][-1], result["previous_backup"])
-        self.assertEqual(installs[1][-1], "/opt/illoura-api/app.py")
+        backup_index = next(i for i, c in enumerate(installs) if c[-1] == result['previous_backup'])
+        install_index = next(i for i, c in enumerate(installs) if c[-1] == '/opt/illoura-api/app.py')
+        self.assertLess(backup_index, install_index)
+        for name in ('review_support.py', 'review_page.py'):
+            self.assertTrue(any(c[-1] == '/opt/illoura-api/' + name for c in installs))
 
     def test_unhealthy_new_version_is_rolled_back(self):
         remote = FakeRemote(health_ok=False)
         with self.assertRaises(cli.OperationError):
             cli.deploy_api(remote, yes=True, wait_seconds=0)
-        backup = remote.installs()[0][-1]
+        backup = next(c[-1] for c in remote.installs() if c[-2] == '/opt/illoura-api/app.py')
         self.assertEqual(
             remote.installs()[-1][-2:], [backup, "/opt/illoura-api/app.py"]
         )

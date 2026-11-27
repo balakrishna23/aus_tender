@@ -1,0 +1,10 @@
+[Unit]
+Description=Watch queued internal research decisions
+Wants=illoura-review-import.service
+
+[Path]
+PathChanged=/var/lib/illoura-review/inbox
+Unit=illoura-review-import.service
+
+[Install]
+WantedBy=multi-user.target

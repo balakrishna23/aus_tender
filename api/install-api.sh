@@ -28,6 +28,8 @@ find /srv/illoura-data -type d -exec chmod 0750 {} +
 find /srv/illoura-data -type f -exec chmod 0640 {} +
 ln -sfn /srv/illoura-data/snapshot-20261112 /srv/illoura-data/current
 install -o root -g illoura-api -m 0640 "$STAGE/app.py" /opt/illoura-api/app.py
+install -o root -g illoura-api -m 0640 "$STAGE/review_support.py" /opt/illoura-api/review_support.py
+install -o root -g illoura-api -m 0640 "$STAGE/review_page.py" /opt/illoura-api/review_page.py
 install -o root -g illoura-api -m 0640 "$STAGE/requirements.txt" /opt/illoura-api/requirements.txt
 install -o root -g illoura-api -m 0640 "$STAGE/keys.json" /etc/illoura-api/keys.json
 printf 'ILLOURA_DATA_DIR=/srv/illoura-data/current\nILLOURA_KEYS_FILE=/etc/illoura-api/keys.json\nILLOURA_PUBLIC_HOST=%s\n' "$HOST" > /etc/illoura-api/environment

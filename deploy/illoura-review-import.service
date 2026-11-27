@@ -1,0 +1,21 @@
+[Unit]
+Description=Apply scoped human research decisions (no network or email)
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/opt/aus_tender/.venv/bin/python /opt/illoura-ops/illoura_review_import.py
+UMask=0027
+TimeoutStartSec=130
+Restart=on-failure
+RestartSec=300
+KillMode=control-group
+SendSIGKILL=yes
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
