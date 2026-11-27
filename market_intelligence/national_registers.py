@@ -200,30 +200,43 @@ def _promote(conn, source, snapshot_id, metrics):
             ORDER BY s.record_id, s.registered_on DESC NULLS LAST, s.name'''), dict(p, active=list(ASIC_ACTIVE))).rowcount
         metrics['acn_with_several_current_names'] = conn.execute(text('''SELECT count(*) FROM (SELECT record_id FROM register_stage
             WHERE kind='a' AND is_current GROUP BY record_id HAVING count(*)>1) x''')).scalar()
-        # Former names become other names of kept companies (below).
+        # Former names become other names of kept companies (below). The stage was analysed before these rows
+        # existed: re-analyse, or the planner expects ~0 name rows and compares millions x millions (27 Nov:
+        # the national ASIC import ran 4 hours on the other-names insert and was cancelled).
         conn.execute(text('''INSERT INTO register_stage(kind,record_id,name,name_key,legal_key,name_type)
             SELECT 'n',record_id,name,name_key,legal_key,'asic_former' FROM register_stage
             WHERE kind='a' AND NOT is_current AND name IS NOT NULL'''))
+        conn.execute(text('ANALYZE register_stage'))
     else:
         current = conn.execute(text('''SELECT s.scope_kind FROM market.current_register_snapshots c
             JOIN market.register_snapshots s ON s.id=c.snapshot_id WHERE c.source='abn' ''')).scalar()
         if current != 'national_active':
             raise SourceError('Load the national ABN register before national business names (holder type is needed)')
+        # Organisation ABNs of the national register as an indexed, analysed set (millions of rows): the join
+        # below must not depend on estimates for the large current-register view.
+        conn.execute(text('''CREATE TEMP TABLE register_org_abns ON COMMIT DROP AS
+            SELECT DISTINCT e.abn FROM market.current_register_entities e
+            WHERE e.source='abn' AND NOT e.is_individual AND e.abn IS NOT NULL'''))
+        conn.execute(text('ALTER TABLE register_org_abns ADD PRIMARY KEY (abn)'))
+        conn.execute(text('ANALYZE register_org_abns'))
         inserted = conn.execute(text('INSERT INTO market.register_entities(' + ENTITY_COLUMNS + ''')
             SELECT DISTINCT ON (s.record_id) :sid,s.record_id,s.abn,NULL,NULL,s.name,s.name_key,s.legal_key,false,s.status,
                    NULL,s.registered_on,s.deregistered_on,'Business name',s.state,NULL,'{}'::jsonb,s.issues
-            FROM register_stage s WHERE s.kind='b'
+            FROM register_stage s JOIN register_org_abns o ON o.abn=s.abn WHERE s.kind='b'
               AND (s.status=:active OR s.abn IN (SELECT abn FROM register_scope_stage))
-              AND s.abn IN (SELECT e.abn FROM market.current_register_entities e
-                            WHERE e.source='abn' AND NOT e.is_individual AND e.abn IS NOT NULL)
             ORDER BY s.record_id'''), dict(p, active=BN_ACTIVE)).rowcount
         metrics['skipped_individual_unknown_or_inactive'] = conn.execute(text(
             "SELECT count(DISTINCT record_id) FROM register_stage WHERE kind='b'")).scalar() - inserted
-    # Other names only for organisations kept in this snapshot; never for an individual.
+    # Other names only for organisations kept in this snapshot; never for an individual. The kept organisations
+    # are an indexed, analysed set (rows inserted in this transaction have no statistics yet).
+    conn.execute(text('''CREATE TEMP TABLE register_kept ON COMMIT DROP AS
+        SELECT record_id FROM market.register_entities WHERE snapshot_id=:sid AND NOT is_individual'''), p)
+    conn.execute(text('ALTER TABLE register_kept ADD PRIMARY KEY (record_id)'))
+    conn.execute(text('ANALYZE register_kept'))
     metrics['other_names'] = conn.execute(text('''INSERT INTO market.register_names(snapshot_id,record_id,name_type,name,name_key,legal_key)
-        SELECT DISTINCT :sid,s.record_id,s.name_type,s.name,s.name_key,s.legal_key FROM register_stage s
-        WHERE s.kind='n' AND s.name IS NOT NULL AND EXISTS(SELECT 1 FROM market.register_entities e
-              WHERE e.snapshot_id=:sid AND e.record_id=s.record_id AND NOT e.is_individual)
+        SELECT DISTINCT :sid,s.record_id,s.name_type,s.name,s.name_key,s.legal_key
+        FROM register_stage s JOIN register_kept k ON k.record_id=s.record_id
+        WHERE s.kind='n' AND s.name IS NOT NULL
         ON CONFLICT DO NOTHING'''), p).rowcount
     return inserted
 
