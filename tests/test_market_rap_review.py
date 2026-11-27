@@ -296,12 +296,13 @@ class RapReviewTests(unittest.TestCase):
             provenance=dict(privacy_partition=dict(quarantined=3,malformed_periods=2,cleared_malformed_periods=1))
             rows=[dict(payload=row,snapshot_id='fixture',provenance=provenance) for row in bundle['records']]
             engine=MagicMock();conn=engine.connect.return_value.execution_options.return_value.__enter__.return_value
-            results=[MagicMock() for _ in range(5)]
+            results=[MagicMock() for _ in range(6)]
             results[0].mappings.return_value=rows
             results[1].__iter__.return_value=iter([])
             results[2].mappings.return_value=[]
             results[3].mappings.return_value=[]
-            results[4].scalar.return_value=None
+            results[4].mappings.return_value=[]
+            results[5].scalar.return_value=None
             conn.execute.side_effect=results
             report=build_rap(engine,date(2026,11,20))
             self.assertEqual(report['summary']['privacy_exclusions'],3)
