@@ -128,6 +128,7 @@ def build_rap(engine,as_of):
         contracts={r['supplier_abn']:dict(r) for r in conn.execute(text('''SELECT supplier_abn,count(*) AS contracts,sum(original_value) AS original_award_value
             FROM market.current_analytical_contracts WHERE supplier_abn IS NOT NULL GROUP BY supplier_abn''')).mappings()}
         approved={r['document_sha256']:dict(r) for r in conn.execute(text('SELECT * FROM market.current_approved_rap_extractions')).mappings()}
+        document_findings={r['record_key']:dict(r) for r in conn.execute(text('SELECT * FROM market.current_rap_document_findings')).mappings()}
         certification=conn.execute(text("SELECT value FROM market.illoura_profile WHERE key='supply_nation_status'")).scalar()
     directory=records
     out=[]
@@ -148,6 +149,8 @@ def build_rap(engine,as_of):
                 'reviewed_commitments':min(len(same),5)*5 if active else 0,'renewal_window':15 if renewing else 0,
                 'candidate_government_supplier':10 if active and proposed else 0}
         extracted=approved.get(p['document_sha256']);extracted_fields=extracted['fields'] if extracted else {}
+        finding=document_findings.get(p['record_key']) if not extracted else None
+        if finding:extracted_fields=finding['fields']
         certified_required=extracted_fields.get('requires_supply_nation_certified',{}).get('value')
         blocked=(certification.strip().casefold()!='certified') if certified_required=='yes' and certification else None
         points['approved_procurement_target']=10 if active and extracted_fields.get('has_procurement_target',{}).get('value') is True else 0
@@ -159,7 +162,9 @@ def build_rap(engine,as_of):
             target_roles='unknown; commitment category review required',delivery_shortfall='unknown',eligibility='unknown; profile and specific requirements need review',
             approved_extraction=extracted_fields,approved_extraction_run_id=str(extracted['id']) if extracted else None,
             approved_extraction_provenance=dict(document_sha256=extracted['document_sha256'],source_url=extracted['source_url'],
-                licence=extracted['licence'],pages=extracted['pages'],**extracted['provenance']) if extracted else None,
+                licence=extracted['licence'],pages=extracted['pages'],**extracted['provenance']) if extracted else
+                dict(document_sha256=finding['document_sha256'],source_url=finding['source_url'],
+                     source='rule_based_document_extraction') if finding else None,
             blocked_until_certified=blocked,
             provenance_snapshot_id=str(row['snapshot_id'])))
     out.sort(key=lambda r:(-r['score'],r['organisation'],r['record_key']))
@@ -174,7 +179,7 @@ def build_rap(engine,as_of):
         limitations=['Directory coverage is limited to the retained collection date; quarantined privacy exclusions are disclosed in the summary.',
                      'Published RAP commitments are not proof of unspent budget, missed targets, supplier acceptance or eligibility.',
                      'Legal-name matches are proposals; a group RAP may cover several legal entities.',
-                     'Findings require a registered reviewer approval for the exact document hash; legacy manual findings and uncleared directory snapshots are excluded.',
+                     'Legacy findings require exact-document approval; matched own-site RAP documents also supply rule-based findings. Uncleared directory snapshots are excluded.',
                      'Expired and future plans receive no current priority points. Role/category, results and certification requirements remain unassessed.',
                      'Internal research only; source copyright retained and commercial redistribution rights are not established.'])
 

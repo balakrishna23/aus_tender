@@ -103,6 +103,11 @@ TABLES = {
     "prime_targets": "SELECT * FROM market.v_prime_targets ORDER BY rank LIMIT 10000",
     "partner_candidates": "SELECT * FROM market.v_partner_candidates ORDER BY rank LIMIT 10000",
     "indigenous_partners": "SELECT * FROM market.v_indigenous_partners ORDER BY rank LIMIT 10000",
+    "rap_document_findings": "SELECT * FROM market.current_rap_document_findings ORDER BY organisation,record_key LIMIT 10000",
+    "rap_commitments": """SELECT c.*,d.organisation FROM market.rap_commitments c
+        JOIN market.rap_documents d ON d.sha256=c.document_sha256 ORDER BY d.organisation,c.record_key,c.page,c.id LIMIT 100000""",
+    "rap_people": """SELECT p.*,d.organisation FROM market.rap_people p
+        JOIN market.rap_documents d ON d.sha256=p.document_sha256 ORDER BY d.organisation,p.record_key,p.page,p.id LIMIT 100000""",
     "rap_targets": "SELECT * FROM market.v_rap_targets ORDER BY rank LIMIT 10000",
     "panel_access": "SELECT * FROM market.v_panel_access ORDER BY rank LIMIT 10000",
     "forward_pipeline": "SELECT * FROM market.v_forward_pipeline ORDER BY rank LIMIT 10000",
