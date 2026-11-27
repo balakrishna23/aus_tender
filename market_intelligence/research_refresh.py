@@ -176,7 +176,17 @@ def promote(db, source, manifest):
     if source in freshness.MANUAL:
         if source in ('agor', 'government_directory'):
             from .ingest import import_snapshot
-            return import_snapshot(db, manifest, source)
+            result = import_snapshot(db, manifest, source)
+            if source == 'government_directory':
+                # Senior role holders (ICT, digital, workforce, procurement, agency heads) of the same file.
+                from .directory_roles import import_directory_roles
+                result['directory_roles'] = import_directory_roles(db, manifest)
+            return result
+        from .national_registers import NATIONAL_SOURCES, import_national
+        if source in NATIONAL_SOURCES:
+            # Whole national register (active records plus procurement ABNs), never the old procurement-only scope,
+            # which would otherwise replace a national snapshot as soon as a newer file arrived.
+            return import_national(db, manifest, source)
         from .registers import import_register
         return import_register(db, manifest, source)
     if source.startswith('jsa_'):
@@ -311,11 +321,23 @@ def refresh(db, root, sources=None, now=None, force=False):
                 if recovery:
                     event(db, recovery['run_id'], source, 'finished', dict(details, status=status, recovered_by=str(run)))
                 outcomes.append(dict(source=source, status=status))
+            # Final derived-data step is isolated from successful source promotions.
+            view_run = uuid.uuid4()
+            event(db, view_run, 'views', 'started', {})
+            try:
+                from zoneinfo import ZoneInfo
+                from .views import refresh_views
+                # The 10:15 Sydney run is still the previous day in UTC; views are dated in Sydney.
+                view_result = refresh_views(db, now.astimezone(ZoneInfo('Australia/Sydney')).date())
+                view_details = dict(status='complete', generation_id=view_result['generation_id'])
+            except Exception as exc:
+                view_details = dict(status='failed', reason=type(exc).__name__)
+            event(db, view_run, 'views', 'finished', view_details)
             summary = freshness.report(db, now)
             output = root / 'reports' / 'research-refresh' / str(uuid.uuid4())
             output.mkdir(parents=True, mode=0o700)
             (output / 'freshness.json').write_text(json.dumps(summary, default=str, indent=2), encoding='utf-8')
-            return dict(status='complete', sources=outcomes, freshness=summary)
+            return dict(status='complete', sources=outcomes, freshness=summary, views=view_details)
         finally:
             lock.execute(text('SELECT pg_advisory_unlock(191126023)'))
             lock.commit()

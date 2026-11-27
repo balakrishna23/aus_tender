@@ -29,8 +29,10 @@ def reconcile(rows,relationships,limit):
     return out,excluded
 
 
-def build_crm(engine,as_of,limit=20):
-    federal=build_report(engine,as_of);rap=build_rap(engine,as_of);state=build_state(engine,as_of);targets=build_targets(engine,as_of)
+def build_crm(engine,as_of,limit=20,*,federal=None):
+    if federal is None:federal=build_report(engine,as_of)
+    if federal['as_of']!=as_of:raise ValueError('Buyer report date differs from CRM date')
+    rap=build_rap(engine,as_of);state=build_state(engine,as_of);targets=build_targets(engine,as_of)
     with engine.connect() as conn:
         relationships={r['payload']['buyer_key']:r['payload'] for r in conn.execute(text("SELECT payload FROM market.current_research WHERE source='relationships'")).mappings()}
     rows=[]

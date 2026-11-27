@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "method": "relative_percentiles",
+  "lanes": {
+    "federal": {
+      "spend": 0.2,
+      "frequency": 0.1,
+      "expiry": 0.1,
+      "buyict_gap": 0.08,
+      "ipp_gap": 0.07,
+      "levers": 0.07,
+      "forward": 0.07,
+      "open_opportunities": 0.05,
+      "rap": 0.04,
+      "lookalike": 0.05,
+      "panel_access": 0.05,
+      "grants": 0.03,
+      "budget": 0.03,
+      "demand_vs_bench": 0.06
+    },
+    "private": {
+      "rap_type": 0.2,
+      "plan_ending": 0.15,
+      "procurement_target": 0.1,
+      "employment_target": 0.1,
+      "supplier_value": 0.2,
+      "ipp_prime": 0.15,
+      "lookalike": 0.1
+    },
+    "state": {
+      "historical_value": 0.5,
+      "historical_frequency": 0.3,
+      "lookalike": 0.2
+    },
+    "healthcare": {
+      "staffing_need": 0.4,
+      "quality": 0.3,
+      "size": 0.2,
+      "rap": 0.1
+    }
+  },
+  "penalties": {
+    "blocker": 0.2,
+    "insourcing": 0.1
+  },
+  "definitions": {
+    "spend": {
+      "definition": "Original awarded value trailing 365 days",
+      "basis": "analytics.build_report; category families ICT services and labour hire/recruitment; values not payments"
+    },
+    "frequency": {
+      "definition": "Relevant awards trailing 365 days",
+      "basis": "analytics.build_report; publication dates"
+    },
+    "expiry": {
+      "definition": "Contracts ending 6-12 calendar months ahead",
+      "basis": "Current analytical tagged contracts; recorded end dates, retender unconfirmed"
+    },
+    "buyict_gap": {
+      "definition": "Relevant BuyICT spend without recorded invitation",
+      "basis": "buyict.build_buyict relevant 36-month awards; exact buyer key or unique normalised label matching; absence is no recorded invitation, never proof of never invited"
+    },
+    "ipp_gap": {
+      "definition": "Portfolio shortfall below published target",
+      "basis": "levers.build_levers portfolio results; agency mapping requires reviewed identity; historical portfolio signal"
+    },
+    "levers": {
+      "definition": "Exemption 16 and set-aside-band contract count",
+      "basis": "levers.build_levers; sum of 36-month exemption and 12-month band counts; not eligibility"
+    },
+    "forward": {
+      "definition": "Published plans next 12 months",
+      "basis": "forward.build_forward published_plan; dates must place window within next year"
+    },
+    "open_opportunities": {
+      "definition": "Open notices in retained Tender Feed snapshot",
+      "basis": "forward.build_forward open notices; current status requires recheck"
+    },
+    "rap": {
+      "definition": "Current published RAP signal",
+      "basis": "research.build_rap; exact unique organisation name, proposal basis"
+    },
+    "lookalike": {
+      "definition": "Similarity to past clients",
+      "basis": "relationships past_client and outcomes won; type, size, portfolio and category-spend vector; missing dimensions not rescaled"
+    },
+    "panel_access": {
+      "definition": "Linked panel spend where not a member",
+      "basis": "Known panel links plus panel_watchlist illoura_status; unknown memberships stay null"
+    },
+    "grants": {
+      "definition": "Grant trigger",
+      "basis": "No grant source loaded"
+    },
+    "budget": {
+      "definition": "Budget measure",
+      "basis": "No budget measure source loaded"
+    },
+    "demand_vs_bench": {
+      "definition": "Account-specific demand versus available bench",
+      "basis": "inputs.build_bench is regional and role aggregate; account attribution unavailable"
+    },
+    "rap_type": {
+      "definition": "Published current plan type",
+      "basis": "Reflect=1 Innovate=2 Stretch=3 Elevate=4; research.build_rap"
+    },
+    "plan_ending": {
+      "definition": "Current plan ends within 12 months",
+      "basis": "research.build_rap published period end"
+    },
+    "procurement_target": {
+      "definition": "Approved procurement target exists",
+      "basis": "Exact-document approved RAP extraction has_procurement_target; absent finding unknown"
+    },
+    "employment_target": {
+      "definition": "Approved employment target exists",
+      "basis": "Exact-document approved RAP extraction employment_target; absent finding unknown"
+    },
+    "supplier_value": {
+      "definition": "Government original awards in our categories",
+      "basis": "targets.build_targets 36-month supplier profiles"
+    },
+    "ipp_prime": {
+      "definition": "Active high-value MMR-segment contracts",
+      "basis": "levers.build_levers; obligation signal, contract-specific MMR unverified"
+    },
+    "historical_value": {
+      "definition": "Retained WA historical contract value",
+      "basis": "research.build_state; WA FY2021-24 only, source observations may repeat, not current spend"
+    },
+    "historical_frequency": {
+      "definition": "Retained WA historical observation count",
+      "basis": "research.build_state; WA FY2021-24 only, not unique current awards"
+    },
+    "staffing_need": {
+      "definition": "Inverse staffing rating",
+      "basis": "Latest retained aged-care quarter as of date; 5 minus staffing stars, research signal not hiring intent"
+    },
+    "quality": {
+      "definition": "Inverse overall quality rating",
+      "basis": "Latest retained aged-care quarter as of date; 5 minus overall stars"
+    },
+    "size": {
+      "definition": "Published organisation/service size",
+      "basis": "Small=1 medium=2 large=3; no size inferred from missing data"
+    }
+  },
+  "retrieved": "2026-11-27",
+  "source_notes": [
+    "Internal research only; configuration is an analyst policy, not calibrated win probability.",
+    "Each positive component uses within-lane midrank percentiles; zero observations receive zero points. Missing weights are retained. Coverage excludes penalty inputs, which are reported separately.",
+    "No grants, budget or insourcing source exists; all remain unknown. Cross-lane overall rank is a research ordering with different lane evidence bases.",
+    "Large government supplier proxy: at least AUD 1 million in original tagged awards over 36 months; not company turnover. All safely named MMR primes are included regardless of this threshold."
+  ],
+  "private_supplier_min_awarded_value_36m": 1000000
+}

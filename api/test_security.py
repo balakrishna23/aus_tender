@@ -80,6 +80,13 @@ class SecurityTests(unittest.TestCase):
             "private_notes", response.json()["datasets"]["contract_api"]["tables"]
         )
 
+    def test_spec_views_are_allowlisted_but_generation_storage_is_private(self):
+        names={'account_score','buyict_buyers','buyict_gaps','ipp_gap','ipp_levers','prime_targets',
+               'partner_candidates','indigenous_partners','rap_targets','panel_access','forward_pipeline',
+               'demand_vs_bench','lookalikes','whats_changed','rate_benchmarks'}
+        self.assertTrue(names.issubset(set(api.ALLOWED['research'])))
+        self.assertTrue({'view_rows','view_generations','current_view_generation'}.isdisjoint(api.ALLOWED['research']))
+
     def test_server_side_aggregation(self):
         r = self.query(
             "SELECT count(*) AS records,sum(current_value) AS total FROM contracts"
@@ -131,6 +138,36 @@ class SecurityTests(unittest.TestCase):
             self.assertTrue(result["data_stale"])
         finally:
             file.write_text(old)
+
+    def test_research_freshness_uses_export_time_not_republication(self):
+        path=self.root/'research.db'
+        old=(datetime.now(timezone.utc)-timedelta(days=3)).isoformat()
+        with sqlite3.connect(path) as db:
+            db.execute('CREATE TABLE IF NOT EXISTS export_info(key TEXT,value TEXT)')
+            db.execute('DELETE FROM export_info')
+            db.executemany('INSERT INTO export_info VALUES (?,?)',[
+                ('exported_at_utc',old),('schema_revision','023_research_freshness')])
+            db.execute('CREATE TABLE IF NOT EXISTS sources(kind TEXT,source TEXT,effective_date TEXT,imported_at TEXT)')
+            db.commit()
+        meta=api.research_metadata(self.root)
+        self.assertTrue(meta['stale'])
+        self.assertEqual(meta['schema_revision'],'023_research_freshness')
+        self.assertGreater(meta['age_seconds'],26*3600)
+
+    def test_research_readiness_is_independent_from_procurement(self):
+        old=api.HEALTH
+        try:
+            api.HEALTH=self.root/'health-test.json'
+            api.HEALTH.write_text(json.dumps({'status':'ok','checked_at_utc':datetime.now(timezone.utc).isoformat(),
+                                            'research_monitor':{'status':'attention'}}))
+            self.assertEqual(self.client.get('/readyz').status_code,200)
+            response=self.client.get('/research-readyz')
+            self.assertEqual(response.status_code,503)
+            self.assertEqual(response.json(),{'status':'attention'})
+            api.HEALTH.write_text(json.dumps({'status':'ok','checked_at_utc':datetime.now(timezone.utc).isoformat(),
+                                            'research_monitor':[]}))
+            self.assertEqual(self.client.get('/research-readyz').status_code,503)
+        finally:api.HEALTH=old
 
     def test_snapshot_metadata_stays_pinned_during_publication(self):
         other = self.root / "replacement"
