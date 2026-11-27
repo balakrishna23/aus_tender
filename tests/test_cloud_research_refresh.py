@@ -133,6 +133,17 @@ class WrapperTests(unittest.TestCase):
         for setting in ('User=root', 'TimeoutStartSec=2700', 'KillMode=control-group', 'Nice=15', 'NoNewPrivileges=true'):
             self.assertIn(setting, service)
 
+    def test_units_that_switch_user_keep_the_setuid_capability(self):
+        # On the server (systemd 255) NoNewPrivileges + ProtectKernelTunables/Modules or RestrictAddressFamilies
+        # drops CAP_SETUID, so a root service that runs runuser fails with "cannot set user id"
+        # (27 Nov: the refresher never started). Verified on the server with systemd-run.
+        for unit in ('illoura-research-refresh.service', 'illoura-review-import.service'):
+            text = (DEPLOY / unit).read_text()
+            settings = [line.strip() for line in text.splitlines() if not line.lstrip().startswith('#')]
+            self.assertIn('NoNewPrivileges=true', settings, unit)
+            for forbidden in ('ProtectKernelTunables=', 'ProtectKernelModules=', 'RestrictAddressFamilies='):
+                self.assertFalse([s for s in settings if s.startswith(forbidden)], unit + ': ' + forbidden)
+
     @unittest.skipUnless(hasattr(worker.os, 'fchmod'), 'POSIX private file mode')
     def test_status_atomic_and_private(self):
         with tempfile.TemporaryDirectory() as tmp:
