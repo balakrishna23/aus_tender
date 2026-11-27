@@ -158,6 +158,9 @@ def main(argv=None):
     geo_report.add_argument('--output',required=True)
     ready=commands.add_parser('readiness')
     ready.add_argument('--as-of',required=True,type=date.fromisoformat)
+    accept=commands.add_parser('acceptance-report',help='Every build-spec done criterion, measured, for phase sign-off')
+    accept.add_argument('--as-of',required=True,type=date.fromisoformat)
+    accept.add_argument('--output',required=True)
     changes=commands.add_parser('changes-report')
     changes.add_argument('--since',required=True,type=date.fromisoformat)
     changes.add_argument('--as-of',required=True,type=date.fromisoformat)
@@ -286,6 +289,9 @@ def main(argv=None):
             result=write_geography(build_geography(db,args.as_of),args.output)
         elif args.command=='readiness':
             result=readiness(db,args.as_of)
+        elif args.command=='acceptance-report':
+            from .acceptance import build_acceptance,write_acceptance
+            result=write_acceptance(build_acceptance(db,args.as_of),args.output)
         elif args.command=='changes-report':
             result=write_changes(build_changes(db,args.since,args.as_of),args.output)
         elif args.command=='crm-export':
