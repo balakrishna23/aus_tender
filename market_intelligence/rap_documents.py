@@ -92,18 +92,38 @@ def pdf_page_count(pdf_path, run=None):
     return int(found[1]) if found else 0
 
 
+def rewrite_pdf(pdf_path, work):
+    from pypdf import PdfReader, PdfWriter
+    writer = PdfWriter()
+    for p in PdfReader(pdf_path).pages:
+        writer.add_page(p)
+    target = Path(work) / 'rewritten.pdf'
+    with open(target, 'wb') as stream:
+        writer.write(stream)
+    return str(target)
+
+
 def ocr_texts(pdf_path, texts=None, run=None):
     """Text for each page; pages that already carry text keep it, the rest are rendered and read by OCR."""
     run = run or subprocess.run
     count = len(texts) if texts else pdf_page_count(pdf_path, run)
     result = list(texts or [''] * count)
     with tempfile.TemporaryDirectory(prefix='rap-ocr-') as work:
+        source = str(pdf_path)
         for number in range(1, min(count, OCR_MAX_PAGES) + 1):
             if len(result[number - 1]) >= 40:
                 continue
             image = Path(work) / ('p%d' % number)
-            run(['pdftoppm', '-r', str(OCR_DPI), '-gray', '-png', '-singlefile', '-f', str(number), '-l', str(number),
-                 str(pdf_path), str(image)], check=True, capture_output=True, timeout=OCR_STEP_TIMEOUT)
+            render = lambda pdf: run(['pdftoppm', '-r', str(OCR_DPI), '-gray', '-png', '-singlefile', '-f', str(number), '-l',
+                                      str(number), pdf, str(image)], check=True, capture_output=True, timeout=OCR_STEP_TIMEOUT)
+            try:
+                render(source)
+            except subprocess.CalledProcessError:
+                if source != str(pdf_path):
+                    raise
+                # Poppler refuses some damaged files that pypdf still opens (Gowrie SA: no trailer): render a clean copy.
+                source = rewrite_pdf(pdf_path, work)
+                render(source)
             read = run(['tesseract', str(image) + '.png', 'stdout', '-l', 'eng', '--psm', '3'],
                        check=True, capture_output=True, text=True, timeout=OCR_STEP_TIMEOUT)
             result[number - 1] = normalise(read.stdout or '')

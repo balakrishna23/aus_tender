@@ -151,6 +151,22 @@ class Rules(unittest.TestCase):
             self.assertEqual(R.page_texts('scan.pdf')[0], '')
         self.assertFalse(R.scanned(['A real text page with more than forty characters in it.'] * 3))
 
+    def test_damaged_files_poppler_refuses_are_rewritten_once_then_read(self):
+        rendered = []
+
+        def run(cmd, **kwargs):
+            if cmd[0] == 'pdftoppm':
+                rendered.append(cmd[-2])
+                if cmd[-2] == 'gowrie.pdf':
+                    raise R.subprocess.CalledProcessError(1, cmd, stderr="Couldn't find trailer dictionary")
+                return MagicMock(stdout='')
+            return MagicMock(stdout='Gowrie SA Stretch Reconciliation Action Plan')
+        with patch.object(R, 'rewrite_pdf', return_value='clean.pdf') as rewrite, patch.object(R.subprocess, 'run', side_effect=run):
+            texts = R.ocr_texts('gowrie.pdf', ['', ''])
+        self.assertEqual(texts, ['Gowrie SA Stretch Reconciliation Action Plan'] * 2)
+        self.assertEqual(rendered, ['gowrie.pdf', 'clean.pdf', 'clean.pdf'])
+        rewrite.assert_called_once()
+
     def test_files_pypdf_cannot_open_use_ocr_or_stay_unreadable(self):
         def run(cmd, **kwargs):
             if cmd[0] == 'pdfinfo':
