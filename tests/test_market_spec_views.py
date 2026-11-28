@@ -143,6 +143,39 @@ class ShapeTests(unittest.TestCase):
         self.assertTrue(all(m.call_count==1 for m in mocks))
         self.assertIn('v_grant_triggers: no grant input data',metrics['skipped'])
 
+    def test_register_rows_without_a_name_do_not_break_the_build(self):
+        from contextlib import ExitStack
+        from market_intelligence import views
+        registry=[dict(abn='22222222222',name=None,source='acnc',attributes={},entity_type=None,source_url='https://acnc.example'),
+                  dict(abn='22222222222',name='Second Charity Ltd',source='acnc',attributes={},entity_type='Charity',source_url='https://acnc.example'),
+                  dict(abn='33333333333',name=None,source='acnc',attributes={},entity_type=None,source_url='https://acnc.example')]
+        class Result:
+            def __init__(self,rows):self.rows=rows
+            def scalar(self):return False
+            def mappings(self):return self
+            def __iter__(self):return iter(self.rows)
+        class Conn:
+            def execute(self,statement,*args,**kwargs):
+                return Result(registry if 'current_register_entities' in str(statement) else [])
+        reports={
+            'analytics.build_report':dict(buyers=[],warnings=[]),
+            'buyict.build_buyict':dict(buyers=[]),
+            'levers.build_levers':dict(exemption_16_by_buyer=[],set_aside_band_by_buyer=[],portfolio_results=[],
+                mmr_primes=[dict(supplier_abn='22222222222',supplier='CONTRACT LABEL',active_high_value_contracts=1,value=1),
+                            dict(supplier_abn='33333333333',supplier='OTHER LABEL',active_high_value_contracts=1,value=1)]),
+            'targets.build_targets':dict(supplier_profiles=[],healthcare_accounts=[],partner_candidates=[],indigenous_corporations=[]),
+            'research.build_rap':dict(targets=[]),
+            'panel_access.build_panel_access':dict(panels=[]),
+            'forward.build_forward':dict(signals=[],snapshots=[]),
+            'inputs.build_bench':dict(rows=[]),
+            'changes.build_changes':dict(changes=[],baseline_gaps=[]),
+        }
+        with ExitStack() as stack:
+            for name,report in reports.items():stack.enter_context(patch('market_intelligence.views.'+name,return_value=report))
+            rows,_=views.build_view_rows(Conn(),date(2026,11,28))
+        self.assertEqual([p['organisation'] for p in rows['prime_targets']],['Second Charity Ltd'])
+        self.assertNotIn('CONTRACT LABEL',str(rows))
+
     def test_publication_cap_preserves_each_lane(self):
         from unittest.mock import Mock
         from market_intelligence.views import publish_generation
