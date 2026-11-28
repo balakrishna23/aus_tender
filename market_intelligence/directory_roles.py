@@ -88,7 +88,7 @@ def parse_directory_roles(path):
     if not places or not raw_roles:
         raise SourceError('Directory export has no units or roles')
     roles, metrics = [], dict(roles_read=len(raw_roles), people_read=len(people), kept=0, not_in_scope=0,
-                              without_holder=0, unit_not_found=0, invalid_record_id=0)
+                              without_holder=0, unit_not_found=0, invalid_record_id=0, holder_contact_like_dropped=0)
     seen = set()
     for r in raw_roles:
         if not re.fullmatch(r'[A-Z]-[0-9]+', r['role_record_id']) or not r['role_title']:
@@ -105,10 +105,13 @@ def parse_directory_roles(path):
             metrics['not_in_scope'] += 1
             continue
         holder = people.get(r['contact'])
+        if holder and ('@' in holder or re.search(r'[0-9]{3}', holder)):
+            # Some Directory "person" entries are switchboards or mailboxes, not names (549 of ~26k in the
+            # 19 Nov file). Keep the role, never the contact-like text.
+            metrics['holder_contact_like_dropped'] += 1
+            holder = None
         if not holder:
             metrics['without_holder'] += 1
-        if holder and ('@' in holder or re.search(r'[0-9]{3}', holder)):
-            raise SourceError('Directory person name contains contact-like data')
         roles.append(dict(role_record_id=r['role_record_id'], role_type=r['role_type'], role_title=r['role_title'],
                           functions=found, belongs_to_publisher_id=place[0] if place and place[0] else None,
                           holder_name=holder or None, is_acting=r['acting'],
