@@ -720,6 +720,8 @@ class RoutineDeployTests(unittest.TestCase):
         self.assertEqual(staged, set(cli.routine_tests()))
         self.assertIn("test_routine_mail_env.py", staged)
         self.assertEqual(remote.installs(), [])
+        # The coverage test's fixture uses the brief composer: staged for tests, never installed.
+        self.assertTrue(any(p.endswith("/" + cli.BRIEF_FIXTURE) for p in remote.files))
 
     def test_needs_yes_mail_env_and_an_idle_server(self):
         with self.assertRaises(cli.OperationError):

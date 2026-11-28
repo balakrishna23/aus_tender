@@ -1268,6 +1268,7 @@ ROUTINE_DIR = "/opt/illoura-routine"
 ROUTINE_TEST_PATTERN = "test_routine_*.py"
 MAIL_ENV = "/etc/illoura-routine/mail.env"
 MAIL_ENV_HELPER = "deploy/routine_mail_env.py"
+BRIEF_FIXTURE = "deploy/illoura_daily_brief.py"
 
 
 def routine_files(repo=REPO):
@@ -1321,6 +1322,9 @@ def deploy_routine(remote, *, yes=False, repo=REPO, test_only=False):
     files = {"routine/" + n: lf_bytes(Path(repo) / "routine" / n) for n in names}
     files.update({"tests/" + n: lf_bytes(Path(repo) / "tests" / n) for n in routine_tests(repo)})
     files[MAIL_ENV_HELPER] = lf_bytes(Path(repo) / MAIL_ENV_HELPER)
+    # test_routine_coverage builds its listing fixture with the brief composer (installed by deploy-ops):
+    # staged for the tests only, never installed here.
+    files[BRIEF_FIXTURE] = lf_bytes(Path(repo) / BRIEF_FIXTURE)
     stage = new_stage()
     try:
         stage_files(remote, stage, files)
