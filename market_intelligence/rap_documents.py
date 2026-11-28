@@ -9,6 +9,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import unicodedata
 from urllib import error, request, robotparser
@@ -24,7 +27,7 @@ def text(sql):
     return sql_text(sql)
 
 
-PARSER_REVISION = 'rap-rules-5'
+PARSER_REVISION = 'rap-rules-6'
 USER_AGENT = 'IllouraResearchBot/1.0 (internal research; respects robots.txt)'
 MAX_BYTES = 150 * 1024 * 1024   # artwork-heavy plans exceed 40 MB (City of Fremantle)
 BLOCKED_HOST = 'reconciliation.my.salesforce.com'
@@ -67,15 +70,67 @@ def normalise(value):
     return '\n'.join(re.sub(r'[^\S\n]+', ' ', line).strip() for line in value.splitlines())
 
 
-def page_texts(pdf_path):
+OCR_DPI = 200
+OCR_MAX_PAGES = 120
+OCR_STEP_TIMEOUT = 180
+
+
+def ocr_tools():
+    """Poppler's pdftoppm renders pages, Tesseract reads them (Ubuntu: poppler-utils, tesseract-ocr)."""
+    return bool(shutil.which('pdftoppm') and shutil.which('tesseract'))
+
+
+def scanned(texts):
+    """Most pages have no text layer: a plan printed and scanned (Barwon Water, Gowrie SA)."""
+    return bool(texts) and sum(len(t) < 40 for t in texts) * 2 >= len(texts) and sum(map(len, texts)) < 120 * len(texts)
+
+
+def pdf_page_count(pdf_path, run=None):
+    run = run or subprocess.run   # looked up at call time (a default bound at definition ignores patches)
+    out = run(['pdfinfo', str(pdf_path)], capture_output=True, text=True, timeout=OCR_STEP_TIMEOUT).stdout
+    found = re.search(r'^Pages:\s+(\d+)', out, re.M)
+    return int(found[1]) if found else 0
+
+
+def ocr_texts(pdf_path, texts=None, run=None):
+    """Text for each page; pages that already carry text keep it, the rest are rendered and read by OCR."""
+    run = run or subprocess.run
+    count = len(texts) if texts else pdf_page_count(pdf_path, run)
+    result = list(texts or [''] * count)
+    with tempfile.TemporaryDirectory(prefix='rap-ocr-') as work:
+        for number in range(1, min(count, OCR_MAX_PAGES) + 1):
+            if len(result[number - 1]) >= 40:
+                continue
+            image = Path(work) / ('p%d' % number)
+            run(['pdftoppm', '-r', str(OCR_DPI), '-gray', '-png', '-singlefile', '-f', str(number), '-l', str(number),
+                 str(pdf_path), str(image)], check=True, capture_output=True, timeout=OCR_STEP_TIMEOUT)
+            read = run(['tesseract', str(image) + '.png', 'stdout', '-l', 'eng', '--psm', '3'],
+                       check=True, capture_output=True, text=True, timeout=OCR_STEP_TIMEOUT)
+            result[number - 1] = normalise(read.stdout or '')
+    return result
+
+
+def page_texts(pdf_path, ocr=True):
     from pypdf import PdfReader
-    texts = []
-    for p in PdfReader(pdf_path).pages:
-        # One oversized page (pypdf LimitReachedError, Main Roads WA / NRMA) must not lose the whole plan.
+    try:
+        reader_pages = PdfReader(pdf_path).pages
+        texts = []
+        for p in reader_pages:
+            # One oversized page (pypdf LimitReachedError, Main Roads WA / NRMA) must not lose the whole plan.
+            try:
+                texts.append(normalise(p.extract_text() or ''))
+            except Exception:
+                texts.append('')
+    except Exception:
+        # pypdf cannot open the file at all (KPMG): OCR may still render it, else the document stays unreadable.
+        if not (ocr and ocr_tools()):
+            raise
+        return ocr_texts(pdf_path)
+    if ocr and scanned(texts) and ocr_tools():
         try:
-            texts.append(normalise(p.extract_text() or ''))
+            return ocr_texts(pdf_path, texts)
         except Exception:
-            texts.append('')
+            return texts
     return texts
 
 
@@ -594,12 +649,54 @@ def split_deliverable(joined):
     return dict(deliverable=deliverable, timeline=timeline, responsibility=responsibility)
 
 
+ACTIVITY = re.compile(r'^(\d{1,2}\.\d{1,2})\.?\s+(\S.*)$')
+PAREN_TIMELINE = re.compile(r'\(([^()]*?(?:' + YEAR + r'|annual(?:ly)?|ongoing|quarterly|bi-?annual(?:ly)?|monthly'
+                            r'|six-monthly|half-yearly)[^()]*)\)', re.I)
+LEAD_LINE = re.compile(r'^(?:[A-Z][\w&/ -]{0,60}?\bLead Team|Lead|Owner|Responsib\w*)\s*:\s*(\S.*)$')
+PRIORITY_HEADING = re.compile(r'^\d{1,2}\.\s+[A-Z]')
+
+
+def numbered_activities(page):
+    """Activity lists such as '7.5 Spend a cumulative $100m ... (annual).' under an owner line ('First Nations Lead
+    Team: ...'), as in the CommBank Elevate RAP. None when the page is not in that layout."""
+    lines = [l for l in page.splitlines() if l]
+    # Reconciliation Australia's column tables (SA Water's "(annually)" column) keep the table reader.
+    if TABLE_HEADER.search(page) or sum(bool(ACTIVITY.match(l)) for l in lines) < 3 or len(PAREN_TIMELINE.findall(page)) < 2:
+        return None
+    rows, owner, item, owner_open = [], None, None, False
+
+    def close():
+        if not item:
+            return
+        joined = re.sub(r'^([A-Z]) (?=[a-z])', r'\1', ' '.join(item))   # "P artner" (split glyph) -> "Partner"
+        stamps = list(PAREN_TIMELINE.finditer(joined))
+        if stamps:
+            rows.append(dict(deliverable=joined[:stamps[-1].start()].rstrip(' ,;'), timeline=stamps[-1][1].strip(),
+                             responsibility=owner))
+
+    for line in lines:
+        activity, lead = ACTIVITY.match(line), LEAD_LINE.match(line)
+        if activity:
+            close(); item = [activity[2]]; owner_open = False
+        elif lead:
+            close(); item = None; owner = lead[1].strip(); owner_open = True
+        elif PRIORITY_HEADING.match(line):
+            close(); item = None; owner_open = False
+        elif item is not None:
+            item.append(line)
+        elif owner_open and len(owner) < 100:
+            owner += ' ' + line   # an owner name wrapped onto the next line
+    close()
+    return rows
+
+
 def commitments(pages):
     output = []
     for page_number, page in enumerate(pages,1):
-        lines = [l for l in page.splitlines() if l]
+        activities = numbered_activities(page)
+        lines = [] if activities else [l for l in page.splitlines() if l]
         # Action tables and bullet lists carry commitments; introductory prose does not.
-        in_table = bool(TABLE_HEADER.search(page))
+        in_table = bool(TABLE_HEADER.search(page)) and not activities
         dated, undated = [], []
         i = 0
         while i < len(lines):
@@ -628,7 +725,7 @@ def commitments(pages):
             elif in_table:
                 undated.append(joined.strip())
             i = max(i+1,j)
-        rows = dated
+        rows = activities or dated
         if in_table and not dated:
             # Column-by-column extraction separated dates from their rows: keep the deliverables, undated.
             rows = [dict(deliverable=d, timeline=None, responsibility=None) for d in undated if len(d) >= 25 and VERB.match(d)]

@@ -100,6 +100,69 @@ class Rules(unittest.TestCase):
         with patch('pypdf.PdfReader',return_value=MagicMock(pages=[Page('One'),Page(None),Page('Three')])):
             self.assertEqual(R.page_texts('ignored.pdf'),['One','','Three'])
 
+    def test_rules_6_numbered_activities_with_owner_lines(self):
+        # CommBank Elevate layout (short excerpt): numbered activities, timeline in brackets, owner line per group.
+        page_text = ('Business Success and Growth.\nReconciliation Priorities FY26-28 RAP Activities and Implementation\n'
+                     '7. First Nations Supplier Diversity\nFirst Nations Lead Team: Indigenous Procurement\nand Engagement (FS)\n'
+                     '7.4 Investigate opportunities to work with\nsuppliers in regional areas (June 2028).\n'
+                     '7.5 Spend a cumulative $100m with First Nations businesses between 1 July 2025 and 30\n'
+                     'June 2028, (including Direct and Directed spend), and report progress annually (annual).\n'
+                     '8. First Nations Business Banking\nFirst Nations Lead Team: Indigenous Business\nBanking (BB)\n'
+                     '8.1 P\nartner with Supply Nation to jointly deliver the Indigenous Business Education Series (annual).\n'
+                     'Reconciliation Action Plan FY26-28 21')
+        rows = R.commitments([page_text])
+        self.assertEqual([(r['timeline'], r['responsibility']) for r in rows],
+                         [('June 2028', 'Indigenous Procurement and Engagement (FS)'),
+                          ('annual', 'Indigenous Procurement and Engagement (FS)'),
+                          ('annual', 'Indigenous Business Banking (BB)')])
+        spend = rows[1]
+        self.assertEqual((spend['category'], spend['target_kind'], spend['target_value']), ('procurement', 'money', Decimal(100000000)))
+        self.assertTrue(spend['deliverable'].endswith('report progress annually'))
+        self.assertTrue(rows[2]['deliverable'].startswith('Partner with Supply Nation'))
+
+    def test_rules_6_standard_tables_keep_the_table_reader(self):
+        # SA Water: a Reconciliation Australia column table with "(annually)" cells is not the activity layout.
+        table = ('Timeline Responsibility (Job title)\n37.1 Complete the annual RAP questionnaire.\n37.2 Publicly report.\n'
+                 '37.3 Submit a report.\n37.1 - 30 September\n(annually)\n37.4 - January 2025\n(quarterly)')
+        self.assertIsNone(R.numbered_activities(table))
+        self.assertIsNone(R.numbered_activities('Our plan (2025) and goals (2026) in prose.'))
+
+    def test_scanned_plans_are_read_with_ocr_when_the_tools_exist(self):
+        class Page:
+            def __init__(self, text): self.text = text
+            def extract_text(self): return self.text
+        calls = []
+
+        def run(cmd, **kwargs):
+            calls.append(cmd[0])
+            if cmd[0] == 'tesseract':
+                return MagicMock(stdout='Barwon Water Stretch Reconciliation Action Plan\npage ' + cmd[1][-5])
+            return MagicMock(stdout='')
+        reader = MagicMock(pages=[Page(''), Page(' '), Page('A real text page with more than forty characters in it.')])
+        with patch('pypdf.PdfReader', return_value=reader), patch.object(R, 'ocr_tools', return_value=True), \
+                patch.object(R.subprocess, 'run', side_effect=run):
+            texts = R.page_texts('scan.pdf')
+        self.assertEqual(texts[0], 'Barwon Water Stretch Reconciliation Action Plan\npage 1')
+        self.assertTrue(texts[1].endswith('page 2'))
+        self.assertTrue(texts[2].startswith('A real text page'))   # pages with text are not re-read
+        self.assertEqual(calls, ['pdftoppm', 'tesseract', 'pdftoppm', 'tesseract'])
+        # Without the tools (or with OCR off) a scanned plan is returned as before.
+        with patch('pypdf.PdfReader', return_value=reader), patch.object(R, 'ocr_tools', return_value=False):
+            self.assertEqual(R.page_texts('scan.pdf')[0], '')
+        self.assertFalse(R.scanned(['A real text page with more than forty characters in it.'] * 3))
+
+    def test_files_pypdf_cannot_open_use_ocr_or_stay_unreadable(self):
+        def run(cmd, **kwargs):
+            if cmd[0] == 'pdfinfo':
+                return MagicMock(stdout='Title: x\nPages:          2\n')
+            return MagicMock(stdout='KPMG Stretch RAP' if cmd[0] == 'tesseract' else '')
+        with patch('pypdf.PdfReader', side_effect=ValueError('broken xref')), patch.object(R, 'ocr_tools', return_value=True), \
+                patch.object(R.subprocess, 'run', side_effect=run):
+            self.assertEqual(R.page_texts('kpmg.pdf'), ['KPMG Stretch RAP', 'KPMG Stretch RAP'])
+        with patch('pypdf.PdfReader', side_effect=ValueError('broken xref')), patch.object(R, 'ocr_tools', return_value=False):
+            with self.assertRaises(ValueError):
+                R.page_texts('kpmg.pdf')
+
     def test_organisation_abbreviations_and_employment_wording(self):
         self.assertTrue(R.organisation_found('Brisbane South Primary Health Network (BSPHN)','Brisbane South PHN Reconciliation Action Plan'))
         self.assertTrue(R.organisation_found('Australian Federal Police (AFP)','AFP Stretch Reconciliation Action Plan'))
