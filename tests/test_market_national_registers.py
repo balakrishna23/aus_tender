@@ -80,12 +80,17 @@ class DirectoryRoleTests(unittest.TestCase):
         for private in ('private@example', '6123', 'GPO Box', 'Ms', 'Dr', 'Alex'):
             self.assertNotIn(private, stored)
 
-    def test_contact_like_names_and_empty_exports_fail(self):
+    def test_contact_like_names_are_dropped_and_empty_exports_fail(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp)/'export.xml'
-            path.write_text(DIRECTORY.replace('<first_name>Jane</first_name>', '<first_name>jane@x.au</first_name>'), encoding='utf-8')
-            with self.assertRaises(SourceError):
-                D.parse_directory_roles(path)
+            for fake in ('jane@x.au', 'Switchboard 1300'):
+                path.write_text(DIRECTORY.replace('<first_name>Jane</first_name>', '<first_name>' + fake + '</first_name>'),
+                                encoding='utf-8')
+                roles, metrics = D.parse_directory_roles(path)
+                # The role stays; the contact-like "name" is never stored.
+                self.assertEqual(metrics['holder_contact_like_dropped'], 1)
+                self.assertNotIn(fake.split()[0], json.dumps(roles))
+                self.assertTrue(roles)
             path.write_text('<response>' + item('organisation', 'O-000001', '100', 'Department') + '</response>', encoding='utf-8')
             with self.assertRaises(SourceError):
                 D.parse_directory_roles(path)
