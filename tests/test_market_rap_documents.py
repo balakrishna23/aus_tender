@@ -173,6 +173,36 @@ class Rules(unittest.TestCase):
         self.assertEqual(R.analyse(['AECOM Australia Stretch RAP 2025-2028'],dict(directory(),period_as_published='2025-2028'))['match_status'],'matched')
         self.assertEqual(R.years('2026-29'),{2026,2027,2028,2029})
 
+    def test_rules_5_period_and_type_hints(self):
+        # Cover shows the previous plan first (CatholicCare NT): the period overlapping the directory wins.
+        cover=['Stretch Reconciliation ACTION PLAN Jan 2018 – Dec 2020 Stretch Reconciliation ACTION PLAN Jan 2023 – Dec 2026']
+        self.assertEqual(R.detect_period(cover),'Jan 2018 – Dec 2020')
+        self.assertEqual(R.detect_period(cover,'January 2023 to December 2026'),'Jan 2023 – Dec 2026')
+        # "FY26-28" on the cover; a history page lists past plans (CommBank).
+        pages=['FY26–28 Reconciliation Action Plan','Our journey: 2013–2014 Elevate RAP; FY23–25 Elevate RAP']
+        self.assertEqual(R.detect_period(pages,'July 2025 to June 2028'),'FY26–28')
+        self.assertEqual(R.years('FY26–28'),{2026,2027,2028})
+        # "1 January 2025 > December 2027" (NWRH).
+        self.assertEqual(R.years(R.detect_period(['1 January 2025 > December 2027'])),{2025,2026,2027})
+        # The cover opens on the previous plan's type (Main Roads WA); a named plan type matching the directory wins.
+        pages=['After the success of our Innovate RAP, we are excited to take the next step',
+               'present Main Roads Western Australia\'s Stretch Reconciliation Action Plan (RAP) 2025-2028']
+        self.assertEqual(R.detect_type(pages),'Innovate')
+        self.assertEqual(R.detect_type(pages,'Stretch'),'Stretch')
+        self.assertEqual(R.detect_type(pages,'Elevate'),'Innovate')
+        # An old plan that names the directory's type is still rejected on its period.
+        old=['AECOM Australia Innovate Reconciliation Action Plan 2021-2023. Our next step is a Stretch RAP.']
+        self.assertEqual(R.analyse(old,directory())['match_status'],'period_mismatch')
+
+    def test_rules_5_directory_without_a_usable_period(self):
+        # ANZ's directory row reads "from November -0001": accept a plan still running at the as-of date, not an old one.
+        row=directory(period_as_published='from November -0001')
+        current=['AECOM Australia Stretch Reconciliation Action Plan October 2026 – September 2028']
+        ended=['AECOM Australia Stretch Reconciliation Action Plan 2021-2024 Final Report']
+        self.assertEqual(R.analyse(current,row,as_of=date(2026,11,28))['match_status'],'matched')
+        self.assertEqual(R.analyse(ended,row,as_of=date(2026,11,28))['match_status'],'period_mismatch')
+        self.assertEqual(R.analyse(current,row,as_of=date(2029,1,5))['match_status'],'period_mismatch')
+
 
 class IntegrationOffline(unittest.TestCase):
     def test_build_rap_fallback_and_legacy_precedence(self):

@@ -1,7 +1,7 @@
 """Own-site RAP PDF acquisition and deterministic, page-cited document rules."""
 from collections import Counter
 import csv
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 import hashlib
 from html.parser import HTMLParser
@@ -24,7 +24,7 @@ def text(sql):
     return sql_text(sql)
 
 
-PARSER_REVISION = 'rap-rules-4'
+PARSER_REVISION = 'rap-rules-5'
 USER_AGENT = 'IllouraResearchBot/1.0 (internal research; respects robots.txt)'
 MAX_BYTES = 150 * 1024 * 1024   # artwork-heavy plans exceed 40 MB (City of Fremantle)
 BLOCKED_HOST = 'reconciliation.my.salesforce.com'
@@ -477,17 +477,27 @@ def fetch(candidates, data_root, client=None, *, clock=time.monotonic, sleeper=t
     return dict(attempts=attempts,counts=dict(Counter(r['status'] for r in attempts)),browser_retries=len(retry))
 
 
-def detect_period(pages):
-    pattern = re.compile(r'\b((?:' + MONTH + r'\s+)?' + YEAR + r'\s*(?:[-\u2013\u2014]|to)\s*(?:' + MONTH + r'\s+)?(?:' + YEAR + r'|\d{2}\b))', re.I)
-    # Cover pages first; some plans only state the period on an inner page (CommBank, NRMA).
-    for page in pages[:8]:
-        found = pattern.search(' '.join(page.split()))
-        if found:
-            return found[1]
-    return None
+# "July 2024 to June 2027", "2025-28", "1 January 2025 > December 2027" (NWRH), "FY26-28" (CommBank).
+PERIOD = re.compile(r'\b((?:' + MONTH + r'\s+)?' + YEAR + r'\s*(?:[-\u2013\u2014>]|to)\s*(?:' + MONTH + r'\s+)?(?:' + YEAR + r'|\d{2}\b)'
+                    r'|FY\s?\d{2}\s*[-\u2013\u2014]\s*(?:FY\s?)?\d{2}\b)', re.I)
+
+
+def detect_period(pages, expected=None):
+    """The plan period stated on the first pages (some plans state it only on an inner page: CommBank, NRMA).
+    Covers can show the previous plan's period first (CatholicCare NT) and history pages list past plans (CommBank),
+    so when the directory period is known, the first stated period that overlaps it wins."""
+    found = [m[1] for page in pages[:8] for m in PERIOD.finditer(' '.join(page.split()))]
+    want = years(expected)
+    for period in found if want else ():
+        if years(period) & want:
+            return period
+    return found[0] if found else None
 
 
 def years(value):
+    fy = re.fullmatch(r'FY\s?(\d{2})\s*[-\u2013\u2014]\s*(?:FY\s?)?(\d{2})', (value or '').strip(), re.I)
+    if fy:
+        return set(range(2000 + int(fy[1]), 2000 + int(fy[2]) + 1))
     found = [int(y) for y in re.findall(YEAR, value or '')]
     short = re.search(r'(?:19|20)\d{2}\s*[-\u2013\u2014]\s*(\d{2})\b', value or '')
     if short and found:
@@ -722,8 +732,12 @@ STATES = {'sa': ('south', 'australia'), 'wa': ('western', 'australia'), 'nsw': (
 RAP_TYPE = re.compile(r'\b(Reflect|Innovate|Stretch|Elevate)\b(?=\s+(?:Reconciliation|RAP|Action))', re.I)
 
 
-def detect_type(pages):
-    """Cover first; otherwise the type the document names most often ("our Stretch RAP")."""
+def detect_type(pages, expected=None):
+    """The directory's type when the first pages name it as a plan ("present Ventia's Stretch Reconciliation Action Plan";
+    covers can open on the previous plan: "after the success of our Innovate RAP"). Otherwise cover first, then the
+    type the document names most often ("our Stretch RAP"). Old plans are still caught by the period check."""
+    if expected and any(m[1].casefold() == expected.casefold() for m in RAP_TYPE.finditer(' '.join(pages[:8]))):
+        return expected.title()
     cover = ' '.join(pages[:2])
     found = RAP_TYPE.search(cover) or re.search(r'\b(Reflect|Innovate|Stretch|Elevate)\b', pages[0] if pages else '', re.I)
     if found:
@@ -751,12 +765,14 @@ def organisation_found(name, text):
     return len(tokens) >= 3 and sum(t in document for t in tokens) / len(tokens) >= 0.75
 
 
-def analyse(pages, directory_row):
+def analyse(pages, directory_row, as_of=None):
     pages = [normalise(p) for p in pages]
     first = ' '.join(pages[:6])
-    rap_type = detect_type(pages)
-    period = detect_period(pages)
+    expected_period = directory_row.get('period_as_published')
+    rap_type = detect_type(pages, directory_row.get('rap_type'))
+    period = detect_period(pages, expected_period)
     found = organisation_found(directory_row.get('organisation',''), first)
+    stated, listed = years(period), years(expected_period)
     status = 'matched'
     if not first.strip() or not rap_type or not period:
         status = 'unreadable'
@@ -764,7 +780,10 @@ def analyse(pages, directory_row):
         status = 'organisation_not_found'
     elif rap_type.casefold() != (directory_row.get('rap_type') or '').casefold():
         status = 'type_mismatch'
-    elif not (years(period) & years(directory_row.get('period_as_published'))):
+    elif listed and not (stated & listed):
+        status = 'period_mismatch'
+    elif not listed and (not stated or max(stated) < (as_of or date.today()).year):
+        # The directory sometimes carries no usable date (ANZ: "from November -0001"): accept only a plan still running.
         status = 'period_mismatch'
     return dict(rap_type_detected=rap_type,period_detected=period,organisation_found=found,
                 match_status=status,pages=len(pages),characters=sum(map(len,pages)),
