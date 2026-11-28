@@ -24,7 +24,7 @@ def text(sql):
     return sql_text(sql)
 
 
-PARSER_REVISION = 'rap-rules-3'
+PARSER_REVISION = 'rap-rules-4'
 USER_AGENT = 'IllouraResearchBot/1.0 (internal research; respects robots.txt)'
 MAX_BYTES = 150 * 1024 * 1024   # artwork-heavy plans exceed 40 MB (City of Fremantle)
 BLOCKED_HOST = 'reconciliation.my.salesforce.com'
@@ -69,7 +69,14 @@ def normalise(value):
 
 def page_texts(pdf_path):
     from pypdf import PdfReader
-    return [normalise(p.extract_text() or '') for p in PdfReader(pdf_path).pages]
+    texts = []
+    for p in PdfReader(pdf_path).pages:
+        # One oversized page (pypdf LimitReachedError, Main Roads WA / NRMA) must not lose the whole plan.
+        try:
+            texts.append(normalise(p.extract_text() or ''))
+        except Exception:
+            texts.append('')
+    return texts
 
 
 def domain(host):
@@ -472,7 +479,8 @@ def fetch(candidates, data_root, client=None, *, clock=time.monotonic, sleeper=t
 
 def detect_period(pages):
     pattern = re.compile(r'\b((?:' + MONTH + r'\s+)?' + YEAR + r'\s*(?:[-\u2013\u2014]|to)\s*(?:' + MONTH + r'\s+)?(?:' + YEAR + r'|\d{2}\b))', re.I)
-    for page in pages[:3]:
+    # Cover pages first; some plans only state the period on an inner page (CommBank, NRMA).
+    for page in pages[:8]:
         found = pattern.search(' '.join(page.split()))
         if found:
             return found[1]
@@ -709,12 +717,31 @@ def people(pages):
     return output
 
 
+STATES = {'sa': ('south', 'australia'), 'wa': ('western', 'australia'), 'nsw': ('new', 'south', 'wales'), 'vic': ('victoria',),
+          'qld': ('queensland',), 'nt': ('northern', 'territory'), 'act': ('australian', 'capital', 'territory'), 'tas': ('tasmania',)}
+RAP_TYPE = re.compile(r'\b(Reflect|Innovate|Stretch|Elevate)\b(?=\s+(?:Reconciliation|RAP|Action))', re.I)
+
+
+def detect_type(pages):
+    """Cover first; otherwise the type the document names most often ("our Stretch RAP")."""
+    cover = ' '.join(pages[:2])
+    found = RAP_TYPE.search(cover) or re.search(r'\b(Reflect|Innovate|Stretch|Elevate)\b', pages[0] if pages else '', re.I)
+    if found:
+        return found[1].title()
+    counts = Counter(m[1].title() for m in RAP_TYPE.finditer(' '.join(pages)))
+    return counts.most_common(1)[0][0] if counts else None
+
+
 def organisation_found(name, text):
     """The directory organisation appears on the first pages (abbreviations and 'PHN' accepted)."""
     from .parsers import legal_key, name_key
     document = set(name_key(text).split())
     if 'phn' in document:
         document |= {'primary', 'health', 'network'}
+    # Directory names use state abbreviations ("SA Department for Education"); plans spell them out.
+    for short, words in STATES.items():
+        if set(words) <= document:
+            document.add(short)
     abbreviations = [name_key(a).replace(' ', '') for a in re.findall(r'\(([A-Za-z&]{2,12})\)', name or '')]
     tokens = [t for t in legal_key(re.sub(r'\([^)]*\)', ' ', name or '')).split() if t not in ('the', 'of', 'and', 'for')]
     if not tokens:
@@ -726,11 +753,8 @@ def organisation_found(name, text):
 
 def analyse(pages, directory_row):
     pages = [normalise(p) for p in pages]
-    first = ' '.join(pages[:6]); cover = ' '.join(pages[:2])
-    detected = re.search(r'\b(Reflect|Innovate|Stretch|Elevate)\b(?=\s+(?:Reconciliation|RAP|Action))',cover,re.I)
-    if not detected:
-        detected = re.search(r'\b(Reflect|Innovate|Stretch|Elevate)\b',pages[0] if pages else '',re.I)
-    rap_type = detected[1].title() if detected else None
+    first = ' '.join(pages[:6])
+    rap_type = detect_type(pages)
     period = detect_period(pages)
     found = organisation_found(directory_row.get('organisation',''), first)
     status = 'matched'
