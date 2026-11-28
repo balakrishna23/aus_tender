@@ -86,6 +86,20 @@ class Rules(unittest.TestCase):
                             'Engage with First Nations organisations to co-design programs.\nShare the engagement plan with all staff each year.'])
         self.assertEqual([(r['deliverable'][:6],r['timeline']) for r in rows],[('Engage',None),('Share ',None)])
 
+    def test_type_beyond_cover_period_inner_page_states_and_bad_page(self):
+        pages=['Commonwealth Example','Message from our CEO','Our Stretch Reconciliation Action Plan sets out','Our Stretch RAP',
+               'This plan runs from July 2024 to June 2027']
+        self.assertEqual(R.detect_type(pages),'Stretch')
+        self.assertEqual(R.detect_period(pages),'July 2024 to June 2027')
+        self.assertTrue(R.organisation_found('SA Department for Education','Government of South Australia Department for Education'))
+        class Page:
+            def __init__(self,text):self.text=text
+            def extract_text(self):
+                if self.text is None:raise RuntimeError('Reached maximum number of tokens per stream')
+                return self.text
+        with patch('pypdf.PdfReader',return_value=MagicMock(pages=[Page('One'),Page(None),Page('Three')])):
+            self.assertEqual(R.page_texts('ignored.pdf'),['One','','Three'])
+
     def test_organisation_abbreviations_and_employment_wording(self):
         self.assertTrue(R.organisation_found('Brisbane South Primary Health Network (BSPHN)','Brisbane South PHN Reconciliation Action Plan'))
         self.assertTrue(R.organisation_found('Australian Federal Police (AFP)','AFP Stretch Reconciliation Action Plan'))
