@@ -20,6 +20,7 @@ from decimal import Decimal
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import signal
 import sqlite3
@@ -41,10 +42,21 @@ INDIVIDUAL = (
 PROCUREMENT = "(SELECT snapshot_id FROM market.current_procurement_snapshot)"
 # The national ABN/ASIC registers hold millions of rows (migration 024); the API copy keeps the rows research
 # uses: contract buyers/suppliers, aged-care provider matches and the complete ACNC and ORIC registers.
-REGISTER_SCOPE = """(e.source IN ('acnc','oric')
-        OR e.abn IN (SELECT supplier_abn FROM market.current_contracts WHERE supplier_abn IS NOT NULL
-                     UNION SELECT buyer_abn FROM market.current_contracts WHERE buyer_abn IS NOT NULL
-                     UNION SELECT abn FROM market.v_aged_care_provider_proposals WHERE abn IS NOT NULL))"""
+# The scope ABNs (~35k on 29 Nov 2026) are read once per export and inlined as a constant array, which PostgreSQL
+# 14+ matches through a hash. `e.abn IN (SELECT ... UNION ...)` stopped finishing once the national registers
+# were loaded (the planner estimated ~128M scope rows and rescanned a materialised list for each of ~13.6M
+# register rows), and a join on that estimate built a multi-GB hash that ran the server out of memory.
+SCOPE_ABNS = """SELECT supplier_abn FROM market.current_contracts WHERE supplier_abn IS NOT NULL
+    UNION SELECT buyer_abn FROM market.current_contracts WHERE buyer_abn IS NOT NULL
+    UNION SELECT abn FROM market.v_aged_care_provider_proposals WHERE abn IS NOT NULL"""
+SCOPE_PLACEHOLDER = "__SCOPE_ABNS__"
+REGISTER_SCOPE = "(e.source IN ('acnc','oric') OR e.abn = ANY(" + SCOPE_PLACEHOLDER + "))"
+
+
+def abn_array(values):
+    """SQL literal for the scope: only 11-digit ABNs (nothing else can reach the SQL text), sorted, distinct."""
+    clean = sorted({v for v in values if isinstance(v, str) and re.fullmatch(r"[0-9]{11}", v)})
+    return "'{" + ",".join(clean) + "}'::text[]"
 
 # Table in research.db -> query. api/app.py ALLOWED["research"] lists exactly these plus export_info.
 TABLES = {
@@ -253,7 +265,12 @@ def export(environment, destination):
                 revision = conn.exec_driver_sql("SELECT version_num FROM public.alembic_version").scalar()
                 individuals = conn.exec_driver_sql(
                     "SELECT count(*) FROM market.current_register_entities e WHERE " + INDIVIDUAL).scalar()
+                scope = None
                 for name, query in TABLES.items():
+                    if SCOPE_PLACEHOLDER in query:
+                        if scope is None:
+                            scope = abn_array(r[0] for r in conn.exec_driver_sql(SCOPE_ABNS))
+                        query = query.replace(SCOPE_PLACEHOLDER, scope)
                     result = conn.execution_options(stream_results=True, yield_per=5000).execute(sa.text(query))
                     description = getattr(result.cursor, "description", None) or []
                     columns = list(result.keys())

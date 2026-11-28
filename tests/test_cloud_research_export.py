@@ -100,6 +100,22 @@ class WriteAndValidate(unittest.TestCase):
         self.assertIn("is_individual", export.INDIVIDUAL)
         self.assertIn("sole", export.INDIVIDUAL)
 
+    def test_register_scope_is_a_constant_array_not_a_per_row_subquery(self):
+        # 29 Nov 2026: `abn IN (SELECT ... UNION ...)` never finished on the national registers (the planner
+        # rescanned a materialised list for each of ~13.6M rows) and a join ran the server out of memory; the
+        # scope is read once and inlined as a constant array (hashed by PostgreSQL 14+).
+        for table in ("register_entities", "register_names"):
+            query = " ".join(export.TABLES[table].split())
+            self.assertIn("WHERE (e.source IN ('acnc','oric') OR e.abn = ANY(__SCOPE_ABNS__))", query)
+            self.assertNotIn("IN (SELECT", query)
+        self.assertIn("current_contracts", export.SCOPE_ABNS)
+        self.assertIn("v_aged_care_provider_proposals", export.SCOPE_ABNS)
+
+    def test_scope_array_only_carries_eleven_digit_abns(self):
+        literal = export.abn_array(["51824753556", "51824753556", "12345678901", "1234", "x'); DROP--", None, 5])
+        self.assertEqual(literal, "'{12345678901,51824753556}'::text[]")
+        self.assertEqual(export.abn_array([]), "'{}'::text[]")
+
     def test_export_has_no_write_statements(self):
         for name, query in export.TABLES.items():
             words = query.upper().split()
