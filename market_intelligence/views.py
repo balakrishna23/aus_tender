@@ -150,9 +150,10 @@ def build_view_rows(conn, as_of, config=None):
         FROM market.current_register_entities e JOIN market.register_snapshots s ON s.id=e.snapshot_id
         WHERE NOT e.is_individual AND (e.source IN ('acnc','oric') OR e.abn=ANY(:abns))'''),dict(abns=wanted)).mappings()]
     registered={};safe_names={}
-    registry.sort(key=lambda r:(r['source']!='abn',r['source']!='asic_companies',r['name']))
+    # Some register rows carry no name (3 ACNC charities on 28 Nov): sort them last, never use them as a name.
+    registry.sort(key=lambda r:(r['source']!='abn',r['source']!='asic_companies',r['name'] is None,r['name'] or ''))
     for r in registry:
-        if r['abn']:safe_names.setdefault(r['abn'],r['name'])
+        if r['abn'] and r['name']:safe_names.setdefault(r['abn'],r['name'])
         if r['abn']:registered.setdefault(r['abn'],{}).update({k:v for k,v in dict(type=r['entity_type'],size=r['attributes'].get('size'),source_url=r['source_url']).items() if v is not None})
     buyer_context={r['buyer_key']:dict(r) for r in conn.execute(text('''SELECT r.buyer_key,o.portfolio,o.payload->>'Type of Body' AS body_type,
         r.review_status,r.register_context_stale FROM market.buyer_resolution r LEFT JOIN market.organisation_observations o
