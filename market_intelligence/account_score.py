@@ -81,7 +81,8 @@ def score_accounts(rows, config):
         row.setdefault('already_engaged',False)
         row['new_target']=not row['already_engaged'] and row.get('relationship_status')!='do_not_pursue'
         result.append(row)
-    result.sort(key=lambda r:(r['score'] is None,-(r['score'] or 0),r['lane'],r['account'].casefold(),r['account_key']))
+    # Some accounts carry no name (healthcare rows from the 3 nameless ACNC charities, 29 Nov): sort them last.
+    result.sort(key=lambda r:(r['score'] is None,-(r['score'] or 0),r['lane'],r['account'] is None,(r['account'] or '').casefold(),r['account_key']))
     counts={}
     for overall,row in enumerate(result,1):
         lane=row['lane'];counts[lane]=counts.get(lane,0)+1

@@ -72,6 +72,11 @@ class ScoreTests(unittest.TestCase):
         for value in (-1,float('nan'),True):
             with self.assertRaises(ValueError):score_accounts([account(spend=value)],load_config())
 
+    def test_accounts_without_a_name_sort_last_instead_of_failing(self):
+        rows=score_accounts([dict(account('unnamed',spend=5),account=None),account('Beta',spend=5),account('alpha',spend=5)],load_config())
+        self.assertEqual([r['account_key'] for r in rows],['alpha','Beta','unnamed'])
+        self.assertEqual([r['overall_rank'] for r in rows],[1,2,3])
+
 
 class ShapeTests(unittest.TestCase):
     def test_typed_row_inputs_and_privacy(self):
