@@ -100,6 +100,16 @@ class WriteAndValidate(unittest.TestCase):
         self.assertIn("is_individual", export.INDIVIDUAL)
         self.assertIn("sole", export.INDIVIDUAL)
 
+    def test_register_scope_is_a_join_not_a_per_row_subquery(self):
+        # 29 Nov 2026: `abn IN (SELECT ... UNION ...)` never finished on the national registers (the planner
+        # rescanned a materialised list for each of ~13.6M rows); the scope must be computed once and joined.
+        for table in ("register_entities", "register_names"):
+            query = " ".join(export.TABLES[table].split())
+            self.assertTrue(query.startswith("WITH scope AS MATERIALIZED ("), table)
+            self.assertIn("LEFT JOIN scope s ON s.abn = e.abn", query)
+            self.assertIn("WHERE (e.source IN ('acnc','oric') OR s.abn IS NOT NULL)", query)
+            self.assertNotIn("e.abn IN (SELECT", query)
+
     def test_export_has_no_write_statements(self):
         for name, query in export.TABLES.items():
             words = query.upper().split()

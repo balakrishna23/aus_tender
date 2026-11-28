@@ -41,24 +41,30 @@ INDIVIDUAL = (
 PROCUREMENT = "(SELECT snapshot_id FROM market.current_procurement_snapshot)"
 # The national ABN/ASIC registers hold millions of rows (migration 024); the API copy keeps the rows research
 # uses: contract buyers/suppliers, aged-care provider matches and the complete ACNC and ORIC registers.
-REGISTER_SCOPE = """(e.source IN ('acnc','oric')
-        OR e.abn IN (SELECT supplier_abn FROM market.current_contracts WHERE supplier_abn IS NOT NULL
-                     UNION SELECT buyer_abn FROM market.current_contracts WHERE buyer_abn IS NOT NULL
-                     UNION SELECT abn FROM market.v_aged_care_provider_proposals WHERE abn IS NOT NULL))"""
+# The scope ABNs are computed once (UNION = distinct) and hash-joined. `e.abn IN (SELECT ... UNION ...)` stopped
+# finishing once the national registers were loaded: the planner estimated ~128M scope rows, so it chose a
+# materialised list scanned again for every one of the ~13.6M register rows (29 Nov 2026).
+SCOPE = """WITH scope AS MATERIALIZED (
+        SELECT supplier_abn AS abn FROM market.current_contracts WHERE supplier_abn IS NOT NULL
+        UNION SELECT buyer_abn FROM market.current_contracts WHERE buyer_abn IS NOT NULL
+        UNION SELECT abn FROM market.v_aged_care_provider_proposals WHERE abn IS NOT NULL)
+    """
+SCOPE_JOIN = " LEFT JOIN scope s ON s.abn = e.abn "
+REGISTER_SCOPE = "(e.source IN ('acnc','oric') OR s.abn IS NOT NULL)"
 
 # Table in research.db -> query. api/app.py ALLOWED["research"] lists exactly these plus export_info.
 TABLES = {
     "contracts": """SELECT snapshot_id, cn_id, buyer_key, buyer, buyer_abn, supplier, supplier_abn,
         category_family, original_value, current_value, start_date, current_end_date, first_published,
         source_url, retrieved_at, issues FROM market.current_contracts""",
-    "register_entities": """SELECT e.source, e.effective_date, e.scope_kind, e.snapshot_id, e.record_id,
+    "register_entities": SCOPE + """SELECT e.source, e.effective_date, e.scope_kind, e.snapshot_id, e.record_id,
         e.abn, e.acn, e.icn, e.name, e.name_key, """ + INDIVIDUAL + """ AS is_individual, e.status,
         e.status_from, e.registered_on, e.deregistered_on, e.entity_type, e.state, e.postcode,
         e.attributes, e.issues
-        FROM market.current_register_entities e WHERE """ + REGISTER_SCOPE,
-    "register_names": """SELECT e.source, n.snapshot_id, n.record_id, n.name_type, n.name, n.name_key
+        FROM market.current_register_entities e""" + SCOPE_JOIN + "WHERE " + REGISTER_SCOPE,
+    "register_names": SCOPE + """SELECT e.source, n.snapshot_id, n.record_id, n.name_type, n.name, n.name_key
         FROM market.register_names n JOIN market.current_register_entities e
-          ON e.snapshot_id = n.snapshot_id AND e.record_id = n.record_id WHERE """ + REGISTER_SCOPE,
+          ON e.snapshot_id = n.snapshot_id AND e.record_id = n.record_id""" + SCOPE_JOIN + "WHERE " + REGISTER_SCOPE,
     # Migration 024: publicly listed ICT / digital / workforce / procurement role holders and agency heads.
     "agency_org_map": "SELECT * FROM market.v_agency_org_map",
     "organisations": "SELECT * FROM market.organisations",
