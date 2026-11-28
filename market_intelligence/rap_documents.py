@@ -122,18 +122,33 @@ class Links(HTMLParser):
             self.links.append((self.href, ' '.join(self.label))); self.href = None
 
 
+RAP_WORDS = re.compile(r'reconciliation|(?<![a-z])rap(?![a-z])', re.I)
+# CMS download routes that serve PDFs without a .pdf path (Sitecore/Umbraco /media/<id>, Contentful assets).
+DOWNLOAD_PATH = re.compile(r'/download\b|/ctfassets/|/media/\d+|/getmedia/|/-/media/', re.I)
+
+
 def discover_links(html, base_url):
     parser = Links(); parser.feed(html)
-    links = set()
+    title = re.search(r'<title[^>]*>(.*?)</title>', html, re.I | re.S)
+    # A page that is itself about the RAP: its PDFs are candidates even when the link text is just "Download".
+    rap_page = bool(RAP_WORDS.search(urlsplit(base_url).path) or (title and RAP_WORDS.search(title[1])))
+    links = {}
     for href, label in parser.links:
         try:
             url = secure_url(urljoin(base_url, href))
         except ValueError:
             continue
-        if (own_site(url, base_url) and urlsplit(url).path.lower().endswith('.pdf')
-                and re.search(r'reconciliation|(?<![a-z])rap(?![a-z])', href + ' ' + label, re.I)):
-            links.add(url)
-    return sorted(links, key=lambda u: (max(re.findall(YEAR, u), default=''), u), reverse=True)[:3]
+        path = urlsplit(url).path.lower()
+        named = bool(RAP_WORDS.search(href + ' ' + label))
+        if own_site(url, base_url) and ((path.endswith('.pdf') and (named or rap_page)) or (DOWNLOAD_PATH.search(path) and named)):
+            links[url] = links.get(url, False) or named
+    # RAP-named links first, then newest-looking.
+    return sorted(links, key=lambda u: (links[u], max(re.findall(YEAR, u), default=''), u), reverse=True)[:3]
+
+
+# A bot wall served in place of robots.txt is not "no rules".
+CHALLENGE = re.compile(r'captcha|security verification|verify you are (?:a )?human|access denied|attention required'
+                       r'|just a moment|enable javascript and cookies|request unsuccessful|incapsula|perimeterx|cf-chl', re.I)
 
 
 class HTTPClient:
@@ -283,7 +298,8 @@ def needs_browser(rows):
     # A robots.txt rule is final; only an unreachable robots.txt (e.g. a bot wall) is retried.
     if any(r['status'] == 'robots_disallowed' and r.get('detail') != 'robots_unavailable' for r in rows):
         return False
-    return not (rows[0]['status'] == 'http_error' and rows[0]['http_status'] in (404, 410))
+    # Some sites answer automated clients with 404 for files that exist; only 410 (gone) is final.
+    return not (rows[0]['status'] == 'http_error' and rows[0]['http_status'] == 410)
 
 
 def fetch(candidates, data_root, client=None, *, clock=time.monotonic, sleeper=time.sleep, engine=None, browser=None):
@@ -346,16 +362,17 @@ def fetch(candidates, data_root, client=None, *, clock=time.monotonic, sleeper=t
                 robots[origin] = False
                 return False
             code = response.status_code
-            if code == 404:
+            if code in (404, 410):
                 response.close(); robots[origin] = True
             elif code == 200:
                 try:
-                    content_type = response.headers.get('Content-Type','').lower()
-                    rules = body(response, 1024 * 1024).decode('utf-8', errors='strict')
-                    lines = [line.split('#',1)[0].strip() for line in rules.splitlines() if line.split('#',1)[0].strip()]
-                    if ('html' in content_type or any(':' not in line for line in lines)
-                            or lines and not any(re.match(r'(?:User-agent|Sitemap)\s*:',line,re.I) for line in lines)):
-                        raise ValueError('unreadable robots')
+                    content_type = response.headers.get('Content-Type', '').lower()
+                    rules = body(response, 1024 * 1024).decode('utf-8', errors='replace')
+                    html = 'html' in content_type or re.search(r'<(?:!doctype|html|body)\b', rules[:4000], re.I)
+                    if html and CHALLENGE.search(rules[:20000]):
+                        raise ValueError('bot wall instead of robots.txt')
+                    # RFC 9309: lines that are not rules are ignored, so a page without any rules (e.g. an HTML
+                    # error page served for /robots.txt) places no restriction. Real rules are always honoured.
                     parser = robotparser.RobotFileParser(); parser.parse(rules.splitlines()); robots[origin] = parser
                 except Exception:
                     robots[origin] = False
@@ -797,6 +814,48 @@ def report(engine, output):
     return dict(documents=len(rows),output=str(directory))
 
 
+def add_manual(rows, data_root, engine=None):
+    """RAP PDFs a person downloaded in a normal browser (sites that block automated access).
+
+    rows: record_key, organisation, file, source_url (CSV path or dicts). Same checks as fetch (%PDF, size cap,
+    sha256, 0600 storage) and one audit row each, found_via='manual_download'; extract then reads them.
+    """
+    root = Path(data_root) / 'raw' / 'rap_documents'
+    (Path(data_root) / 'raw').mkdir(parents=True, exist_ok=True)
+    private_dir(root); private_dir(root / 'fetches')
+    if isinstance(rows, (str, Path)):
+        with open(rows, encoding='utf-8-sig', newline='') as stream:
+            rows = list(csv.DictReader(stream))
+    attempts = []
+    for r in rows:
+        source = (r.get('source_url') or '').strip() or None
+        row = dict(id=str(uuid4()), record_key=r['record_key'], organisation=r['organisation'], url=source or 'manual_download',
+                   final_url=source, status='error', http_status=None, bytes=None, sha256=None, robots_allowed=None,
+                   found_via='manual_download', detail=None)
+        try:
+            payload = Path(r['file']).read_bytes(); row['bytes'] = len(payload)
+            if len(payload) > MAX_BYTES:
+                row['status'] = 'too_large'
+            elif not payload.startswith(b'%PDF'):
+                row['status'] = 'not_pdf'
+            else:
+                sha = hashlib.sha256(payload).hexdigest(); row['sha256'] = sha
+                path = root / (sha + '.pdf')
+                if path.exists():
+                    row['status'] = 'duplicate'
+                else:
+                    private_write(path, payload); row['status'] = 'downloaded'
+        except OSError:
+            row['detail'] = 'file_unreadable'
+        row['fetched_at'] = datetime.now(timezone.utc).isoformat()
+        private_write(root / 'fetches' / (row['id'] + '.json'), json.dumps(row).encode())
+        if engine is not None:
+            with engine.begin() as conn:
+                insert(conn, 'rap_document_fetches', row)
+        attempts.append(row)
+    return dict(attempts=attempts, counts=dict(Counter(r['status'] for r in attempts)), browser_retries=0)
+
+
 def main(argv=None):
     """Database-free fetch, runnable in the collectors' venv: `extract` later loads the audit files."""
     import argparse
@@ -805,8 +864,13 @@ def main(argv=None):
     parser.add_argument('--candidates', required=True)
     parser.add_argument('--stealth-fallback', action='store_true',
                         help='retry refused candidates with the collectors\' stealth browser')
+    parser.add_argument('--manual', action='store_true',
+                        help='candidates CSV lists human-downloaded files (record_key,organisation,file,source_url)')
     args = parser.parse_args(argv)
-    result = fetch(args.candidates, args.data_root, browser=BrowserClient() if args.stealth_fallback else None)
+    if args.manual:
+        result = add_manual(args.candidates, args.data_root)
+    else:
+        result = fetch(args.candidates, args.data_root, browser=BrowserClient() if args.stealth_fallback else None)
     print(json.dumps(dict(counts=result['counts'], attempts=len(result['attempts']),
                           browser_retries=result['browser_retries']), indent=2))
     return 0

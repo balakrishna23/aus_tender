@@ -257,9 +257,17 @@ class Fetch(unittest.TestCase):
             result,client=self.run_fetch(['http://reconciliation.my.salesforce.com./a.pdf'],{},root)
         self.assertEqual(result['counts'],{'blocked_host':1});self.assertEqual(client.calls,[])
 
-    def test_robots_disallow_and_fail_closed_except_404(self):
+    def test_robots_rules_rfc9309_and_bot_walls(self):
+        wall=b'<!doctype html><html><body>Performing security verification</body></html>'
         for robots,expected in [((b'User-agent: *\nDisallow: /',200,{}),'robots_disallowed'),
-                                ((b'',503,{}),'robots_disallowed'),((b'Error: unavailable',200,{}),'robots_disallowed'),((b'<html>unavailable</html>',200,{'Content-Type':'text/html'}),'robots_disallowed'),((b'',404,{}),'downloaded'),
+                                ((b'',503,{}),'robots_disallowed'),((b'',403,{}),'robots_disallowed'),
+                                # No rules in the body (an error page served for /robots.txt): no restriction.
+                                ((b'Error: unavailable',200,{}),'downloaded'),
+                                ((b'<html>System unavailable</html>',200,{'Content-Type':'text/html'}),'downloaded'),
+                                ((wall,200,{'Content-Type':'text/html'}),'robots_disallowed'),
+                                # A real robots.txt mentioning "captcha" is rules, not a bot wall.
+                                ((b'User-agent: *\nDisallow: /captcha/',200,{}),'downloaded'),
+                                ((b'',404,{}),'downloaded'),((b'',410,{}),'downloaded'),
                                 (OSError('offline'),'robots_disallowed')]:
             with tempfile.TemporaryDirectory() as root:
                 result,client=self.run_fetch(['https://example.invalid/rap.pdf'],{
@@ -271,26 +279,29 @@ class Fetch(unittest.TestCase):
         plain={'https://example.invalid/robots.txt':(b'',404,{}),
                'https://example.invalid/rap.pdf':(b'',403,{}),
                'https://example.invalid/gone.pdf':(b'',404,{}),
+               'https://example.invalid/old.pdf':(b'',410,{}),
                'https://ruled.invalid/robots.txt':(b'User-agent: *\nDisallow: /',200,{}),
                'https://www.agency.wa.gov.au/robots.txt':(b'',404,{}),
                'https://www.agency.wa.gov.au/rap.pdf':(b'',403,{}),
                'https://walled.invalid/robots.txt':(b'',403,{})}
         browser=Browser({'https://example.invalid/robots.txt':(b'',404,{}),
                          'https://example.invalid/rap.pdf':(b'%PDF browser',200,{}),
+                         'https://example.invalid/gone.pdf':(b'%PDF only for browsers',200,{}),
                          'https://walled.invalid/robots.txt':(b'User-agent: *\nDisallow: /private/',200,{}),
                          'https://walled.invalid/rap.pdf':(b'%PDF walled',200,{})})
-        urls=['https://example.invalid/rap.pdf','https://example.invalid/gone.pdf','https://ruled.invalid/rap.pdf',
-              'https://www.agency.wa.gov.au/rap.pdf','https://walled.invalid/rap.pdf','']
+        urls=['https://example.invalid/rap.pdf','https://example.invalid/gone.pdf','https://example.invalid/old.pdf',
+              'https://ruled.invalid/rap.pdf','https://www.agency.wa.gov.au/rap.pdf','https://walled.invalid/rap.pdf','']
         with tempfile.TemporaryDirectory() as root:
             client=Client(plain)
             result=R.fetch([dict(directory(),url=u) for u in urls],root,client,
                            clock=lambda:client.now,sleeper=client.sleep,browser=browser)
-        # 404, a robots.txt rule, the WA government host and the empty row are never retried.
-        self.assertEqual(result['browser_retries'],2);self.assertTrue(browser.closed)
+        # 410, a robots.txt rule, the WA government host and the empty row are never retried; a 404 to bots is.
+        self.assertEqual(result['browser_retries'],3);self.assertTrue(browser.closed)
         self.assertNotIn('https://www.agency.wa.gov.au/rap.pdf',[c[0] for c in browser.calls])
         retried=[r for r in result['attempts'] if r['found_via']=='stealth_browser']
         self.assertEqual([(r['url'],r['status']) for r in retried],
-                         [('https://example.invalid/rap.pdf','downloaded'),('https://walled.invalid/rap.pdf','downloaded')])
+                         [('https://example.invalid/rap.pdf','downloaded'),('https://example.invalid/gone.pdf','downloaded'),
+                          ('https://walled.invalid/rap.pdf','downloaded')])
         walled=[r for r in result['attempts'] if r['url']=='https://walled.invalid/rap.pdf'][0]
         self.assertEqual((walled['status'],walled['detail']),('robots_disallowed','robots_unavailable'))
         self.assertFalse(R.stealth_allowed('https://data.gov.au/x.pdf'))
@@ -382,6 +393,23 @@ class Fetch(unittest.TestCase):
                 'https://example.invalid/rap':(b'',302,{'Location':'https://cdn.example.invalid/rap.pdf'}),
                 'https://cdn.example.invalid/robots.txt':(b'User-agent: *\nDisallow: /',200,{})},root)
         self.assertEqual(result['counts'],{'robots_disallowed':1});self.assertEqual(len(client.calls),3)
+
+    def test_rap_page_download_links_and_manual_add(self):
+        html=('<html><head><title>Our Reconciliation Action Plan</title></head>'
+              '<a href="/files/plan-2025.pdf">Download</a><a href="/media/28716/download">Stretch RAP</a>'
+              '<a href="/media/1/download">Annual report</a><a href="https://other.example/x.pdf">Download</a></html>')
+        links=R.discover_links(html,'https://www.example.com.au/about/reconciliation')
+        self.assertEqual(set(links),{'https://www.example.com.au/files/plan-2025.pdf','https://www.example.com.au/media/28716/download'})
+        self.assertFalse(R.discover_links(html.replace('Reconciliation Action Plan','News'),'https://www.example.com.au/news')[1:])
+        with tempfile.TemporaryDirectory() as root:
+            good=Path(root)/'good.pdf';good.write_bytes(b'%PDF manual');bad=Path(root)/'bad.pdf';bad.write_bytes(b'<html>')
+            rows=[dict(record_key='k1',organisation='Example',file=str(good),source_url='https://www.example.com.au/rap.pdf'),
+                  dict(record_key='k2',organisation='Example',file=str(bad),source_url=''),
+                  dict(record_key='k1',organisation='Example',file=str(good),source_url='')]
+            result=R.add_manual(rows,root)
+            self.assertEqual([r['status'] for r in result['attempts']],['downloaded','not_pdf','duplicate'])
+            self.assertTrue(all(r['found_via']=='manual_download' for r in result['attempts']))
+            self.assertTrue((Path(root)/'raw/rap_documents'/(hashlib.sha256(b'%PDF manual').hexdigest()+'.pdf')).exists())
 
     def test_link_scope_limit_and_order(self):
         html=''.join('<a href="https://docs.example.com.au/rap-'+str(year)+'.pdf">Plan</a>' for year in range(2020,2027))
